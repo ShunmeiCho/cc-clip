@@ -1,0 +1,15 @@
+# Go
+.gocache/
+/cc-clip
+*.exe
+
+# Go telemetry / sandbox artifacts
+.home/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+dist/
