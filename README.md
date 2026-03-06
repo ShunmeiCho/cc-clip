@@ -25,35 +25,21 @@ No changes to Claude Code. No terminal-specific hacks. Just works.
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
 ```
 
-**2. Start the daemon:**
+**2. One-command setup:**
 
 ```bash
-# Option A: Auto-start via launchd (recommended, macOS)
-cc-clip service install
-
-# Option B: Manual foreground
-cc-clip serve
+cc-clip setup myserver
 ```
 
-**3. Add SSH port forwarding** (if not already configured):
+This single command handles everything:
+- Installs `pngpaste` via Homebrew (if missing)
+- Configures SSH `RemoteForward` and `ControlMaster no` in `~/.ssh/config`
+- Starts the local daemon via launchd (auto-restarts on reboot)
+- Deploys binary + shim to remote, syncs token, verifies tunnel
 
-```
-# ~/.ssh/config
-Host myserver
-    RemoteForward 18339 127.0.0.1:18339
-```
+**3. Done.** `Ctrl+V` in remote Claude Code now pastes images from your Mac.
 
-> **Important:** If you use `ControlMaster` for SSH connection multiplexing, see [Troubleshooting — SSH ControlMaster](#ssh-controlmaster-breaks-remoteforward) below.
-
-**4. Deploy to remote:**
-
-```bash
-cc-clip connect myserver
-```
-
-This handles everything in one command: detect arch, upload binary, install shim, sync token, fix PATH, verify tunnel. Subsequent runs are incremental — only changed components are re-deployed.
-
-**5. Done.** `Ctrl+V` in remote Claude Code now pastes images from your Mac.
+> **Already set up?** Use `cc-clip connect myserver` for subsequent deploys (incremental, skips unchanged components). Use `cc-clip connect myserver --token-only` to just re-sync the token.
 
 ## How It Works
 
@@ -72,6 +58,7 @@ This handles everything in one command: detect arch, upload binary, install shim
 
 | Command | Description |
 |---------|-------------|
+| `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
 | `cc-clip serve` | Start local clipboard daemon (foreground) |
 | `cc-clip serve --rotate-token` | Start daemon with forced new token |
 | `cc-clip service install` | Install macOS launchd service (auto-start, background) |
@@ -105,7 +92,7 @@ All settings have sensible defaults. Override via flags or environment variables
 
 **Local (Mac):**
 - macOS 13+
-- `pngpaste` (`brew install pngpaste`)
+- `pngpaste` (`brew install pngpaste`) — auto-installed by `cc-clip setup`
 - `curl`
 
 **Remote (Linux):**

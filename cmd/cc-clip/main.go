@@ -16,6 +16,7 @@ import (
 	"github.com/shunmei/cc-clip/internal/doctor"
 	"github.com/shunmei/cc-clip/internal/exitcode"
 	"github.com/shunmei/cc-clip/internal/service"
+	"github.com/shunmei/cc-clip/internal/setup"
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
 	"github.com/shunmei/cc-clip/internal/tunnel"
@@ -46,6 +47,8 @@ func main() {
 		cmdStatus()
 	case "doctor":
 		cmdDoctor()
+	case "setup":
+		cmdSetup()
 	case "service":
 		cmdService()
 	case "version":
@@ -82,6 +85,10 @@ Remote:
     --host           Also clean up PATH marker on remote host
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
+
+One-command setup:
+  setup <host>       Full setup: deps, SSH config, daemon, deploy
+    --port           Tunnel port (default: 18339)
 
 Deploy (local -> remote):
   connect <host>     Deploy cc-clip to remote and establish session
@@ -307,14 +314,30 @@ func cmdUninstall() {
 	}
 }
 
+type connectOpts struct {
+	host      string
+	port      int
+	force     bool
+	tokenOnly bool
+}
+
 func cmdConnect() {
 	if len(os.Args) < 3 {
 		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only]")
 	}
-	host := os.Args[2]
-	port := getPort()
-	force := hasFlag("force")
-	tokenOnly := hasFlag("token-only")
+	runConnect(connectOpts{
+		host:      os.Args[2],
+		port:      getPort(),
+		force:     hasFlag("force"),
+		tokenOnly: hasFlag("token-only"),
+	})
+}
+
+func runConnect(opts connectOpts) {
+	host := opts.host
+	port := opts.port
+	force := opts.force
+	tokenOnly := opts.tokenOnly
 
 	// Step 1: Check local daemon
 	fmt.Printf("[1/7] Checking local daemon on :%d...\n", port)
@@ -478,6 +501,70 @@ func cmdConnect() {
 
 	// Step 7: Verify tunnel
 	connectVerifyTunnel(session, port, host)
+}
+
+func cmdSetup() {
+	if len(os.Args) < 3 {
+		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+	}
+	host := os.Args[2]
+	port := getPort()
+
+	// Step 1: Dependencies
+	fmt.Println("[1/4] Checking local dependencies...")
+	if runtime.GOOS == "darwin" {
+		if p := setup.CheckPngpaste(); p != "" {
+			fmt.Printf("      pngpaste: %s\n", p)
+		} else {
+			fmt.Println("      pngpaste not found, installing via Homebrew...")
+			if err := setup.InstallPngpaste(); err != nil {
+				log.Fatalf("      %v", err)
+			}
+			if p := setup.CheckPngpaste(); p != "" {
+				fmt.Printf("      pngpaste: installed (%s)\n", p)
+			}
+		}
+	} else {
+		fmt.Println("      skipped (not macOS)")
+	}
+
+	// Step 2: SSH config
+	fmt.Printf("[2/4] Configuring SSH for %s...\n", host)
+	changes, err := setup.EnsureSSHConfig(host, port)
+	if err != nil {
+		log.Fatalf("      %v", err)
+	}
+	for _, c := range changes {
+		fmt.Printf("      %s: %s\n", c.Action, c.Detail)
+	}
+
+	// Step 3: Daemon
+	fmt.Println("[3/4] Starting local daemon...")
+	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
+	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err == nil {
+		fmt.Printf("      daemon already running on :%d\n", port)
+	} else if runtime.GOOS == "darwin" {
+		exePath, err := os.Executable()
+		if err != nil {
+			log.Fatalf("      cannot determine executable path: %v", err)
+		}
+		exePath, _ = filepath.EvalSymlinks(exePath)
+		if err := service.Install(exePath, port); err != nil {
+			log.Fatalf("      service install failed: %v", err)
+		}
+		fmt.Println("      launchd service installed and started")
+		// Wait for daemon to be ready
+		time.Sleep(500 * time.Millisecond)
+	} else {
+		log.Fatal("      daemon not running. Start it first: cc-clip serve")
+	}
+
+	// Step 4: Deploy to remote
+	fmt.Printf("\n[4/4] Deploying to %s...\n", host)
+	runConnect(connectOpts{
+		host: host,
+		port: port,
+	})
 }
 
 // connectVerifyTunnel verifies the SSH tunnel from the remote side.
