@@ -179,6 +179,35 @@ This ensures every SSH connection creates a fresh tunnel. The trade-off is sligh
 
 **Alternatively**, if you want to keep `ControlMaster` for other hosts, ensure it's only disabled for this specific host, while keeping the global `Host *` setting for others.
 
+### Stale sshd Process Blocks RemoteForward
+
+**Symptom:** `ssh myserver` shows `Warning: remote port forwarding failed for listen port 18339`. The tunnel never works regardless of how many times you reconnect.
+
+**Cause:** A previous SSH session (from an older `cc-clip connect` or a crashed SSH connection) left a stale `sshd` child process on the remote server that is still holding port 18339. New SSH connections cannot bind `RemoteForward` to a port that's already in use.
+
+This was caused by `cc-clip connect` (before v0.1.1) inheriting `RemoteForward` from `~/.ssh/config`, competing with the user's interactive SSH session for the same port. Fixed in [c306bda](https://github.com/ShunmeiCho/cc-clip/commit/c306bda) with `ClearAllForwardings=yes`.
+
+**Diagnosis (on remote):**
+
+```bash
+sudo ss -tlnp | grep 18339
+# Shows: sshd,pid=XXXXX listening on 18339
+```
+
+**Fix:**
+
+```bash
+# On remote: kill the stale sshd process
+sudo kill <PID>
+
+# Then reconnect from local (forwarding should succeed now)
+ssh myserver
+curl -s http://127.0.0.1:18339/health
+# Expected: {"status":"ok"}
+```
+
+**Prevention:** Update to the latest cc-clip. The `connect` command now uses `ClearAllForwardings=yes` for its internal SSH session, so it never competes for the RemoteForward port.
+
 ### Daemon Restart Invalidates Token
 
 **Symptom:** "fetch type failed" or "token invalid" in shim debug logs.
@@ -234,6 +263,23 @@ Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
 
 1. In Claude Code, run `/clear` or start a new session (the old conversation is corrupted)
 2. Update to the latest cc-clip and re-run `cc-clip connect <host>`
+
+### Launchd Daemon Returns "empty" for Image Clipboard
+
+**Symptom:** `cc-clip service install` is running, but `/clipboard/type` returns `{"type":"empty"}` even when you have an image in your Mac clipboard. Running `cc-clip serve` in the foreground works correctly.
+
+**Cause:** macOS `launchd` does not source your shell profile, so `PATH` doesn't include Homebrew directories (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel). The daemon can't find `pngpaste`, silently falls through to `pbpaste`, which either hangs or returns empty for image clipboard content.
+
+**Fix:** This was fixed in [6b4b5e2](https://github.com/ShunmeiCho/cc-clip/commit/6b4b5e2). The fix has two layers:
+1. The launchd plist now injects `PATH` including Homebrew directories
+2. The clipboard reader falls back to well-known paths (`/opt/homebrew/bin/pngpaste`, `/usr/local/bin/pngpaste`) when `LookPath` fails
+
+If you're on an older version, reinstall the service to regenerate the plist:
+
+```bash
+cc-clip service uninstall
+cc-clip service install
+```
 
 ### No Image in Clipboard
 

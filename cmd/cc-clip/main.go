@@ -415,7 +415,7 @@ func cmdConnect() {
 		}
 		checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
 		if _, err := session.Exec(checkCmd); err != nil {
-			fmt.Println("[5/7] Shim missing despite cached state, reinstalling")
+			fmt.Println("      shim missing despite cached state, will reinstall")
 			needsShim = true
 		}
 	}
