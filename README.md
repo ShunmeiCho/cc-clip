@@ -228,6 +228,20 @@ Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
 - **Screenshot to clipboard:** `Cmd + Shift + Ctrl + 4` (select area) or `Cmd + Shift + Ctrl + 3` (full screen)
 - **Copy from an app:** Right-click an image → Copy Image
 
+## Known Limitations
+
+The following are known pain points that we plan to improve iteratively:
+
+| Issue | Description | Status |
+|-------|-------------|--------|
+| Token re-sync on daemon restart | Every `cc-clip serve` restart generates a new token, requiring a full `cc-clip connect` to re-sync | Planned |
+| Full redeploy on every `connect` | `connect` re-compiles and re-uploads the binary even when only the token changed | Planned |
+| SSH passphrase prompted multiple times | `connect` makes multiple SSH calls internally, each prompting for passphrase | Planned |
+| Remote PATH not auto-configured | `connect` detects `~/.local/bin` not in PATH but doesn't fix it automatically | Planned |
+| No daemon auto-start | Daemon runs in foreground; `nohup` is a workaround, no launchd/systemd integration yet | Planned |
+
+Contributions and ideas welcome — see [Issues](https://github.com/shunmei/cc-clip/issues).
+
 ## Related Issues
 
 - [anthropics/claude-code#5277](https://github.com/anthropics/claude-code/issues/5277) — Image paste in SSH sessions
