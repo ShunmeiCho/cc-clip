@@ -22,7 +22,7 @@ No changes to Claude Code. No terminal-specific hacks. Just works.
 **1. Install locally (Mac):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shunmei/cc-clip/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
 ```
 
 **2. Start the daemon and connect:**

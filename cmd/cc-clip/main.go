@@ -543,7 +543,7 @@ func prepareBinaryLocal(host, remoteOS, remoteArch string) (localBin string, err
 			"cannot obtain cc-clip for %s/%s:\n"+
 				"  - GitHub release download failed: %v\n"+
 				"  - Cross-compile unavailable: Go toolchain not found\n"+
-				"  Fix: download the correct binary from https://github.com/shunmei/cc-clip/releases\n"+
+				"  Fix: download the correct binary from https://github.com/ShunmeiCho/cc-clip/releases\n"+
 				"       and re-run with: cc-clip connect %s --local-bin /path/to/cc-clip",
 			remoteOS, remoteArch, dlErr, host)
 	}
@@ -554,7 +554,7 @@ func prepareBinaryLocal(host, remoteOS, remoteArch string) (localBin string, err
 			"cannot obtain cc-clip for %s/%s:\n"+
 				"  - GitHub release download failed: %v\n"+
 				"  - Cross-compile unavailable: source directory not found\n"+
-				"  Fix: download the correct binary from https://github.com/shunmei/cc-clip/releases\n"+
+				"  Fix: download the correct binary from https://github.com/ShunmeiCho/cc-clip/releases\n"+
 				"       and re-run with: cc-clip connect %s --local-bin /path/to/cc-clip",
 			remoteOS, remoteArch, dlErr, host)
 	}
@@ -578,7 +578,7 @@ func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 	// but tag names always have "v" prefix.
 	ver := strings.TrimPrefix(version, "v")
 	archiveName := fmt.Sprintf("cc-clip_%s_%s_%s.tar.gz", ver, targetOS, targetArch)
-	url := fmt.Sprintf("https://github.com/shunmei/cc-clip/releases/download/v%s/%s", ver, archiveName)
+	url := fmt.Sprintf("https://github.com/ShunmeiCho/cc-clip/releases/download/v%s/%s", ver, archiveName)
 
 	tmpDir, err := os.MkdirTemp("", "cc-clip-download-*")
 	if err != nil {
