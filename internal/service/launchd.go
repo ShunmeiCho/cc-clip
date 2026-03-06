@@ -119,12 +119,26 @@ func Install(binaryPath string, port int) error {
 	return nil
 }
 
+// launchctlRemove force-removes a job by label. Overridable for testing.
+var launchctlRemove = func(label string) error {
+	cmd := exec.Command("launchctl", "remove", label)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("launchctl remove failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
 // Uninstall unloads the service and removes the plist file.
 func Uninstall() error {
 	plist := PlistPath()
 
-	// Unload regardless of whether file exists (may be loaded from a previous path)
-	_ = launchctlUnload(plist)
+	// Try unload via plist path first (requires file to exist).
+	unloadErr := launchctlUnload(plist)
+
+	// Fallback: remove by label (works even if plist is already deleted).
+	if unloadErr != nil {
+		_ = launchctlRemove(plistLabel)
+	}
 
 	if err := os.Remove(plist); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cannot remove plist: %w", err)
