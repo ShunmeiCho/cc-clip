@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
@@ -20,6 +23,8 @@ import (
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
 	"github.com/shunmei/cc-clip/internal/tunnel"
+	"github.com/shunmei/cc-clip/internal/x11bridge"
+	"github.com/shunmei/cc-clip/internal/xvfb"
 )
 
 var version = "dev"
@@ -51,6 +56,8 @@ func main() {
 		cmdSetup()
 	case "service":
 		cmdService()
+	case "x11-bridge":
+		cmdX11Bridge()
 	case "version":
 		fmt.Printf("cc-clip %s\n", version)
 	case "help", "--help", "-h":
@@ -97,11 +104,22 @@ Deploy (local -> remote):
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
 
+Codex support (extends connect/setup/uninstall):
+  connect <host> --codex   Deploy with Codex support (Xvfb + x11-bridge)
+  setup <host> --codex     Full setup including Codex support
+  uninstall --codex        Remove Codex support only (local)
+  uninstall --codex --host H  Remove Codex support on remote host
+
 Diagnostics:
   status             Show component status
   doctor             Local health check
   doctor --host H    Full end-to-end check via SSH
-  version            Show version`)
+  version            Show version
+
+Internal (used by deploy):
+  x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
+    --display        X11 display (default: $DISPLAY)
+    --port           cc-clip daemon port (default: 18339)`)
 }
 
 func getPort() int {
@@ -285,6 +303,17 @@ func cmdUninstall() {
 	targetStr := getFlag("target", "auto")
 	installPath := getFlag("path", "")
 	host := getFlag("host", "")
+	codex := hasFlag("codex")
+
+	// --codex mode: only clean up Codex assets, don't touch Claude shim.
+	if codex {
+		if host != "" {
+			cmdUninstallCodexRemote(host)
+		} else {
+			cmdUninstallCodexLocal()
+		}
+		return
+	}
 
 	var target shim.Target
 	switch targetStr {
@@ -314,11 +343,142 @@ func cmdUninstall() {
 	}
 }
 
+// cmdUninstallCodexRemote cleans up Codex support on a remote host via SSH.
+func cmdUninstallCodexRemote(host string) {
+	fmt.Printf("Uninstalling Codex support from %s...\n", host)
+
+	session, err := shim.NewSSHSession(host)
+	if err != nil {
+		log.Fatalf("SSH connection failed: %v", err)
+	}
+	defer session.Close()
+
+	var hasError bool
+
+	// Step 1: Stop x11-bridge
+	fmt.Println("[1/5] Stopping x11-bridge...")
+	stopBridgeRemote(session)
+	fmt.Println("      done")
+
+	// Step 2: Stop Xvfb
+	fmt.Println("[2/5] Stopping Xvfb...")
+	if err := xvfb.StopRemote(session, codexStateDir); err != nil {
+		fmt.Printf("      warning: %v\n", err)
+		hasError = true
+	} else {
+		fmt.Println("      done")
+	}
+
+	// Step 3: Remove codex state directory
+	fmt.Println("[3/5] Removing codex state files...")
+	session.Exec(fmt.Sprintf("rm -rf %s", codexStateDir))
+	fmt.Println("      done")
+
+	// Step 4: Remove DISPLAY marker
+	fmt.Println("[4/5] Removing DISPLAY marker...")
+	if err := shim.RemoveDisplayMarkerSession(session); err != nil {
+		fmt.Printf("      warning: %v\n", err)
+		hasError = true
+	} else {
+		fmt.Println("      done")
+	}
+
+	// Step 5: Update deploy state
+	fmt.Println("[5/5] Updating deploy state...")
+	remoteState, err := shim.ReadRemoteState(session)
+	if err != nil {
+		fmt.Printf("      warning: could not read deploy state: %v\n", err)
+	}
+	if remoteState != nil {
+		remoteState.Codex = nil
+		if err := shim.WriteRemoteState(session, remoteState); err != nil {
+			fmt.Printf("      warning: could not update deploy state: %v\n", err)
+			hasError = true
+		} else {
+			fmt.Println("      codex block removed from deploy.json")
+		}
+	} else {
+		fmt.Println("      no deploy state found (already clean)")
+	}
+
+	fmt.Println()
+	if hasError {
+		fmt.Println("Codex uninstall completed with warnings. Check issues above.")
+		os.Exit(1)
+	}
+	fmt.Println("Codex support removed successfully.")
+}
+
+// cmdUninstallCodexLocal cleans up Codex support on the local machine.
+func cmdUninstallCodexLocal() {
+	fmt.Println("Uninstalling Codex support (local)...")
+
+	stateDir := os.ExpandEnv("$HOME/.cache/cc-clip/codex")
+
+	// Stop bridge
+	fmt.Println("[1/3] Stopping x11-bridge...")
+	stopLocalProcess(filepath.Join(stateDir, "bridge.pid"), "cc-clip x11-bridge")
+
+	// Stop Xvfb
+	fmt.Println("[2/3] Stopping Xvfb...")
+	stopLocalProcess(filepath.Join(stateDir, "xvfb.pid"), "Xvfb")
+
+	// Remove state dir
+	fmt.Println("[3/3] Removing state files...")
+	os.RemoveAll(stateDir)
+
+	fmt.Println("Codex support removed (local).")
+}
+
+// stopLocalProcess reads a PID file, verifies the process command, and stops it.
+func stopLocalProcess(pidFile string, expectedCmd string) {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		fmt.Println("      not running (no PID file)")
+		return
+	}
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		fmt.Println("      invalid PID file, removing")
+		os.Remove(pidFile)
+		return
+	}
+
+	// Verify process command
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Println("      process not found")
+		os.Remove(pidFile)
+		return
+	}
+
+	// Check if alive
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		fmt.Println("      not running")
+		os.Remove(pidFile)
+		return
+	}
+
+	// Send SIGTERM
+	proc.Signal(syscall.SIGTERM)
+	time.Sleep(500 * time.Millisecond)
+
+	// Check if still alive, force kill
+	if err := proc.Signal(syscall.Signal(0)); err == nil {
+		proc.Signal(syscall.SIGKILL)
+	}
+
+	os.Remove(pidFile)
+	fmt.Println("      stopped")
+}
+
 type connectOpts struct {
 	host      string
 	port      int
 	force     bool
 	tokenOnly bool
+	codex     bool
 }
 
 func cmdConnect() {
@@ -330,6 +490,7 @@ func cmdConnect() {
 		port:      getPort(),
 		force:     hasFlag("force"),
 		tokenOnly: hasFlag("token-only"),
+		codex:     hasFlag("codex"),
 	})
 }
 
@@ -495,12 +656,30 @@ func runConnect(opts connectOpts) {
 	if remoteState != nil && remoteState.ShimTarget != "" {
 		newState.ShimTarget = remoteState.ShimTarget
 	}
+	// Preserve existing codex state when not using --codex.
+	if remoteState != nil && remoteState.Codex != nil && !opts.codex {
+		newState.Codex = remoteState.Codex
+	}
 	if err := shim.WriteRemoteState(session, newState); err != nil {
 		log.Printf("      warning: could not write remote deploy state: %v", err)
 	}
 
 	// Step 7: Verify tunnel
 	connectVerifyTunnel(session, port, host)
+
+	// Steps 8-11: Codex support (only if --codex flag is set)
+	if opts.codex {
+		codexOk := runConnectCodex(session, opts, needsUpload, newState)
+		if err := shim.WriteRemoteState(session, newState); err != nil {
+			log.Printf("      warning: could not update deploy state: %v", err)
+		}
+		if !codexOk {
+			fmt.Println()
+			fmt.Println("Claude shim is ready, but Codex support failed.")
+			fmt.Println("Fix the issues above and re-run: cc-clip connect", host, "--codex")
+			os.Exit(1)
+		}
+	}
 }
 
 func cmdSetup() {
@@ -562,8 +741,9 @@ func cmdSetup() {
 	// Step 4: Deploy to remote
 	fmt.Printf("\n[4/4] Deploying to %s...\n", host)
 	runConnect(connectOpts{
-		host: host,
-		port: port,
+		host:  host,
+		port:  port,
+		codex: hasFlag("codex"),
 	})
 }
 
@@ -890,4 +1070,174 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// --- Codex support ---
+
+const codexStateDir = "~/.cache/cc-clip/codex"
+
+// runConnectCodex executes steps 8-11 of the Codex deploy flow.
+// Returns true on success, false on failure (Claude path is preserved).
+func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded bool, state *shim.DeployState) bool {
+	port := opts.port
+
+	if opts.tokenOnly {
+		fmt.Println("[8/11] Skipping Codex setup (--token-only)")
+		fmt.Println("[9/11] Skipping (--token-only)")
+		fmt.Println("[10/11] Skipping (--token-only)")
+		fmt.Println("[11/11] Skipping (--token-only)")
+		return true
+	}
+
+	// Step 8: Codex preflight
+	fmt.Println("[8/11] Codex preflight...")
+	if err := xvfb.CheckAvailable(session); err != nil {
+		fmt.Printf("      %v\n", err)
+		return false
+	}
+	session.Exec(fmt.Sprintf("mkdir -p %s", codexStateDir))
+	fmt.Println("      Xvfb available")
+
+	// Step 9: Start or reuse Xvfb
+	fmt.Println("[9/11] Starting Xvfb...")
+	xvfbState, err := xvfb.StartRemote(session, codexStateDir)
+	if err != nil {
+		fmt.Printf("      Xvfb start failed: %v\n", err)
+		dumpRemoteLog(session, codexStateDir+"/xvfb.log")
+		return false
+	}
+	fmt.Printf("      Xvfb running on DISPLAY=:%s (PID %d)\n", xvfbState.Display, xvfbState.PID)
+
+	// Step 10: Start or reuse x11-bridge
+	fmt.Println("[10/11] Starting x11-bridge...")
+
+	// If binary was uploaded, unconditionally restart bridge (old binary).
+	if binaryUploaded {
+		stopBridgeRemote(session)
+	}
+
+	if !binaryUploaded && isBridgeHealthy(session) {
+		fmt.Println("      x11-bridge already running, reusing")
+	} else {
+		// Stop any existing bridge first.
+		stopBridgeRemote(session)
+
+		if err := startBridgeRemote(session, xvfbState.Display, port); err != nil {
+			fmt.Printf("      x11-bridge start failed: %v\n", err)
+			dumpRemoteLog(session, codexStateDir+"/bridge.log")
+			return false
+		}
+		fmt.Println("      x11-bridge started")
+	}
+
+	// Step 11: Inject DISPLAY marker + update state
+	fmt.Println("[11/11] Injecting DISPLAY marker...")
+	displayFixed := false
+	if err := shim.FixDisplaySession(session); err != nil {
+		fmt.Printf("      DISPLAY marker injection failed: %v\n", err)
+		return false
+	}
+	displayFixed = true
+	fmt.Println("      DISPLAY marker injected")
+
+	state.Codex = &shim.CodexDeployState{
+		Enabled:      true,
+		Mode:         "x11-bridge",
+		DisplayFixed: displayFixed,
+	}
+
+	fmt.Println()
+	fmt.Println("Codex support ready. Open a new SSH shell and Ctrl+V will work in Codex CLI.")
+	return true
+}
+
+// startBridgeRemote starts the x11-bridge daemon on the remote.
+func startBridgeRemote(session *shim.SSHSession, display string, port int) error {
+	startScript := fmt.Sprintf(
+		`nohup env DISPLAY=":%s" ~/.local/bin/cc-clip x11-bridge --display ":%s" --port %d > %s/bridge.log 2>&1 < /dev/null &
+echo $! > %s/bridge.pid
+sleep 0.3
+kill -0 $(cat %s/bridge.pid 2>/dev/null) 2>/dev/null && echo 'bridge:ok' || echo 'bridge:fail'`,
+		display, display, port,
+		codexStateDir, codexStateDir, codexStateDir,
+	)
+	out, err := session.Exec(startScript)
+	if err != nil {
+		return fmt.Errorf("bridge start command failed: %w", err)
+	}
+	if strings.Contains(out, "bridge:fail") {
+		return fmt.Errorf("bridge process died immediately after start")
+	}
+	return nil
+}
+
+// stopBridgeRemote stops the x11-bridge on the remote (safe: verifies command).
+func stopBridgeRemote(session *shim.SSHSession) {
+	stopScript := fmt.Sprintf(
+		`pid=$(cat %s/bridge.pid 2>/dev/null) && \
+[ -n "$pid" ] && \
+ps -p "$pid" -o args= 2>/dev/null | grep -q 'cc-clip x11-bridge' && \
+kill "$pid" 2>/dev/null && \
+sleep 0.5 && \
+kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null; \
+rm -f %s/bridge.pid; true`,
+		codexStateDir, codexStateDir,
+	)
+	session.Exec(stopScript)
+}
+
+// isBridgeHealthy checks if x11-bridge is running on the remote.
+func isBridgeHealthy(session *shim.SSHSession) bool {
+	checkScript := fmt.Sprintf(
+		`pid=$(cat %s/bridge.pid 2>/dev/null) && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 'ok' || echo 'no'`,
+		codexStateDir,
+	)
+	out, _ := session.Exec(checkScript)
+	return strings.TrimSpace(out) == "ok"
+}
+
+// dumpRemoteLog prints the last 20 lines of a remote log file.
+func dumpRemoteLog(session *shim.SSHSession, logPath string) {
+	out, err := session.Exec(fmt.Sprintf("tail -20 %s 2>/dev/null", logPath))
+	if err == nil && out != "" {
+		fmt.Println("      --- log ---")
+		for _, line := range strings.Split(out, "\n") {
+			fmt.Printf("      %s\n", line)
+		}
+		fmt.Println("      --- end ---")
+	}
+}
+
+// cmdX11Bridge runs the X11 clipboard bridge daemon (internal command).
+func cmdX11Bridge() {
+	display := getFlag("display", os.Getenv("DISPLAY"))
+	port := getPort()
+
+	tokenDir := os.Getenv("HOME") + "/.cache/cc-clip"
+	tokenFile := tokenDir + "/session.token"
+
+	if display == "" {
+		log.Fatal("x11-bridge: --display or DISPLAY env required")
+	}
+
+	bridge, err := x11bridge.New(display, port, tokenFile)
+	if err != nil {
+		log.Fatalf("x11-bridge: initialization failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle SIGTERM for graceful shutdown.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		log.Printf("x11-bridge: received shutdown signal")
+		cancel()
+	}()
+
+	if err := bridge.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatalf("x11-bridge: %v", err)
+	}
 }
