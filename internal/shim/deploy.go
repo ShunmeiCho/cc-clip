@@ -11,14 +11,22 @@ import (
 	"strings"
 )
 
+// CodexDeployState represents the Codex-specific deployment state.
+type CodexDeployState struct {
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode"`
+	DisplayFixed bool   `json:"display_fixed"`
+}
+
 // DeployState represents the state of a cc-clip deployment on a remote host.
 // It is stored as ~/.cache/cc-clip/deploy.json on the remote.
 type DeployState struct {
-	BinaryHash    string `json:"binary_hash"`
-	BinaryVersion string `json:"binary_version"`
-	ShimInstalled bool   `json:"shim_installed"`
-	ShimTarget    string `json:"shim_target"`
-	PathFixed     bool   `json:"path_fixed"`
+	BinaryHash    string           `json:"binary_hash"`
+	BinaryVersion string           `json:"binary_version"`
+	ShimInstalled bool             `json:"shim_installed"`
+	ShimTarget    string           `json:"shim_target"`
+	PathFixed     bool             `json:"path_fixed"`
+	Codex         *CodexDeployState `json:"codex,omitempty"`
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
@@ -106,4 +114,12 @@ func NeedsShimInstall(remote *DeployState) bool {
 		return true
 	}
 	return !remote.ShimInstalled
+}
+
+// NeedsCodexSetup checks whether Codex setup is needed on the remote.
+func NeedsCodexSetup(remote *DeployState) bool {
+	if remote == nil || remote.Codex == nil {
+		return true
+	}
+	return !remote.Codex.Enabled
 }

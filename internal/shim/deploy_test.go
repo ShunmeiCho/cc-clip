@@ -245,3 +245,142 @@ func TestDeployStateCorruptedJSON(t *testing.T) {
 		t.Error("expected error for corrupted JSON")
 	}
 }
+
+func TestDeployStateJSONCodexNil(t *testing.T) {
+	// Marshal with Codex: nil -> no "codex" key in JSON
+	state := DeployState{
+		BinaryHash:    "sha256:abc",
+		BinaryVersion: "v0.1.0",
+		ShimInstalled: true,
+		ShimTarget:    "xclip",
+		PathFixed:     true,
+		Codex:         nil,
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	raw := string(data)
+	if strings.Contains(raw, `"codex"`) {
+		t.Fatalf("JSON should not contain 'codex' key when Codex is nil, got: %s", raw)
+	}
+}
+
+func TestDeployStateJSONCodexPopulated(t *testing.T) {
+	// Marshal with Codex populated -> JSON has "codex" block
+	state := DeployState{
+		BinaryHash:    "sha256:abc",
+		BinaryVersion: "v0.1.0",
+		ShimInstalled: true,
+		ShimTarget:    "xclip",
+		PathFixed:     true,
+		Codex: &CodexDeployState{
+			Enabled:      true,
+			Mode:         "xvfb",
+			DisplayFixed: true,
+		},
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	raw := string(data)
+	if !strings.Contains(raw, `"codex"`) {
+		t.Fatalf("JSON should contain 'codex' key, got: %s", raw)
+	}
+
+	// Round-trip unmarshal
+	var decoded DeployState
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Codex == nil {
+		t.Fatal("decoded Codex should not be nil")
+	}
+	if !decoded.Codex.Enabled {
+		t.Error("decoded Codex.Enabled should be true")
+	}
+	if decoded.Codex.Mode != "xvfb" {
+		t.Errorf("decoded Codex.Mode = %q, want %q", decoded.Codex.Mode, "xvfb")
+	}
+	if !decoded.Codex.DisplayFixed {
+		t.Error("decoded Codex.DisplayFixed should be true")
+	}
+}
+
+func TestDeployStateJSONUnmarshalOldFormat(t *testing.T) {
+	// Unmarshal old JSON (no codex field) -> Codex: nil, no error
+	raw := `{
+  "binary_hash": "sha256:deadbeef",
+  "binary_version": "v0.2.0",
+  "shim_installed": true,
+  "shim_target": "wl-paste",
+  "path_fixed": false
+}`
+
+	var state DeployState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("failed to unmarshal old format: %v", err)
+	}
+
+	if state.Codex != nil {
+		t.Fatalf("Codex should be nil for old format JSON, got: %+v", state.Codex)
+	}
+
+	// Verify other fields still work
+	if state.BinaryHash != "sha256:deadbeef" {
+		t.Errorf("unexpected BinaryHash: %q", state.BinaryHash)
+	}
+}
+
+func TestNeedsCodexSetup(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{
+			name:   "nil remote state",
+			remote: nil,
+			want:   true,
+		},
+		{
+			name:   "nil Codex field",
+			remote: &DeployState{},
+			want:   true,
+		},
+		{
+			name: "Codex not enabled",
+			remote: &DeployState{
+				Codex: &CodexDeployState{
+					Enabled: false,
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Codex enabled",
+			remote: &DeployState{
+				Codex: &CodexDeployState{
+					Enabled: true,
+					Mode:    "xvfb",
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NeedsCodexSetup(tt.remote)
+			if got != tt.want {
+				t.Errorf("NeedsCodexSetup() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

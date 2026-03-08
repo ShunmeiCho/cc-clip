@@ -9,6 +9,9 @@ const (
 	pathMarkerStart = "# >>> cc-clip PATH (do not edit) >>>"
 	pathMarkerEnd   = "# <<< cc-clip PATH (do not edit) <<<"
 	pathExport      = `export PATH="$HOME/.local/bin:$PATH"`
+
+	displayMarkerStart = "# >>> cc-clip Codex DISPLAY (do not edit) >>>"
+	displayMarkerEnd   = "# <<< cc-clip Codex DISPLAY (do not edit) <<<"
 )
 
 // pathBlock returns the full marker block to inject into shell rc files.
@@ -154,6 +157,96 @@ func RemoveRemotePathSession(session RemoteExecutor) error {
 	_, err = session.Exec(sedCmd)
 	if err != nil {
 		return fmt.Errorf("failed to remove PATH block from %s: %w", rcFile, err)
+	}
+
+	return nil
+}
+
+// displayBlock returns the full DISPLAY marker block to inject into shell rc files.
+func displayBlock() string {
+	body := `if [ -z "${DISPLAY:-}" ] && [ -r "$HOME/.cache/cc-clip/codex/display" ]; then
+  _cc_clip_display="$(cat "$HOME/.cache/cc-clip/codex/display" 2>/dev/null)"
+  case "$_cc_clip_display" in
+    :[0-9]*) _cc_clip_num="${_cc_clip_display#:}" ;;
+    [0-9]*)  _cc_clip_num="$_cc_clip_display" ;;
+    *)       _cc_clip_num="" ;;
+  esac
+  if [ -n "$_cc_clip_num" ] && [ -S "/tmp/.X11-unix/X${_cc_clip_num}" ]; then
+    export DISPLAY=":${_cc_clip_num}"
+  fi
+  unset _cc_clip_display _cc_clip_num
+fi`
+	return displayMarkerStart + "\n" + body + "\n" + displayMarkerEnd + "\n"
+}
+
+// IsDisplayFixedSession checks if the DISPLAY marker block exists using a RemoteExecutor.
+func IsDisplayFixedSession(session RemoteExecutor) (bool, error) {
+	shell, err := DetectRemoteShellSession(session)
+	if err != nil {
+		return false, err
+	}
+
+	rcFile := RCFilePath(shell)
+	out, err := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", displayMarkerStart, rcFile))
+	if err != nil {
+		return false, fmt.Errorf("failed to check DISPLAY marker: %w", err)
+	}
+
+	return strings.Contains(out, displayMarkerStart), nil
+}
+
+// FixDisplaySession idempotently injects the DISPLAY marker block into the remote rc file.
+// The block is prepended (not appended) so it takes effect before any
+// interactive-only guard like `case $- in *i*) ;; *) return;; esac`.
+func FixDisplaySession(session RemoteExecutor) error {
+	fixed, err := IsDisplayFixedSession(session)
+	if err != nil {
+		return err
+	}
+	if fixed {
+		return nil
+	}
+
+	shell, err := DetectRemoteShellSession(session)
+	if err != nil {
+		return err
+	}
+
+	rcFile := RCFilePath(shell)
+	block := displayBlock()
+
+	// Prepend to rc file so DISPLAY is set before any interactive guard.
+	// Uses a temp file to avoid partial writes.
+	prependCmd := fmt.Sprintf(
+		`touch %s && { printf '%%s\n' %q; cat %s; } > %s.cc-clip-tmp && mv %s.cc-clip-tmp %s`,
+		rcFile, block, rcFile, rcFile, rcFile, rcFile)
+	_, err = session.Exec(prependCmd)
+	if err != nil {
+		return fmt.Errorf("failed to inject DISPLAY block into %s: %w", rcFile, err)
+	}
+
+	return nil
+}
+
+// RemoveDisplayMarkerSession removes the DISPLAY marker block using a RemoteExecutor.
+func RemoveDisplayMarkerSession(session RemoteExecutor) error {
+	shell, err := DetectRemoteShellSession(session)
+	if err != nil {
+		return err
+	}
+
+	rcFile := RCFilePath(shell)
+
+	// Use sed to remove the marker block.
+	sedCmd := fmt.Sprintf(
+		`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
+		sedEscape(displayMarkerStart),
+		sedEscape(displayMarkerEnd),
+		rcFile, rcFile)
+
+	_, err = session.Exec(sedCmd)
+	if err != nil {
+		return fmt.Errorf("failed to remove DISPLAY block from %s: %w", rcFile, err)
 	}
 
 	return nil

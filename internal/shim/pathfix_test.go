@@ -33,9 +33,15 @@ func (m *mockExecutor) Exec(cmd string) (string, error) {
 
 	// Handle grep -F for marker detection
 	if strings.HasPrefix(cmd, "grep -F") {
-		for _, content := range m.files {
-			if strings.Contains(content, pathMarkerStart) {
-				return pathMarkerStart, nil
+		// Extract the search string from grep -F "pattern" file
+		for _, marker := range []string{displayMarkerStart, pathMarkerStart} {
+			if strings.Contains(cmd, marker) {
+				for _, content := range m.files {
+					if strings.Contains(content, marker) {
+						return marker, nil
+					}
+				}
+				return "", nil
 			}
 		}
 		return "", nil
@@ -44,7 +50,13 @@ func (m *mockExecutor) Exec(cmd string) (string, error) {
 	// Handle touch + prepend (new format: prepend block before existing content)
 	if strings.HasPrefix(cmd, "touch") && strings.Contains(cmd, "cc-clip-tmp") {
 		rcFile := extractRCFileFromPrepend(cmd)
-		block := pathBlock()
+		// Determine which block is being prepended by checking command content
+		var block string
+		if strings.Contains(cmd, displayMarkerStart) {
+			block = displayBlock()
+		} else {
+			block = pathBlock()
+		}
 		existing := m.files[rcFile]
 		m.files[rcFile] = block + "\n" + existing
 		return "", nil
@@ -66,16 +78,23 @@ func (m *mockExecutor) Exec(cmd string) (string, error) {
 		if !exists {
 			return "", nil
 		}
+		// Determine which marker block to remove
+		markerStart := pathMarkerStart
+		markerEnd := pathMarkerEnd
+		if strings.Contains(cmd, sedEscape(displayMarkerStart)) {
+			markerStart = displayMarkerStart
+			markerEnd = displayMarkerEnd
+		}
 		// Simulate sed removal of marker block
 		lines := strings.Split(content, "\n")
 		var result []string
 		inBlock := false
 		for _, line := range lines {
-			if strings.Contains(line, pathMarkerStart) {
+			if strings.Contains(line, markerStart) {
 				inBlock = true
 				continue
 			}
-			if inBlock && strings.Contains(line, pathMarkerEnd) {
+			if inBlock && strings.Contains(line, markerEnd) {
 				inBlock = false
 				continue
 			}
@@ -357,6 +376,157 @@ func TestSedEscape(t *testing.T) {
 	escaped := sedEscape("# >>> cc-clip PATH (do not edit) >>>")
 	if strings.Contains(escaped, "(") && !strings.Contains(escaped, `\(`) {
 		t.Fatal("parentheses should be escaped")
+	}
+}
+
+// --- DISPLAY marker tests ---
+
+func TestDisplayBlockContainsMarkers(t *testing.T) {
+	block := displayBlock()
+
+	if !strings.Contains(block, displayMarkerStart) {
+		t.Fatal("displayBlock should contain marker start")
+	}
+	if !strings.Contains(block, displayMarkerEnd) {
+		t.Fatal("displayBlock should contain marker end")
+	}
+}
+
+func TestDisplayBlockContainsDISPLAYLogic(t *testing.T) {
+	block := displayBlock()
+
+	expectedSnippets := []string{
+		`DISPLAY`,
+		`$HOME/.cache/cc-clip/codex/display`,
+		`/tmp/.X11-unix/X`,
+		`_cc_clip_display`,
+		`_cc_clip_num`,
+		`export DISPLAY=":${_cc_clip_num}"`,
+		`unset _cc_clip_display _cc_clip_num`,
+	}
+
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(block, snippet) {
+			t.Errorf("displayBlock should contain %q", snippet)
+		}
+	}
+}
+
+func TestIsDisplayFixedSession(t *testing.T) {
+	m := newMockExecutor("/bin/bash")
+
+	// Before fix
+	fixed, err := IsDisplayFixedSession(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fixed {
+		t.Fatal("should not be fixed before injection")
+	}
+
+	// After fix
+	if err := FixDisplaySession(m); err != nil {
+		t.Fatalf("fix failed: %v", err)
+	}
+
+	fixed, err = IsDisplayFixedSession(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !fixed {
+		t.Fatal("should be fixed after injection")
+	}
+}
+
+func TestFixDisplaySessionIdempotent(t *testing.T) {
+	m := newMockExecutor("/bin/bash")
+
+	// First injection
+	if err := FixDisplaySession(m); err != nil {
+		t.Fatalf("first fix failed: %v", err)
+	}
+
+	execCountAfterFirst := len(m.execLog)
+
+	// Second injection should be a no-op
+	if err := FixDisplaySession(m); err != nil {
+		t.Fatalf("second fix failed: %v", err)
+	}
+
+	// Verify no additional touch/printf command was run
+	secondCallCmds := m.execLog[execCountAfterFirst:]
+	for _, cmd := range secondCallCmds {
+		if strings.HasPrefix(cmd, "touch") {
+			t.Fatal("idempotent fix should not prepend again")
+		}
+	}
+
+	// Verify content only has one marker block
+	content := m.files["~/.bashrc"]
+	count := strings.Count(content, displayMarkerStart)
+	if count != 1 {
+		t.Fatalf("expected exactly 1 DISPLAY marker block, found %d", count)
+	}
+}
+
+func TestRemoveDisplayMarkerSessionPreservesPATH(t *testing.T) {
+	m := newMockExecutor("/bin/bash")
+
+	// Inject both PATH and DISPLAY markers
+	if err := FixRemotePathSession(m); err != nil {
+		t.Fatalf("PATH fix failed: %v", err)
+	}
+	if err := FixDisplaySession(m); err != nil {
+		t.Fatalf("DISPLAY fix failed: %v", err)
+	}
+
+	content := m.files["~/.bashrc"]
+	if !strings.Contains(content, pathMarkerStart) {
+		t.Fatal("PATH marker should be present before removal")
+	}
+	if !strings.Contains(content, displayMarkerStart) {
+		t.Fatal("DISPLAY marker should be present before removal")
+	}
+
+	// Remove only DISPLAY marker
+	if err := RemoveDisplayMarkerSession(m); err != nil {
+		t.Fatalf("DISPLAY remove failed: %v", err)
+	}
+
+	content = m.files["~/.bashrc"]
+	if strings.Contains(content, displayMarkerStart) {
+		t.Fatal("DISPLAY marker should be removed")
+	}
+	if strings.Contains(content, displayMarkerEnd) {
+		t.Fatal("DISPLAY marker end should be removed")
+	}
+	if !strings.Contains(content, pathMarkerStart) {
+		t.Fatal("PATH marker should still be present after DISPLAY removal")
+	}
+	if !strings.Contains(content, pathExport) {
+		t.Fatal("PATH export should still be present after DISPLAY removal")
+	}
+}
+
+func TestRemoveDisplayMarkerSessionIdempotent(t *testing.T) {
+	m := newMockExecutor("/bin/bash")
+
+	// Inject DISPLAY marker
+	if err := FixDisplaySession(m); err != nil {
+		t.Fatalf("fix failed: %v", err)
+	}
+
+	// Remove twice — second should be a no-op, no error
+	if err := RemoveDisplayMarkerSession(m); err != nil {
+		t.Fatalf("first remove failed: %v", err)
+	}
+	if err := RemoveDisplayMarkerSession(m); err != nil {
+		t.Fatalf("second remove failed: %v", err)
+	}
+
+	content := m.files["~/.bashrc"]
+	if strings.Contains(content, displayMarkerStart) {
+		t.Fatal("DISPLAY marker should be removed")
 	}
 }
 
