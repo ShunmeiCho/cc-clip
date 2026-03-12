@@ -1222,9 +1222,15 @@ rm -f %s/bridge.pid; true`,
 }
 
 // isBridgeHealthy checks if x11-bridge is running on the remote.
+// Verifies both PID liveness and command name to avoid false positives
+// from stale PID files whose PID was reused by an unrelated process.
 func isBridgeHealthy(session *shim.SSHSession) bool {
 	checkScript := fmt.Sprintf(
-		`pid=$(cat %s/bridge.pid 2>/dev/null) && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 'ok' || echo 'no'`,
+		`pid=$(cat %s/bridge.pid 2>/dev/null) && \
+[ -n "$pid" ] && \
+kill -0 "$pid" 2>/dev/null && \
+ps -p "$pid" -o args= 2>/dev/null | grep -q 'cc-clip x11-bridge' && \
+echo 'ok' || echo 'no'`,
 		codexStateDir,
 	)
 	out, _ := session.Exec(checkScript)
