@@ -44,3 +44,50 @@ func TestStopLocalProcessDoesNotKillUnexpectedCommand(t *testing.T) {
 		t.Fatalf("pid file should be removed after stale pid detection, got err=%v", err)
 	}
 }
+
+func TestReleaseVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"0.3.0", "0.3.0"},
+		{"0.3.0-1-g99b1298", "0.3.0"},
+		{"0.3.0-15-gabcdef0", "0.3.0"},
+		{"1.0.0-rc1", "1.0.0-rc1"},              // pre-release tag, not git describe
+		{"1.0.0-rc1-3-g1234567", "1.0.0-rc1"},   // git describe from pre-release tag
+		{"0.3.0-beta-2-gabcdef0", "0.3.0-beta"}, // git describe from tag with dash
+		{"dev", "dev"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := releaseVersion(tt.input)
+			if got != tt.want {
+				t.Errorf("releaseVersion(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsNumeric(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"0", true},
+		{"123", true},
+		{"", false},
+		{"abc", false},
+		{"12a", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isNumeric(tt.input)
+			if got != tt.want {
+				t.Errorf("isNumeric(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}

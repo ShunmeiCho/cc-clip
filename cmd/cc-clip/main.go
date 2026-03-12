@@ -874,14 +874,40 @@ func prepareBinaryLocal(host, remoteOS, remoteArch string) (localBin string, err
 	return tmpBin, nil
 }
 
+// releaseVersion extracts the base release version from a git describe string.
+// "0.3.0-1-g99b1298" → "0.3.0", "0.3.0" → "0.3.0".
+// git describe format: <tag>-<N>-g<hash> where N = commits after tag.
+func releaseVersion(ver string) string {
+	// Split by "-" and check for the git describe pattern: at least 3 parts
+	// where the last part starts with "g" (commit hash) and second-to-last is a number.
+	parts := strings.Split(ver, "-")
+	if len(parts) >= 3 {
+		hash := parts[len(parts)-1]
+		count := parts[len(parts)-2]
+		if strings.HasPrefix(hash, "g") && isNumeric(count) {
+			return strings.Join(parts[:len(parts)-2], "-")
+		}
+	}
+	return ver
+}
+
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 	if version == "dev" {
 		return "", fmt.Errorf("running dev build, no release version to download")
 	}
 
-	// Normalize: goreleaser uses version without "v" prefix in asset names,
-	// but tag names always have "v" prefix.
-	ver := strings.TrimPrefix(version, "v")
+	// Strip "v" prefix, then extract base release version from git describe output.
+	// e.g. "v0.3.0-1-g99b1298" → "0.3.0-1-g99b1298" → "0.3.0"
+	ver := releaseVersion(strings.TrimPrefix(version, "v"))
 	archiveName := fmt.Sprintf("cc-clip_%s_%s_%s.tar.gz", ver, targetOS, targetArch)
 	url := fmt.Sprintf("https://github.com/ShunmeiCho/cc-clip/releases/download/v%s/%s", ver, archiveName)
 
