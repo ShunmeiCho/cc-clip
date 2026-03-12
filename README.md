@@ -349,7 +349,7 @@ If step 3 fails, the PATH fix didn't take effect. Log out and back in, or run: `
 ```bash
 # 1. Is DISPLAY set?
 echo $DISPLAY
-# Expected: :0 (or another display number like :1)
+# Expected: 127.0.0.1:0 (or 127.0.0.1:1, etc.)
 # If empty → open a NEW SSH session, or run: source ~/.bashrc
 
 # 2. Is the SSH tunnel working?
@@ -369,10 +369,10 @@ ps aux | grep 'cc-clip x11-bridge' | grep -v grep
 
 # 5. Does the X11 socket exist?
 ls -la /tmp/.X11-unix/
-# Expected: X0 file (matching your DISPLAY number)
+# Expected: X0 file (matching your display number)
 
 # 6. Can xclip read clipboard via X11? (copy an image on Mac first)
-DISPLAY=:0 xclip -selection clipboard -t TARGETS -o
+xclip -selection clipboard -t TARGETS -o
 # Expected: image/png
 ```
 
@@ -384,6 +384,8 @@ DISPLAY=:0 xclip -selection clipboard -t TARGETS -o
 | Step 2 (tunnel down) | Open a **new** SSH connection — tunnel is per-connection |
 | Steps 3-4 (processes missing) | `cc-clip connect myserver --codex --force` from local |
 | Step 6 (no image/png) | Copy an image on Mac first: `Cmd+Shift+Ctrl+4` |
+
+> **Note:** DISPLAY uses TCP loopback format (`127.0.0.1:N`) instead of Unix socket format (`:N`) because Codex CLI's sandbox blocks access to `/tmp/.X11-unix/`. If you previously set up cc-clip with an older version, re-run `cc-clip connect myserver --codex --force` to update.
 
 </details>
 

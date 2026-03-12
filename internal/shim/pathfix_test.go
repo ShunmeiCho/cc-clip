@@ -398,10 +398,9 @@ func TestDisplayBlockContainsDISPLAYLogic(t *testing.T) {
 	expectedSnippets := []string{
 		`DISPLAY`,
 		`$HOME/.cache/cc-clip/codex/display`,
-		`/tmp/.X11-unix/X`,
 		`_cc_clip_display`,
 		`_cc_clip_num`,
-		`export DISPLAY=":${_cc_clip_num}"`,
+		`export DISPLAY="127.0.0.1:${_cc_clip_num}"`,
 		`unset _cc_clip_display _cc_clip_num`,
 	}
 
@@ -409,6 +408,11 @@ func TestDisplayBlockContainsDISPLAYLogic(t *testing.T) {
 		if !strings.Contains(block, snippet) {
 			t.Errorf("displayBlock should contain %q", snippet)
 		}
+	}
+
+	// Verify Unix socket check is NOT present (we use TCP now)
+	if strings.Contains(block, `/tmp/.X11-unix/X`) {
+		t.Error("displayBlock should not check Unix socket path; TCP loopback is used for Codex sandbox compatibility")
 	}
 }
 

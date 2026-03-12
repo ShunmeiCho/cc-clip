@@ -157,6 +157,9 @@ func RemoveRemotePathSession(session RemoteExecutor) error {
 }
 
 // displayBlock returns the full DISPLAY marker block to inject into shell rc files.
+// DISPLAY is set to TCP loopback format (127.0.0.1:{num}) instead of Unix socket
+// format (:{num}) because Codex CLI runs inside a sandbox that blocks access to
+// the Unix socket at /tmp/.X11-unix/. TCP loopback bypasses this restriction.
 func displayBlock() string {
 	body := `if [ -z "${DISPLAY:-}" ] && [ -r "$HOME/.cache/cc-clip/codex/display" ]; then
   _cc_clip_display="$(cat "$HOME/.cache/cc-clip/codex/display" 2>/dev/null)"
@@ -165,8 +168,8 @@ func displayBlock() string {
     [0-9]*)  _cc_clip_num="$_cc_clip_display" ;;
     *)       _cc_clip_num="" ;;
   esac
-  if [ -n "$_cc_clip_num" ] && [ -S "/tmp/.X11-unix/X${_cc_clip_num}" ]; then
-    export DISPLAY=":${_cc_clip_num}"
+  if [ -n "$_cc_clip_num" ]; then
+    export DISPLAY="127.0.0.1:${_cc_clip_num}"
   fi
   unset _cc_clip_display _cc_clip_num
 fi`

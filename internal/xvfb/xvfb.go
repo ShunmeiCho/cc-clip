@@ -195,7 +195,7 @@ func StartRemote(session RemoteExecutor, stateDir string) (*State, error) {
 	// Step 4: Start Xvfb via nohup + -displayfd
 	startScript := fmt.Sprintf(`mkdir -p %s
 rm -f %s/display
-nohup Xvfb -displayfd 1 -screen 0 1x1x24 -nolisten tcp \
+nohup Xvfb -displayfd 1 -screen 0 1x1x24 -listen tcp \
   > %s/display \
   2> %s/xvfb.log \
   < /dev/null &
