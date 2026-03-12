@@ -27,10 +27,11 @@ When running Claude Code or Codex CLI on a remote server via SSH, **Ctrl+V image
 ## The Solution
 
 ```
-Mac clipboard  →  cc-clip daemon  →  SSH tunnel  →  xclip shim  →  Claude Code
+Claude Code:  Mac clipboard → cc-clip daemon → SSH tunnel → xclip shim    → Claude Code
+Codex CLI:    Mac clipboard → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb → Codex CLI
 ```
 
-One command. No changes to Claude Code. No terminal-specific hacks. Works everywhere.
+One command. No changes to Claude Code or Codex. No terminal-specific hacks. Works everywhere.
 
 ## Quick Start
 
@@ -68,6 +69,9 @@ graph LR
     subgraph remote ["🐧 Linux (remote)"]
         F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
         E -- "curl" --> D["127.0.0.1:18339"]
+        G["Codex CLI"] -- "Ctrl+V / arboard" --> H["Xvfb CLIPBOARD"]
+        H -- "SelectionRequest" --> I["x11-bridge"]
+        I -- "HTTP" --> D
     end
 
     C == "SSH RemoteForward" ==> D
@@ -76,11 +80,13 @@ graph LR
     style remote fill:#1a1a2e,stroke:#0f3460,color:#eee
     style A fill:#e94560,stroke:#e94560,color:#fff
     style F fill:#0f3460,stroke:#0f3460,color:#fff
+    style G fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
 1. **Local daemon** reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback
 2. **SSH RemoteForward** tunnels the daemon port to the remote server
-3. **xclip shim** intercepts only the clipboard calls Claude Code makes, fetches images through the tunnel, passes everything else to the real `xclip`
+3. **Claude Code path:** xclip shim intercepts clipboard calls, fetches images via curl through the tunnel
+4. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11
 
 ## Security
 
@@ -167,7 +173,7 @@ All settings have sensible defaults. Override via environment variables:
 
 **Remote:** Linux with `xclip`, `curl`, `bash`, SSH `RemoteForward` (all auto-configured by `cc-clip connect`)
 
-**Remote (Codex `--codex`):** Additionally requires `Xvfb` (`apt install xvfb`). Auto-detected by `connect --codex`.
+**Remote (Codex `--codex`):** Additionally requires `Xvfb`. Auto-installed if passwordless sudo is available, otherwise: `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora).
 
 ## Troubleshooting
 
@@ -195,6 +201,24 @@ ssh myserver "which xclip"
 # 4. Remote: Does the shim intercept correctly?
 ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 # Expected: image/png
+```
+
+</details>
+
+<details>
+<summary><b>Codex CLI: verify clipboard bridge</b></summary>
+
+```bash
+# 1. Check DISPLAY is set (open a new SSH session first)
+ssh myserver 'echo $DISPLAY'
+# Expected: :0 (or another display number)
+
+# 2. Check x11-bridge and Xvfb are running
+ssh myserver 'ps aux | grep -E "cc-clip x11-bridge|Xvfb" | grep -v grep'
+
+# 3. Check clipboard targets via X11
+ssh myserver 'DISPLAY=:0 xclip -selection clipboard -t TARGETS -o'
+# Expected: image/png (when Mac clipboard has an image)
 ```
 
 </details>
