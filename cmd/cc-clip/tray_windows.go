@@ -281,6 +281,9 @@ $et = [System.Security.SecurityElement]::Escape($Title)
 $em = [System.Security.SecurityElement]::Escape($Message)
 $x.LoadXml("<toast duration=""short""><visual><binding template=""ToastText02""><text id=""1"">$et</text><text id=""2"">$em</text></binding></visual><audio silent=""true""/></toast>")
 $t = New-Object Windows.UI.Notifications.ToastNotification $x
+$t.Tag = "status"
+$t.Group = "cc-clip"
+$t.ExpirationTime = [System.DateTimeOffset]::Now.AddSeconds(30)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("cc-clip").Show($t)
 `
 	if err := os.WriteFile(t.toastPS1, []byte(ps1Content), 0644); err != nil {
