@@ -3,6 +3,7 @@ package shim
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ func TestInstallAndUninstallXclip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shim file not found: %v", err)
 	}
-	if info.Mode().Perm()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0 {
 		t.Fatal("shim file is not executable")
 	}
 

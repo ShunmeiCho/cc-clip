@@ -4,13 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
 )
 
 func TestStopLocalProcessDoesNotKillUnexpectedCommand(t *testing.T) {
-	cmd := exec.Command("sleep", "30")
+	cmd := helperSleepProcess(t)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start helper process: %v", err)
 	}
@@ -43,6 +44,29 @@ func TestStopLocalProcessDoesNotKillUnexpectedCommand(t *testing.T) {
 	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
 		t.Fatalf("pid file should be removed after stale pid detection, got err=%v", err)
 	}
+}
+
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	if len(os.Args) < 3 || os.Args[len(os.Args)-1] != "sleep-helper" {
+		os.Exit(0)
+	}
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
+}
+
+func helperSleepProcess(t *testing.T) *exec.Cmd {
+	t.Helper()
+
+	args := []string{"-test.run=TestHelperProcess", "--", "sleep-helper"}
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+	if runtime.GOOS == "windows" {
+		cmd.Env = append(cmd.Env, "SystemRoot="+os.Getenv("SystemRoot"))
+	}
+	return cmd
 }
 
 func TestReleaseVersion(t *testing.T) {
