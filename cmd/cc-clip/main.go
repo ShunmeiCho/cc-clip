@@ -78,6 +78,7 @@ Usage:
 Daemon (local):
   serve              Start local clipboard daemon
     --port           Listen port (default: 18339, env: CC_CLIP_PORT)
+    --bind           Bind address (default: 127.0.0.1, env: CC_CLIP_BIND)
     --rotate-token   Force new token generation (ignore existing)
   service            Manage launchd service (macOS)
     install          Install and load launchd service
@@ -167,10 +168,19 @@ func getTokenTTL() time.Duration {
 	return ttl
 }
 
+func getBind() string {
+	bind := getFlag("bind", "127.0.0.1")
+	if env := os.Getenv("CC_CLIP_BIND"); env != "" {
+		bind = env
+	}
+	return bind
+}
+
 func cmdServe() {
 	port := getPort()
 	ttl := getTokenTTL()
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	bind := getBind()
+	addr := fmt.Sprintf("%s:%d", bind, port)
 	rotateToken := hasFlag("rotate-token")
 
 	tm := token.NewManager(ttl)
@@ -216,7 +226,8 @@ func cmdServe() {
 
 func cmdPaste() {
 	port := getPort()
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	bind := getBind()
+	baseURL := fmt.Sprintf("http://%s:%d", bind, port)
 
 	tok, err := token.ReadTokenFile()
 	if err != nil {
@@ -227,7 +238,7 @@ func cmdPaste() {
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 	fetchTimeout := envDuration("CC_CLIP_FETCH_TIMEOUT_MS", 5*time.Second)
 
-	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err != nil {
+	if err := tunnel.Probe(fmt.Sprintf("%s:%d", bind, port), probeTimeout); err != nil {
 		fmt.Fprintf(os.Stderr, "cc-clip: tunnel unreachable: %v\n", err)
 		os.Exit(exitcode.TunnelUnreachable)
 	}
@@ -527,9 +538,10 @@ func runConnect(opts connectOpts) {
 	tokenOnly := opts.tokenOnly
 
 	// Step 1: Check local daemon
-	fmt.Printf("[1/7] Checking local daemon on :%d...\n", port)
+	bind := getBind()
+	fmt.Printf("[1/7] Checking local daemon on %s:%d...\n", bind, port)
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
-	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err != nil {
+	if err := tunnel.Probe(fmt.Sprintf("%s:%d", bind, port), probeTimeout); err != nil {
 		log.Fatalf("Local daemon not running. Start it first: cc-clip serve")
 	}
 	fmt.Println("      daemon running")
@@ -746,9 +758,10 @@ func cmdSetup() {
 	}
 
 	// Step 3: Daemon
+	bind := getBind()
 	fmt.Println("[3/4] Starting local daemon...")
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
-	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err == nil {
+	if err := tunnel.Probe(fmt.Sprintf("%s:%d", bind, port), probeTimeout); err == nil {
 		fmt.Printf("      daemon already running on :%d\n", port)
 	} else if runtime.GOOS == "darwin" {
 		exePath, err := os.Executable()
@@ -1004,7 +1017,8 @@ func cmdStatus() {
 	port := getPort()
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	bind := getBind()
+	addr := fmt.Sprintf("%s:%d", bind, port)
 	if err := tunnel.Probe(addr, probeTimeout); err != nil {
 		fmt.Printf("daemon:  not running on :%d\n", port)
 	} else {

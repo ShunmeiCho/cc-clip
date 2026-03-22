@@ -43,13 +43,45 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	host, _, _ := net.SplitHostPort(s.addr)
-	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+	if !isAllowedAddress(host) {
 		listener.Close()
-		return fmt.Errorf("refusing to listen on non-loopback address: %s", host)
+		return fmt.Errorf("refusing to listen on non-private address: %s (only loopback and private/CGNAT ranges are allowed)", host)
 	}
 
 	log.Printf("cc-clip daemon listening on %s", s.addr)
 	return http.Serve(listener, s.mux)
+}
+
+// isAllowedAddress returns true if the host is a loopback, private (RFC 1918),
+// or CGNAT (100.64.0.0/10, used by Tailscale) address. Binding to 0.0.0.0 or
+// :: is also allowed as it includes loopback; the bearer token protects against
+// unauthorized access.
+func isAllowedAddress(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsUnspecified() {
+		return true
+	}
+	// RFC 1918 + CGNAT (100.64.0.0/10, covers Tailscale 100.x.x.x)
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"100.64.0.0/10",
+		"fd00::/8",
+	}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
