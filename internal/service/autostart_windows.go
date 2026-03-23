@@ -40,12 +40,37 @@ func vbsPath() string {
 	return filepath.Join(cacheDir, "cc-clip", "start-daemon.vbs")
 }
 
+// daemonStopFilePath returns the path to the daemon stop sentinel file.
+func daemonStopFilePath() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		cacheDir = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cacheDir, "cc-clip", "daemon.stop")
+}
+
 // generateVBS creates a VBScript that launches cc-clip serve with no visible window.
+// Uses a restart loop with a stop-file sentinel, matching the hotkey VBS pattern
+// and providing KeepAlive-like reliability (matching macOS launchd behavior).
 func generateVBS(binaryPath string, port int) string {
 	logFile := logPath()
+	stopFile := daemonStopFilePath()
 	return fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd.exe /c """"%s"" serve --port %d >> ""%s"" 2>&1""", 0, False
-`, binaryPath, port, logFile)
+Set fso = CreateObject("Scripting.FileSystemObject")
+Do
+  If fso.FileExists("%s") Then
+    fso.DeleteFile "%s", True
+    Exit Do
+  End If
+  WshShell.Run "cmd.exe /c """"%s"" serve --port %d >> ""%s"" 2>&1""", 0, True
+  If fso.FileExists("%s") Then
+    fso.DeleteFile "%s", True
+    Exit Do
+  End If
+  WScript.Sleep 5000
+Loop
+`, stopFile, stopFile, binaryPath, port, logFile, stopFile, stopFile)
 }
 
 // regAdd adds a registry value. Overridable for testing.
@@ -113,8 +138,47 @@ func Install(binaryPath string, port int) error {
 	return nil
 }
 
-// Uninstall removes the auto-start registry entry and VBScript launcher.
+// stopDaemonProcess finds and terminates any running cc-clip serve process.
+// Overridable for testing.
+var stopDaemonProcess = func() error {
+	// Find PID of the running daemon via Get-CimInstance.
+	psCmd := `Get-CimInstance Win32_Process -Filter "name='cc-clip.exe'" -ErrorAction SilentlyContinue | ` +
+		`Where-Object { $_.CommandLine -match 'serve' } | Select-Object -ExpandProperty ProcessId`
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil // No process found
+	}
+	pidStr := strings.TrimSpace(string(out))
+	if pidStr == "" {
+		return nil
+	}
+	// taskkill each matching PID (there may be multiple lines).
+	for _, line := range strings.Split(pidStr, "\n") {
+		pid := strings.TrimSpace(line)
+		if pid != "" {
+			exec.Command("taskkill", "/PID", pid, "/F").Run()
+		}
+	}
+	return nil
+}
+
+// writeDaemonStopFile writes the sentinel that tells the VBS restart loop to exit.
+func writeDaemonStopFile() {
+	path := daemonStopFilePath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte("stop"), 0644)
+}
+
+// Uninstall removes the auto-start registry entry, VBScript launcher,
+// and stops the running daemon process (matching macOS launchctlUnload behavior).
 func Uninstall() error {
+	// Write stop sentinel so the VBS restart loop exits after we kill the daemon.
+	writeDaemonStopFile()
+
+	// Stop the running daemon process.
+	_ = stopDaemonProcess()
+
 	// Remove registry entry (ignore errors if not found)
 	_ = regDelete(registryKey, registryValue)
 
@@ -127,7 +191,7 @@ func Uninstall() error {
 // processChecker returns the command line output for matching processes.
 // Overridable for testing.
 var processChecker = func() (string, error) {
-	psCmd := `(Get-CimInstance Win32_Process -Filter "name='cc-clip.exe'").CommandLine`
+	psCmd := `(Get-CimInstance Win32_Process -Filter "name='cc-clip.exe'" -ErrorAction SilentlyContinue).CommandLine`
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

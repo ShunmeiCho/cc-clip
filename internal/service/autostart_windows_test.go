@@ -4,6 +4,8 @@ package service
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +100,59 @@ func TestStatusInstalledButDifferentProcess(t *testing.T) {
 	}
 	if running {
 		t.Fatal("expected not running when process doesn't have 'serve'")
+	}
+}
+
+func TestUninstallStopsDaemonProcess(t *testing.T) {
+	originalDelete := regDelete
+	originalStop := stopDaemonProcess
+	t.Cleanup(func() {
+		regDelete = originalDelete
+		stopDaemonProcess = originalStop
+	})
+
+	stopCalled := false
+	stopDaemonProcess = func() error {
+		stopCalled = true
+		return nil
+	}
+	regDelete = func(key, name string) error {
+		return nil
+	}
+
+	if err := Uninstall(); err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	if !stopCalled {
+		t.Fatal("expected stopDaemonProcess to be called during Uninstall")
+	}
+
+	// Verify daemon stop sentinel was written.
+	stopFile := daemonStopFilePath()
+	if _, err := os.Stat(stopFile); os.IsNotExist(err) {
+		t.Fatal("expected daemon stop sentinel to be written during Uninstall")
+	}
+	// Clean up.
+	os.Remove(stopFile)
+}
+
+func TestGenerateVBSContainsRestartLoop(t *testing.T) {
+	content := generateVBS(`C:\tools\cc-clip.exe`, 18339)
+
+	checks := []struct {
+		name     string
+		contains string
+	}{
+		{"restart loop", "Do"},
+		{"stop file check", "fso.FileExists"},
+		{"serve command", "serve --port 18339"},
+		{"sleep", "WScript.Sleep 5000"},
+		{"loop end", "Loop"},
+		{"wait for exit", ", 0, True"},
+	}
+	for _, check := range checks {
+		if !strings.Contains(content, check.contains) {
+			t.Errorf("VBS missing %s: expected to contain %q", check.name, check.contains)
+		}
 	}
 }

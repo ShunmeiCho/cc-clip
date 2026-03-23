@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestStopHotkeyProcessWritesStopSentinel(t *testing.T) {
+func TestStopHotkeyProcessWritesStopSentinelAndKills(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "hotkey.pid")
 	stopFile := filepath.Join(tmpDir, "hotkey.stop")
@@ -53,7 +53,7 @@ func TestStopHotkeyProcessWritesStopSentinel(t *testing.T) {
 	}
 }
 
-func TestStopHotkeyProcessNoopWhenNotRunning(t *testing.T) {
+func TestStopHotkeyProcessWritesSentinelEvenWhenNotRunning(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "hotkey.pid")
 	stopFile := filepath.Join(tmpDir, "hotkey.stop")
@@ -71,12 +71,12 @@ func TestStopHotkeyProcessNoopWhenNotRunning(t *testing.T) {
 		return "cc-clip.exe hotkey --run-loop", nil
 	}
 
-	// No PID file exists — stopHotkeyProcess should be a no-op.
+	// No PID file exists — hotkey process may have crashed but the VBS
+	// autostart loop could still be running. The sentinel must be written
+	// unconditionally so the VBS loop exits on its next iteration.
 	stopHotkeyProcess()
 
-	// Stop sentinel must NOT be created when nothing was running,
-	// otherwise a future manual start would immediately see the sentinel and exit.
-	if _, err := os.Stat(stopFile); !os.IsNotExist(err) {
-		t.Fatal("expected no stop sentinel file when hotkey is not running")
+	if _, err := os.Stat(stopFile); os.IsNotExist(err) {
+		t.Fatal("expected stop sentinel file even when hotkey process is not running")
 	}
 }

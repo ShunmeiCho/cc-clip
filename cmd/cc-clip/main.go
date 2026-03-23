@@ -1283,9 +1283,9 @@ func cmdX11Bridge() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle SIGTERM for graceful shutdown.
+	// Handle shutdown signals (SIGINT + SIGTERM on Unix, SIGINT on Windows).
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
+	signal.Notify(sigCh, shutdownSignals()...)
 	go func() {
 		<-sigCh
 		log.Printf("x11-bridge: received shutdown signal")

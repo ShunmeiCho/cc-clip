@@ -188,8 +188,15 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	}
 	defer os.Remove(hotkeyPIDPath())
 
-	// Remove stale stop file from a previous Quit that was followed by a manual restart
-	os.Remove(hotkeyStopFilePath())
+	// Remove stale stop file only if it predates our startup. This avoids a
+	// TOCTOU race where --stop writes the sentinel between VBS respawn and
+	// this cleanup line, which would cause the sentinel to be deleted and the
+	// VBS loop to restart us again.
+	if info, err := os.Stat(hotkeyStopFilePath()); err == nil {
+		if info.ModTime().Before(time.Now().Add(-2 * time.Second)) {
+			os.Remove(hotkeyStopFilePath())
+		}
+	}
 
 	binding, err := parseHotkey(hotkey)
 	if err != nil {
@@ -324,9 +331,15 @@ func printHotkeyStatus() {
 }
 
 func stopHotkeyProcess() {
+	// Write stop sentinel unconditionally so the VBS autostart loop exits
+	// even if the hotkey process has crashed and the PID file is gone.
+	// The sentinel is harmless if no VBS loop is running — it gets cleaned
+	// up on the next --run-loop start.
+	writeHotkeyStopFile()
+
 	pid, ok := hotkeyProcessPID()
 	if !ok {
-		fmt.Println("hotkey: not running")
+		fmt.Println("hotkey: not running (stop sentinel written)")
 		return
 	}
 
@@ -343,9 +356,6 @@ func stopHotkeyProcess() {
 		os.Remove(hotkeyPIDPath())
 		return
 	}
-	// Write stop sentinel before killing so the VBS autostart loop exits
-	// instead of respawning the process.
-	writeHotkeyStopFile()
 	_ = proc.Kill()
 	os.Remove(hotkeyPIDPath())
 	fmt.Printf("hotkey: stopped PID %d\n", pid)

@@ -98,6 +98,7 @@ func RunRemote(host string, port int) []CheckResult {
 func remoteExecNoForward(host string, args ...string) (string, error) {
 	cmdStr := strings.Join(args, " ")
 	cmd := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, cmdStr)
+	hideConsoleWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }

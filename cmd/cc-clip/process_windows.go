@@ -67,7 +67,7 @@ func localProcessCommand(pid int) (string, error) {
 func localProcessCommandImpl(pid int) (string, error) {
 	// Use PowerShell Get-CimInstance instead of wmic, which is deprecated
 	// and removed by default on Windows 11 24H2+.
-	psCmd := fmt.Sprintf(`(Get-CimInstance Win32_Process -Filter "ProcessId=%d").CommandLine`, pid)
+	psCmd := fmt.Sprintf(`(Get-CimInstance Win32_Process -Filter "ProcessId=%d" -ErrorAction SilentlyContinue).CommandLine`, pid)
 	out, err := exec.Command("powershell", "-NoProfile", "-Command", psCmd).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("Get-CimInstance failed: %w", err)
