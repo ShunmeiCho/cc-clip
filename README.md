@@ -22,20 +22,21 @@
 
 ## The Problem
 
-When running Claude Code or Codex CLI on a remote server via SSH, **Ctrl+V image paste doesn't work**. The remote clipboard is empty — no screenshots, no diagrams, no visual context. You're stuck with text-only.
+When running Claude Code or Codex CLI on a remote server via SSH, **image paste often doesn't work**. The remote clipboard is empty — no screenshots, no diagrams, no visual context. You're stuck with text-only.
 
 ## The Solution
 
-```
-Claude Code:  Mac clipboard → cc-clip daemon → SSH tunnel → xclip shim    → Claude Code
-Codex CLI:    Mac clipboard → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb → Codex CLI
+```text
+Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim      → Claude Code
+Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP       → remote file path → Claude Code
+Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb → Codex CLI
 ```
 
-One command. No changes to Claude Code or Codex. No terminal-specific hacks. Works everywhere.
+One tool. No changes to Claude Code or Codex. No terminal-specific hacks for the common path.
 
 ## Prerequisites
 
-- **Local machine:** macOS 13+ (Apple Silicon or Intel)
+- **Local machine:** macOS 13+ or Windows 10/11
 - **Remote server:** Linux (amd64 or arm64) accessible via SSH
 - **SSH config:** You must have a Host entry in `~/.ssh/config` for your remote server
 
@@ -49,15 +50,27 @@ Host myserver
     IdentityFile ~/.ssh/id_rsa  # optional, if using key auth
 ```
 
+If you are on Windows and want the SSH/Claude Code workflow, use the dedicated guide:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
 ## Quick Start
 
 ### Step 1: Install cc-clip
+
+macOS / Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
 ```
 
-After installation, add `~/.local/bin` to your PATH if prompted:
+Windows:
+
+Follow the dedicated guide:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
+On macOS / Linux, add `~/.local/bin` to your PATH if prompted:
 
 ```bash
 # Add to your shell profile (~/.zshrc or ~/.bashrc)
@@ -76,6 +89,8 @@ cc-clip --version
 > **macOS "killed" error?** If you see `zsh: killed cc-clip`, macOS Gatekeeper is blocking the binary. Fix: `xattr -d com.apple.quarantine ~/.local/bin/cc-clip`
 
 ### Step 2: Setup (one command)
+
+macOS:
 
 ```bash
 # For Claude Code only
@@ -102,7 +117,15 @@ This single command:
 >
 > After fixing, re-run `cc-clip setup myserver --codex`.
 
+Windows:
+
+Use the dedicated guide:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
 ### Step 3: Connect and use
+
+macOS:
 
 Open a **new** SSH session to your server (the tunnel activates on SSH connection):
 
@@ -114,12 +137,22 @@ Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from 
 
 > **Important:** The image paste works through the SSH tunnel. You must connect via `ssh myserver` (the host you set up). The tunnel is established on each SSH connection.
 
+Windows:
+
+See:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
 ### Verify it works
 
 ```bash
 # Copy an image to your Mac clipboard first (Cmd+Shift+Ctrl+4), then:
 cc-clip doctor --host myserver
 ```
+
+On Windows, the equivalent quick check is:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
 
 ## Why cc-clip?
 
@@ -139,9 +172,15 @@ graph LR
         B --> C["cc-clip daemon<br/>127.0.0.1:18339"]
     end
 
+    subgraph win ["Local Windows"]
+        J["Clipboard"] --> K["cc-clip hotkey / send"]
+    end
+
     subgraph remote ["Remote Linux"]
         F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
         E -- "curl" --> D["127.0.0.1:18339"]
+        K -- "ssh/scp upload" --> L["~/.cache/cc-clip/uploads"]
+        L -- "paste path" --> F
         G["Codex CLI"] -- "Ctrl+V / arboard" --> H["Xvfb CLIPBOARD"]
         H -- "SelectionRequest" --> I["x11-bridge"]
         I -- "HTTP" --> D
@@ -156,10 +195,9 @@ graph LR
     style G fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
-1. **Local daemon** reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback
-2. **SSH RemoteForward** tunnels the daemon port to the remote server
-3. **Claude Code path:** xclip shim intercepts clipboard calls, fetches images via curl through the tunnel
-4. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11
+1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` shim fetches images through the SSH tunnel
+2. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
+3. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11
 
 ## Security
 
@@ -187,15 +225,15 @@ codex           # Codex CLI
 
 The local daemon runs as a macOS launchd service and starts automatically on login. No need to re-run setup.
 
-**Reconnecting after reboot or network change:**
+### Windows workflow
 
-```bash
-# If image paste stops working, re-sync the token:
-cc-clip connect myserver --token-only
+On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore provides a Windows-native workflow that does not depend on remote clipboard interception.
 
-# Full health check:
-cc-clip doctor --host myserver
-```
+For first-time setup and day-to-day usage, use:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
+The Windows workflow uses a dedicated remote-paste hotkey (default: `Alt+Shift+V`) so it does not collide with local Claude Code's native `Alt+V`.
 
 ## Commands
 
@@ -210,6 +248,8 @@ cc-clip doctor --host myserver
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip send [<host>] --paste` | Windows: upload clipboard image and paste remote path |
+| `cc-clip hotkey [<host>]` | Windows: register the remote upload/paste hotkey |
 
 <details>
 <summary>All commands</summary>
@@ -227,6 +267,13 @@ cc-clip doctor --host myserver
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
 | `cc-clip service status` | Show service status |
+| `cc-clip send [<host>]` | Upload clipboard image to a remote file |
+| `cc-clip send [<host>] --paste` | Windows: paste the uploaded remote path into the active window |
+| `cc-clip hotkey [<host>]` | Windows: run a background remote-paste hotkey listener |
+| `cc-clip hotkey --enable-autostart` | Windows: start the hotkey listener automatically at login |
+| `cc-clip hotkey --disable-autostart` | Windows: remove hotkey auto-start at login |
+| `cc-clip hotkey --status` | Windows: show hotkey status |
+| `cc-clip hotkey --stop` | Windows: stop the hotkey listener |
 | `cc-clip doctor` | Local health check |
 | `cc-clip doctor --host <host>` | End-to-end health check |
 | `cc-clip status` | Show component status |
@@ -266,12 +313,15 @@ All settings have sensible defaults. Override via environment variables:
 |-------|--------|--------|
 | macOS (Apple Silicon) | Linux (amd64) | Stable |
 | macOS (Intel) | Linux (arm64) | Stable |
+| Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
 
 ## Requirements
 
-**Local:** macOS 13+ (deps auto-installed by `cc-clip setup`)
+**Local (macOS):** macOS 13+ (`pngpaste`, auto-installed by `cc-clip setup`)
 
-**Remote:** Linux with `xclip`, `curl`, `bash`, SSH `RemoteForward` (all auto-configured by `cc-clip connect`)
+**Local (Windows):** Windows 10/11 with PowerShell, `ssh`, and `scp` available in `PATH`
+
+**Remote:** Linux with `xclip`, `curl`, `bash`, and SSH access. The macOS tunnel/shim path is auto-configured by `cc-clip connect`; the Windows upload/hotkey path uses SSH/SCP directly.
 
 **Remote (Codex `--codex`):** Additionally requires `Xvfb`. Auto-installed if passwordless sudo is available, otherwise: `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora).
 
@@ -347,6 +397,26 @@ ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 If step 2 fails, you need to open a **new** SSH connection (the tunnel is established on connect).
 
 If step 3 fails, the PATH fix didn't take effect. Log out and back in, or run: `source ~/.bashrc`
+
+</details>
+
+<details>
+<summary><b>New SSH tab says "remote port forwarding failed for listen port 18339"</b></summary>
+
+**Symptom:** A newly opened SSH tab warns `remote port forwarding failed for listen port 18339`, and image paste in that tab does nothing.
+
+**Cause:** `cc-clip` uses a fixed remote port (`18339`) for the reverse tunnel. If another SSH session to the same host already owns that port, or a stale `sshd` child is still holding it, the new tab cannot establish its own tunnel.
+
+**Fix:**
+
+```bash
+# Inspect the remote port without opening another forward:
+ssh -o ClearAllForwardings=yes myserver "ss -tln | grep 18339 || true"
+```
+
+- If another live SSH tab already owns the tunnel, use that tab/session, or close it before opening a new one.
+- If the port is stuck after a disconnect, follow the stale `sshd` cleanup steps below.
+- If you truly need multiple concurrent SSH sessions with image paste, give each host alias a different `cc-clip` port instead of sharing `18339`.
 
 </details>
 

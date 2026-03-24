@@ -6,7 +6,16 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
+
+// hiddenCmd creates an exec.Cmd that won't flash a console window.
+func hiddenCmd(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	win32.HideConsoleWindow(cmd)
+	return cmd
+}
 
 type windowsClipboard struct{}
 
@@ -16,15 +25,15 @@ func NewClipboardReader() ClipboardReader {
 
 func (c *windowsClipboard) Type() (ClipboardInfo, error) {
 	// Use PowerShell to check clipboard format
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		"[System.Windows.Forms.Clipboard]::ContainsImage()")
+	cmd := hiddenCmd("powershell", "-NoProfile", "-Command",
+		"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::ContainsImage()")
 	out, err := cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) == "True" {
 		return ClipboardInfo{Type: ClipboardImage, Format: "png"}, nil
 	}
 
-	cmd = exec.Command("powershell", "-NoProfile", "-Command",
-		"[System.Windows.Forms.Clipboard]::ContainsText()")
+	cmd = hiddenCmd("powershell", "-NoProfile", "-Command",
+		"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::ContainsText()")
 	out, err = cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) == "True" {
 		return ClipboardInfo{Type: ClipboardText}, nil
@@ -35,7 +44,7 @@ func (c *windowsClipboard) Type() (ClipboardInfo, error) {
 
 func (c *windowsClipboard) ImageBytes() ([]byte, error) {
 	// Save clipboard image to temp file via PowerShell, then read it
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", `
+	cmd := hiddenCmd("powershell", "-NoProfile", "-Command", `
 Add-Type -AssemblyName System.Windows.Forms
 $img = [System.Windows.Forms.Clipboard]::GetImage()
 if ($img -eq $null) { exit 1 }

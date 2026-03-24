@@ -110,6 +110,41 @@ func TestDetectRemoteArchParsing(t *testing.T) {
 	}
 }
 
+func TestConnArgsWithControlPath(t *testing.T) {
+	s := &SSHSession{
+		host:        "myhost",
+		controlPath: "/tmp/cc-clip-ssh-test",
+	}
+	args := s.connArgs()
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d: %v", len(args), args)
+	}
+	if args[0] != "-o" {
+		t.Errorf("args[0] = %q, want '-o'", args[0])
+	}
+	if args[1] != "ControlPath=/tmp/cc-clip-ssh-test" {
+		t.Errorf("args[1] = %q, want ControlPath=...", args[1])
+	}
+}
+
+func TestConnArgsWithoutControlPath(t *testing.T) {
+	// Windows path: controlPath is empty.
+	s := &SSHSession{
+		host:        "myhost",
+		controlPath: "",
+	}
+	args := s.connArgs()
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d: %v", len(args), args)
+	}
+	if args[0] != "-o" {
+		t.Errorf("args[0] = %q, want '-o'", args[0])
+	}
+	if args[1] != "ClearAllForwardings=yes" {
+		t.Errorf("args[1] = %q, want 'ClearAllForwardings=yes'", args[1])
+	}
+}
+
 // parseUnameOutput is a testable extraction of the uname parsing logic.
 // Both DetectRemoteArch and DetectRemoteArchViaSession use equivalent logic.
 func parseUnameOutput(output string) (string, string, error) {

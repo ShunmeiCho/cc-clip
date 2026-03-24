@@ -50,6 +50,12 @@ func RunLocal(port int) []CheckResult {
 		} else {
 			results = append(results, CheckResult{"clipboard", false, "xclip or wl-paste not found"})
 		}
+	case "windows":
+		if _, err := exec.LookPath("powershell"); err != nil {
+			results = append(results, CheckResult{"clipboard", false, "PowerShell not found"})
+		} else {
+			results = append(results, CheckResult{"clipboard", true, "PowerShell available (built-in clipboard)"})
+		}
 	default:
 		results = append(results, CheckResult{"clipboard", false, fmt.Sprintf("unsupported platform: %s", runtime.GOOS)})
 	}
@@ -65,9 +71,11 @@ func RunLocal(port int) []CheckResult {
 	// Check token expiry
 	results = append(results, checkTokenExpiry()...)
 
-	// Check launchd service (macOS only)
+	// Check system service (macOS/Windows)
 	if runtime.GOOS == "darwin" {
 		results = append(results, checkLaunchdService()...)
+	} else if runtime.GOOS == "windows" {
+		results = append(results, checkScheduledTaskService()...)
 	}
 
 	return results
@@ -127,6 +135,18 @@ func checkLaunchdService() []CheckResult {
 	}
 
 	return []CheckResult{{"launchd", false, "plist installed but service not loaded"}}
+}
+
+// checkScheduledTaskService checks if the cc-clip auto-start is configured (Windows).
+func checkScheduledTaskService() []CheckResult {
+	// Check registry Run key for auto-start entry
+	cmd := exec.Command("reg.exe", "query",
+		`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
+		"/v", "cc-clip-daemon")
+	if err := cmd.Run(); err != nil {
+		return []CheckResult{{"service", false, "auto-start not configured (run 'cc-clip service install')"}}
+	}
+	return []CheckResult{{"service", true, "auto-start configured (registry)"}}
 }
 
 // formatDuration formats a duration in a human-readable form.

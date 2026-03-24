@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
@@ -42,6 +41,10 @@ func main() {
 		cmdServe()
 	case "paste":
 		cmdPaste()
+	case "send":
+		cmdSend()
+	case "hotkey":
+		cmdHotkey()
 	case "install":
 		cmdInstall()
 	case "uninstall":
@@ -79,10 +82,10 @@ Daemon (local):
   serve              Start local clipboard daemon
     --port           Listen port (default: 18339, env: CC_CLIP_PORT)
     --rotate-token   Force new token generation (ignore existing)
-  service            Manage launchd service (macOS)
-    install          Install and load launchd service
-    uninstall        Unload and remove launchd service
-    status           Show launchd service status
+  service            Manage system service (macOS/Windows)
+    install          Install and start service
+    uninstall        Stop and remove service
+    status           Show service status
 
 Remote:
   install            Install xclip/wl-paste shim
@@ -92,6 +95,20 @@ Remote:
     --host           Also clean up PATH marker on remote host
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
+  send [<host>]      Upload local clipboard image to remote file path
+    --file           Upload this image file instead of reading the clipboard
+    --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
+    --paste          On Windows, paste the remote path into the active window
+    --delay-ms       Delay before Ctrl+Shift+V when --paste is used (default: 150)
+    --no-restore     Do not restore the original image clipboard after --paste
+  hotkey [<host>]    Windows global remote-paste hotkey listener
+    --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
+    --hotkey         Global hotkey to trigger remote paste (default: alt+shift+v)
+    --delay-ms       Delay before Ctrl+Shift+V after the hotkey (default: 150)
+    --enable-autostart   Start the hotkey automatically at login
+    --disable-autostart  Remove hotkey auto-start at login
+    --stop           Stop the background hotkey process
+    --status         Show hotkey process status
 
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
@@ -413,7 +430,8 @@ func cmdUninstallCodexRemote(host string) {
 func cmdUninstallCodexLocal() {
 	fmt.Println("Uninstalling Codex support (local)...")
 
-	stateDir := os.ExpandEnv("$HOME/.cache/cc-clip/codex")
+	home, _ := os.UserHomeDir()
+	stateDir := filepath.Join(home, ".cache", "cc-clip", "codex")
 
 	// Stop bridge
 	fmt.Println("[1/3] Stopping x11-bridge...")
@@ -428,75 +446,6 @@ func cmdUninstallCodexLocal() {
 	os.RemoveAll(stateDir)
 
 	fmt.Println("Codex support removed (local).")
-}
-
-// stopLocalProcess reads a PID file, verifies the process command, and stops it.
-func stopLocalProcess(pidFile string, expectedCmd string) {
-	data, err := os.ReadFile(pidFile)
-	if err != nil {
-		fmt.Println("      not running (no PID file)")
-		return
-	}
-
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		fmt.Println("      invalid PID file, removing")
-		os.Remove(pidFile)
-		return
-	}
-
-	// Verify process command
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		fmt.Println("      process not found")
-		os.Remove(pidFile)
-		return
-	}
-
-	// Check if alive
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		fmt.Println("      not running")
-		os.Remove(pidFile)
-		return
-	}
-
-	if expectedCmd != "" {
-		cmdline, err := localProcessCommand(pid)
-		if err != nil {
-			fmt.Printf("      could not verify command, skipping stop: %v\n", err)
-			os.Remove(pidFile)
-			return
-		}
-		if !strings.Contains(strings.ToLower(cmdline), strings.ToLower(expectedCmd)) {
-			fmt.Printf("      PID %d belongs to %q, not %q; leaving it running\n", pid, cmdline, expectedCmd)
-			os.Remove(pidFile)
-			return
-		}
-	}
-
-	// Send SIGTERM
-	proc.Signal(syscall.SIGTERM)
-	time.Sleep(500 * time.Millisecond)
-
-	// Check if still alive, force kill
-	if err := proc.Signal(syscall.Signal(0)); err == nil {
-		proc.Signal(syscall.SIGKILL)
-	}
-
-	os.Remove(pidFile)
-	fmt.Println("      stopped")
-}
-
-func localProcessCommand(pid int) (string, error) {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("ps failed: %w", err)
-	}
-	cmdline := strings.TrimSpace(string(out))
-	if cmdline == "" {
-		return "", fmt.Errorf("process command line is empty")
-	}
-	return cmdline, nil
 }
 
 type connectOpts struct {
@@ -750,7 +699,7 @@ func cmdSetup() {
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err == nil {
 		fmt.Printf("      daemon already running on :%d\n", port)
-	} else if runtime.GOOS == "darwin" {
+	} else if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		exePath, err := os.Executable()
 		if err != nil {
 			log.Fatalf("      cannot determine executable path: %v", err)
@@ -759,7 +708,11 @@ func cmdSetup() {
 		if err := service.Install(exePath, port); err != nil {
 			log.Fatalf("      service install failed: %v", err)
 		}
-		fmt.Println("      launchd service installed and started")
+		if runtime.GOOS == "darwin" {
+			fmt.Println("      launchd service installed and started")
+		} else {
+			fmt.Println("      scheduled task installed and started")
+		}
 		// Wait for daemon to be ready
 		time.Sleep(500 * time.Millisecond)
 	} else {
@@ -810,7 +763,7 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 	fmt.Printf("      %s\n", shimOut)
 
 	fmt.Println()
-	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your Mac.")
+	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard.")
 }
 
 // prepareBinaryLocal resolves the local binary path without performing remote operations.
@@ -865,9 +818,9 @@ func prepareBinaryLocal(host, remoteOS, remoteArch string) (localBin string, err
 	}
 
 	tmpBin := filepath.Join(os.TempDir(), fmt.Sprintf("cc-clip-%s-%s", remoteOS, remoteArch))
-	buildCmd := exec.Command("sh", "-c",
-		fmt.Sprintf("cd %s && GOOS=%s GOARCH=%s go build -o %s ./cmd/cc-clip/",
-			srcDir, remoteOS, remoteArch, tmpBin))
+	buildCmd := exec.Command("go", "build", "-o", tmpBin, "./cmd/cc-clip/")
+	buildCmd.Dir = srcDir
+	buildCmd.Env = append(os.Environ(), "GOOS="+remoteOS, "GOARCH="+remoteArch)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("cross-compile failed: %s: %w", string(out), err)
 	}
@@ -1038,6 +991,17 @@ func cmdStatus() {
 		} else {
 			fmt.Println("launchd: not installed")
 		}
+	} else if runtime.GOOS == "windows" {
+		running, err := service.Status()
+		if err == nil {
+			if running {
+				fmt.Println("service: running (task scheduler)")
+			} else {
+				fmt.Println("service: not running")
+			}
+		} else {
+			fmt.Println("service: not installed")
+		}
 	}
 
 	fmt.Printf("out-dir: %s\n", tunnel.DefaultOutDir())
@@ -1078,15 +1042,24 @@ func cmdService() {
 		if err := service.Install(exePath, port); err != nil {
 			log.Fatalf("service install failed: %v", err)
 		}
-		fmt.Printf("Launchd service installed and loaded.\n")
-		fmt.Printf("  plist: %s\n", service.PlistPath())
-		fmt.Printf("  logs:  ~/Library/Logs/cc-clip.log\n")
+		if runtime.GOOS == "windows" {
+			fmt.Printf("Scheduled task created and running.\n")
+			fmt.Printf("  task: %s\n", service.PlistPath())
+		} else {
+			fmt.Printf("Launchd service installed and loaded.\n")
+			fmt.Printf("  plist: %s\n", service.PlistPath())
+			fmt.Printf("  logs:  ~/Library/Logs/cc-clip.log\n")
+		}
 
 	case "uninstall":
 		if err := service.Uninstall(); err != nil {
 			log.Fatalf("service uninstall failed: %v", err)
 		}
-		fmt.Println("Launchd service unloaded and removed.")
+		if runtime.GOOS == "windows" {
+			fmt.Println("Scheduled task removed.")
+		} else {
+			fmt.Println("Launchd service unloaded and removed.")
+		}
 
 	case "status":
 		running, err := service.Status()
@@ -1094,7 +1067,11 @@ func cmdService() {
 			log.Fatalf("service status check failed: %v", err)
 		}
 		if running {
-			fmt.Println("service: running (launchd)")
+			if runtime.GOOS == "windows" {
+				fmt.Println("service: running (task scheduler)")
+			} else {
+				fmt.Println("service: running (launchd)")
+			}
 		} else {
 			fmt.Println("service: not running")
 		}
@@ -1290,7 +1267,8 @@ func cmdX11Bridge() {
 	display := getFlag("display", os.Getenv("DISPLAY"))
 	port := getPort()
 
-	tokenDir := os.Getenv("HOME") + "/.cache/cc-clip"
+	home, _ := os.UserHomeDir()
+	tokenDir := filepath.Join(home, ".cache", "cc-clip")
 	tokenFile := tokenDir + "/session.token"
 
 	if display == "" {
@@ -1305,9 +1283,9 @@ func cmdX11Bridge() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle SIGTERM for graceful shutdown.
+	// Handle shutdown signals (SIGINT + SIGTERM on Unix, SIGINT on Windows).
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, shutdownSignals()...)
 	go func() {
 		<-sigCh
 		log.Printf("x11-bridge: received shutdown signal")
