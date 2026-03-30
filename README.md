@@ -104,6 +104,13 @@ This single command:
 3. Starts the local daemon (via macOS launchd)
 4. Deploys the binary and shim to the remote server
 
+<details>
+<summary>See it in action (macOS)</summary>
+<p align="center">
+  <img src="docs/marketing/demo-macos.gif" alt="cc-clip macOS demo" width="720">
+</p>
+</details>
+
 > **If setup reports an error**, read the error message carefully — it includes specific instructions for how to fix the issue. For example, if `Xvfb` is not found on the remote server and auto-install fails, you will see the exact command to run:
 >
 > ```bash
@@ -120,6 +127,13 @@ Windows:
 Use the dedicated guide:
 
 - [Windows Quick Start](docs/windows-quickstart.md)
+
+<details>
+<summary>See it in action (Windows)</summary>
+<p align="center">
+  <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows demo" width="720">
+</p>
+</details>
 
 ### Step 3: Connect and use
 
