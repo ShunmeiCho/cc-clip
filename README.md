@@ -12,13 +12,11 @@
   <a href="https://github.com/ShunmeiCho/cc-clip/stargazers"><img src="https://img.shields.io/github/stars/ShunmeiCho/cc-clip?style=social" alt="Stars"></a>
 </p>
 
-<!-- TODO: Replace with actual GIF demo
 <p align="center">
-  <img src="docs/demo.gif" alt="cc-clip demo" width="720">
+  <img src="docs/marketing/demo-quick.gif" alt="cc-clip demo" width="720">
   <br>
-  <em>Copy screenshot on Mac → SSH to remote → Ctrl+V in Claude Code → image appears</em>
+  <em>Install → setup → paste. Clipboard works over SSH.</em>
 </p>
--->
 
 ## The Problem
 
