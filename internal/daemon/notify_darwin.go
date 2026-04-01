@@ -26,6 +26,54 @@ func NewDarwinNotifier() *DarwinNotifier {
 	return &DarwinNotifier{previewDir: dir, terminalNotifier: tn}
 }
 
+// platformDeliverer returns the darwin-specific notification adapter.
+// Called by BuildDeliveryChain to add the macOS fallback.
+func platformDeliverer() Deliverer {
+	return NewDarwinNotifier()
+}
+
+// Name returns the adapter name for logging in the delivery chain.
+func (n *DarwinNotifier) Name() string { return "darwin" }
+
+// Deliver handles any envelope kind by rendering display text and sending
+// via terminal-notifier (with image preview for image_transfer) or osascript.
+func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
+	title, body := formatNotification(env)
+	subtitle := ""
+	imagePath := ""
+
+	// For image transfers, write a preview thumbnail and build a subtitle
+	if env.Kind == KindImageTransfer && env.ImageTransfer != nil {
+		p := env.ImageTransfer
+		subtitle = fmt.Sprintf("%s \u00b7 %dx%d \u00b7 %s", p.Fingerprint, p.Width, p.Height, p.Format)
+
+		if len(p.ImageData) > 0 {
+			ext := ".png"
+			if p.Format == "jpeg" {
+				ext = ".jpeg"
+			}
+			sid := p.SessionID
+			if len(sid) > 8 {
+				sid = sid[:8]
+			}
+			path := filepath.Join(n.previewDir, fmt.Sprintf("preview-%s-%d%s", sid, p.Seq, ext))
+			if err := os.WriteFile(path, p.ImageData, 0600); err == nil {
+				imagePath = path
+			}
+		}
+	}
+
+	// For generic / tool_attention envelopes, use subtitle from payload
+	if env.GenericMessage != nil && env.GenericMessage.Subtitle != "" {
+		subtitle = env.GenericMessage.Subtitle
+	}
+
+	if n.terminalNotifier != "" {
+		return n.sendViaTerminalNotifier(title, subtitle, body, imagePath)
+	}
+	return n.sendViaOsascript(title, subtitle, body)
+}
+
 func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
 	// Save preview image to disk
 	var previewPath string

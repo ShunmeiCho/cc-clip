@@ -145,6 +145,62 @@ func TestConnArgsWithoutControlPath(t *testing.T) {
 	}
 }
 
+func TestGenerateNotificationNonce(t *testing.T) {
+	nonce, err := GenerateNotificationNonce()
+	if err != nil {
+		t.Fatalf("GenerateNotificationNonce failed: %v", err)
+	}
+	// 32 random bytes -> 64 hex characters
+	if len(nonce) != 64 {
+		t.Errorf("expected 64 hex chars, got %d: %q", len(nonce), nonce)
+	}
+	// Should be valid hex
+	for _, c := range nonce {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("nonce contains non-hex character: %c", c)
+		}
+	}
+}
+
+func TestGenerateNotificationNonceUniqueness(t *testing.T) {
+	nonce1, err := GenerateNotificationNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce2, err := GenerateNotificationNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonce1 == nonce2 {
+		t.Fatal("two consecutive nonces should not be equal")
+	}
+}
+
+func TestGenerateNotificationNonceDistinctFromSessionID(t *testing.T) {
+	nonce, err := GenerateNotificationNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := GenerateSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nonce is 64 hex chars (32 bytes), session ID is 32 hex chars (16 bytes)
+	if len(nonce) == len(sid) {
+		t.Errorf("nonce and session ID should have different lengths: nonce=%d, sid=%d", len(nonce), len(sid))
+	}
+}
+
+func TestCodexNotifyManagedBlockUsesConfigArray(t *testing.T) {
+	block := codexNotifyManagedBlock("start", "end")
+	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--from-codex-stdin"]`) {
+		t.Fatalf("expected notify array config, got %q", block)
+	}
+	if strings.Contains(block, "[notify]") {
+		t.Fatalf("unexpected legacy [notify] table in %q", block)
+	}
+}
+
 // parseUnameOutput is a testable extraction of the uname parsing logic.
 // Both DetectRemoteArch and DetectRemoteArchViaSession use equivalent logic.
 func parseUnameOutput(output string) (string, string, error) {

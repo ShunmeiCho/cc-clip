@@ -213,6 +213,92 @@ func GenerateSessionID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// GenerateNotificationNonce creates a random nonce for notification auth.
+// Returns 32 random bytes encoded as a 64-character hex string.
+// This is intentionally longer than GenerateSessionID (16 bytes) to
+// ensure the two cannot be confused or accidentally swapped.
+func GenerateNotificationNonce() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate notification nonce: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// WriteRemoteNotificationNonce writes the notification nonce to
+// ~/.cache/cc-clip/notify.nonce on the remote with chmod 600.
+func WriteRemoteNotificationNonce(session *SSHSession, nonce string) error {
+	args := append(session.connArgs(), session.host,
+		"mkdir -p ~/.cache/cc-clip && cat > ~/.cache/cc-clip/notify.nonce && chmod 600 ~/.cache/cc-clip/notify.nonce")
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = strings.NewReader(nonce + "\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to write remote notification nonce: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// InstallRemoteHookScript writes the cc-clip-hook bash script to
+// ~/.local/bin/cc-clip-hook on the remote with chmod +x.
+func InstallRemoteHookScript(session *SSHSession, port int) error {
+	script := HookScript(port)
+	args := append(session.connArgs(), session.host,
+		"mkdir -p ~/.local/bin && cat > ~/.local/bin/cc-clip-hook && chmod +x ~/.local/bin/cc-clip-hook")
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = strings.NewReader(script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install remote hook script: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+// RemoteHasCodex checks whether ~/.codex directory exists on the remote.
+func RemoteHasCodex(session *SSHSession) bool {
+	_, err := session.Exec("test -d ~/.codex")
+	return err == nil
+}
+
+// EnsureRemoteCodexNotifyConfig injects the cc-clip notification hook
+// block into ~/.codex/config.toml using # cc-clip-managed guard markers.
+// Idempotent: if the managed block already exists, it is replaced.
+func EnsureRemoteCodexNotifyConfig(session *SSHSession) error {
+	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
+	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
+	const configPath = "~/.codex/config.toml"
+
+	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd)
+
+	// Check if the managed block already exists.
+	out, _ := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", markerStart, configPath))
+	if strings.Contains(out, markerStart) {
+		// Replace existing block using sed.
+		sedCmd := fmt.Sprintf(
+			`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
+			sedEscape(markerStart), sedEscape(markerEnd), configPath, configPath)
+		session.Exec(sedCmd)
+	}
+
+	// Append the managed block to the config file.
+	appendCmd := fmt.Sprintf(
+		"mkdir -p ~/.codex && cat >> %s << 'CC_CLIP_EOF'\n%s\nCC_CLIP_EOF",
+		configPath, managedBlock)
+	_, err := session.Exec(appendCmd)
+	if err != nil {
+		return fmt.Errorf("failed to inject notify config into %s: %w", configPath, err)
+	}
+
+	return nil
+}
+
+func codexNotifyManagedBlock(markerStart, markerEnd string) string {
+	// Codex notify is configured as a command array in config.toml. The payload
+	// JSON is provided on stdin, so the managed command reads from stdin instead
+	// of relying on shell interpolation.
+	return markerStart + "\n" +
+		`notify = ["cc-clip", "notify", "--from-codex-stdin"]` + "\n" +
+		markerEnd
+}
+
 // WriteRemoteSessionID writes a session ID to ~/.cache/cc-clip/session.id on the remote.
 func WriteRemoteSessionID(session *SSHSession, sessionID string) error {
 	args := append(session.connArgs(), session.host,

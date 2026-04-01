@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -60,6 +65,8 @@ func main() {
 		cmdSetup()
 	case "service":
 		cmdService()
+	case "notify":
+		cmdNotify()
 	case "x11-bridge":
 		cmdX11Bridge()
 	case "version", "--version", "-v":
@@ -133,6 +140,14 @@ Diagnostics:
   doctor             Local health check
   doctor --host H    Full end-to-end check via SSH
   version            Show version
+
+Notifications:
+  notify             Send a notification to the local daemon
+    --title          Notification title
+    --body           Notification body
+    --urgency        Urgency level (default: 1)
+    --from-codex     Parse Codex JSON payload (extracts last-assistant-message)
+    --port           Daemon port (default: 18339, env: CC_CLIP_PORT)
 
 Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
@@ -231,7 +246,7 @@ func cmdServe() {
 	// Start notification delivery and session cleanup in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go srv.RunNotifier(ctx, daemon.NewDarwinNotifier())
+	go srv.RunNotifier(ctx, daemon.BuildDeliveryChain())
 	go store.RunCleanup(ctx, 30*time.Minute)
 
 	if err := srv.ListenAndServe(); err != nil {
@@ -462,11 +477,12 @@ type connectOpts struct {
 	force     bool
 	tokenOnly bool
 	codex     bool
+	noNotify  bool
 }
 
 func cmdConnect() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only]")
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify]")
 	}
 	runConnect(connectOpts{
 		host:      os.Args[2],
@@ -474,6 +490,7 @@ func cmdConnect() {
 		force:     hasFlag("force"),
 		tokenOnly: hasFlag("token-only"),
 		codex:     hasFlag("codex"),
+		noNotify:  hasFlag("no-notify"),
 	})
 }
 
@@ -669,6 +686,14 @@ func runConnect(opts connectOpts) {
 	// Step 7: Verify tunnel
 	connectVerifyTunnel(session, port, host)
 
+	// Notification bridge setup (unless --no-notify)
+	if !opts.noNotify {
+		connectNotifySetup(session, port, daemonToken, newState)
+		if err := shim.WriteRemoteState(session, newState); err != nil {
+			log.Printf("      warning: could not write remote deploy state: %v", err)
+		}
+	}
+
 	// Steps 8-11: Codex support (only if --codex flag is set)
 	if opts.codex {
 		codexOk := runConnectCodex(session, opts, needsUpload, newState)
@@ -682,6 +707,166 @@ func runConnect(opts connectOpts) {
 			os.Exit(1)
 		}
 	}
+}
+
+// connectNotifySetup performs notification bridge setup:
+// 1. Generate nonce and register with local daemon
+// 2. Write nonce to remote
+// 3. Install hook script on remote
+// 4. Print Claude Code hook config
+// 5. Detect and configure Codex notify (if ~/.codex exists)
+// 6. Run health probe
+func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, state *shim.DeployState) {
+	fmt.Println()
+	fmt.Println("Notification bridge setup:")
+
+	// Step N1: Generate nonce
+	fmt.Println("  [N1] Generating notification nonce...")
+	notifyNonce, err := shim.GenerateNotificationNonce()
+	if err != nil {
+		log.Printf("      warning: failed to generate notification nonce: %v", err)
+		return
+	}
+
+	// Register nonce with the local daemon via HTTP
+	if err := registerNonceWithDaemon(port, daemonToken, notifyNonce); err != nil {
+		log.Printf("      warning: failed to register nonce with daemon: %v", err)
+		return
+	}
+	fmt.Printf("      nonce: %s...\n", notifyNonce[:16])
+
+	// Step N2: Write nonce to remote
+	fmt.Println("  [N2] Writing nonce to remote...")
+	if err := shim.WriteRemoteNotificationNonce(session, notifyNonce); err != nil {
+		log.Printf("      warning: failed to write remote nonce: %v", err)
+		return
+	}
+	fmt.Println("      nonce synced")
+
+	// Step N3: Install hook script
+	fmt.Println("  [N3] Installing hook script...")
+	if err := shim.InstallRemoteHookScript(session, port); err != nil {
+		log.Printf("      warning: failed to install hook script: %v", err)
+		return
+	}
+	fmt.Println("      cc-clip-hook installed to ~/.local/bin/cc-clip-hook")
+
+	hookInstalled := true
+
+	// Step N4: Print Claude Code hook config
+	fmt.Println("  [N4] Claude Code hook configuration:")
+	fmt.Println("      Add the following to your Claude Code settings (hooks):")
+	fmt.Println()
+	for _, line := range strings.Split(claudeHookConfigJSON(), "\n") {
+		fmt.Printf("      %s\n", line)
+	}
+	fmt.Println()
+
+	// Step N5: Detect and configure Codex notify
+	codexInjected := false
+	if shim.RemoteHasCodex(session) {
+		fmt.Println("  [N5] Codex detected, injecting notify config...")
+		if err := shim.EnsureRemoteCodexNotifyConfig(session); err != nil {
+			log.Printf("      warning: codex config injection failed: %v", err)
+		} else {
+			codexInjected = true
+			fmt.Println("      ~/.codex/config.toml updated")
+		}
+	} else {
+		fmt.Println("  [N5] Codex not detected, skipping config injection")
+	}
+
+	// Step N6: Health probe
+	fmt.Println("  [N6] Running notification health probe...")
+	healthVerified := false
+	if err := runNotificationHealthProbe(port, notifyNonce); err != nil {
+		log.Printf("      warning: health probe failed: %v", err)
+	} else {
+		healthVerified = true
+		fmt.Println("      health probe passed")
+	}
+
+	// Update deploy state
+	state.Notify = &shim.NotifyDeployState{
+		Enabled:        true,
+		HookInstalled:  hookInstalled,
+		CodexInjected:  codexInjected,
+		HealthVerified: healthVerified,
+	}
+}
+
+// registerNonceWithDaemon sends the notification nonce to the local daemon
+// via POST /register-nonce, authenticated with the clipboard bearer token.
+func registerNonceWithDaemon(port int, bearerToken, nonce string) error {
+	payload := fmt.Sprintf(`{"nonce":%q}`, nonce)
+	url := fmt.Sprintf("http://127.0.0.1:%d/register-nonce", port)
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "cc-clip/connect")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("daemon request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("daemon returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// runNotificationHealthProbe sends a test notification to the local daemon
+// via /notify and checks for 204. This proves the nonce is registered and
+// the notification pipeline works end-to-end.
+func runNotificationHealthProbe(port int, nonce string) error {
+	payload := `{"title":"cc-clip","body":"Notification bridge connected","urgency":0}`
+	url := fmt.Sprintf("http://127.0.0.1:%d/notify", port)
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+nonce)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "cc-clip-hook/0.1")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("health probe request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("expected 204, got %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func claudeHookConfigJSON() string {
+	return `{
+  "hooks": {
+    "Notification": [
+      {
+        "type": "command",
+        "command": "cc-clip-hook"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "cc-clip-hook"
+      }
+    ]
+  }
+}`
 }
 
 func cmdSetup() {
@@ -1285,6 +1470,122 @@ func dumpRemoteLog(session *shim.SSHSession, logPath string) {
 		}
 		fmt.Println("      --- end ---")
 	}
+}
+
+// --- Notify subcommand ---
+
+// cmdNotify sends a generic notification to the local cc-clip daemon.
+func cmdNotify() {
+	fs := flag.NewFlagSet("notify", flag.ExitOnError)
+	title := fs.String("title", "", "notification title")
+	body := fs.String("body", "", "notification body")
+	urgency := fs.Int("urgency", 1, "notification urgency (0=low, 1=normal, 2=critical)")
+	fromCodex := fs.String("from-codex", "", "Codex notify JSON payload")
+	fromCodexStdin := fs.Bool("from-codex-stdin", false, "read Codex notify JSON payload from stdin")
+	_ = fs.Parse(os.Args[2:])
+
+	msg := daemon.GenericMessagePayload{
+		Title:   *title,
+		Body:    *body,
+		Urgency: *urgency,
+	}
+
+	switch {
+	case *fromCodex != "" && *fromCodexStdin:
+		log.Fatal("notify failed: --from-codex and --from-codex-stdin are mutually exclusive")
+	case *fromCodex != "":
+		parsed, err := parseCodexNotifyPayload(*fromCodex)
+		if err != nil {
+			log.Fatalf("invalid codex notify payload: %v", err)
+		}
+		msg = parsed
+	case *fromCodexStdin:
+		payload, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			log.Fatalf("failed to read codex payload from stdin: %v", err)
+		}
+		parsed, err := parseCodexNotifyPayload(string(payload))
+		if err != nil {
+			log.Fatalf("invalid codex notify payload: %v", err)
+		}
+		msg = parsed
+	}
+
+	port := getPort()
+	if err := postGenericNotification(port, msg); err != nil {
+		log.Fatalf("notify failed: %v", err)
+	}
+}
+
+// parseCodexNotifyPayload extracts a GenericMessagePayload from the Codex
+// JSON format. Codex passes {"last-assistant-message": "..."} as its notify
+// payload. The extracted message becomes the body with title "Codex".
+func parseCodexNotifyPayload(payload string) (daemon.GenericMessagePayload, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return daemon.GenericMessagePayload{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	lastMsg, _ := raw["last-assistant-message"].(string)
+
+	return daemon.GenericMessagePayload{
+		Title:   "Codex",
+		Body:    lastMsg,
+		Urgency: 1,
+	}, nil
+}
+
+// postGenericNotification sends a generic notification to the local cc-clip daemon.
+// It reads the notification nonce from ~/.cache/cc-clip/notify.nonce for auth.
+func postGenericNotification(port int, msg daemon.GenericMessagePayload) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("cannot determine home directory: %w", err)
+	}
+
+	nonceFile := filepath.Join(home, ".cache", "cc-clip", "notify.nonce")
+	nonceBytes, err := os.ReadFile(nonceFile)
+	if err != nil {
+		return fmt.Errorf("cannot read nonce file %s: %w", nonceFile, err)
+	}
+	nonce := strings.TrimSpace(string(nonceBytes))
+
+	payload := struct {
+		Title   string `json:"title"`
+		Body    string `json:"body"`
+		Urgency int    `json:"urgency"`
+	}{
+		Title:   msg.Title,
+		Body:    msg.Body,
+		Urgency: msg.Urgency,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal notification: %w", err)
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/notify", port)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+nonce)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "cc-clip-notify/0.1")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send notification: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("daemon returned HTTP %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // cmdX11Bridge runs the X11 clipboard bridge daemon (internal command).

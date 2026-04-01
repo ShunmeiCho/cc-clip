@@ -18,15 +18,24 @@ type CodexDeployState struct {
 	DisplayFixed bool   `json:"display_fixed"`
 }
 
+// NotifyDeployState represents the notification bridge deployment state.
+type NotifyDeployState struct {
+	Enabled        bool `json:"enabled"`
+	HookInstalled  bool `json:"hook_installed"`
+	CodexInjected  bool `json:"codex_injected"`
+	HealthVerified bool `json:"health_verified"`
+}
+
 // DeployState represents the state of a cc-clip deployment on a remote host.
 // It is stored as ~/.cache/cc-clip/deploy.json on the remote.
 type DeployState struct {
-	BinaryHash    string           `json:"binary_hash"`
-	BinaryVersion string           `json:"binary_version"`
-	ShimInstalled bool             `json:"shim_installed"`
-	ShimTarget    string           `json:"shim_target"`
-	PathFixed     bool             `json:"path_fixed"`
-	Codex         *CodexDeployState `json:"codex,omitempty"`
+	BinaryHash    string             `json:"binary_hash"`
+	BinaryVersion string             `json:"binary_version"`
+	ShimInstalled bool               `json:"shim_installed"`
+	ShimTarget    string             `json:"shim_target"`
+	PathFixed     bool               `json:"path_fixed"`
+	Notify        *NotifyDeployState `json:"notify,omitempty"`
+	Codex         *CodexDeployState  `json:"codex,omitempty"`
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
@@ -111,6 +120,14 @@ func NeedsShimInstall(remote *DeployState) bool {
 		return true
 	}
 	return !remote.ShimInstalled
+}
+
+// NeedsNotifySetup checks whether notification bridge setup is needed on the remote.
+func NeedsNotifySetup(remote *DeployState) bool {
+	if remote == nil || remote.Notify == nil {
+		return true
+	}
+	return !remote.Notify.Enabled
 }
 
 // NeedsCodexSetup checks whether Codex setup is needed on the remote.

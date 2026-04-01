@@ -1,6 +1,9 @@
 package daemon
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // NotifyEvent carries image transfer metadata for notification delivery.
 type NotifyEvent struct {
@@ -23,3 +26,24 @@ type Notifier interface {
 type NopNotifier struct{}
 
 func (NopNotifier) Notify(context.Context, NotifyEvent) error { return nil }
+
+// newImageTransferEnvelope converts clipboard transfer metadata into
+// a NotifyEnvelope. This bridges the legacy NotifyEvent path into the
+// unified envelope model.
+func newImageTransferEnvelope(source string, payload ImageTransferPayload) NotifyEnvelope {
+	return NotifyEnvelope{
+		Kind:      KindImageTransfer,
+		Source:    source,
+		Timestamp: time.Now().UTC(),
+		ImageTransfer: &ImageTransferPayload{
+			SessionID:   payload.SessionID,
+			Seq:         payload.Seq,
+			Fingerprint: payload.Fingerprint,
+			ImageData:   payload.ImageData,
+			Format:      payload.Format,
+			Width:       payload.Width,
+			Height:      payload.Height,
+			DuplicateOf: payload.DuplicateOf,
+		},
+	}
+}

@@ -338,6 +338,134 @@ func TestDeployStateJSONUnmarshalOldFormat(t *testing.T) {
 	}
 }
 
+func TestDeployStatePersistsNotificationSetup(t *testing.T) {
+	state := &DeployState{
+		BinaryHash: "sha256:abc",
+		Notify: &NotifyDeployState{
+			Enabled:        true,
+			HookInstalled:  true,
+			CodexInjected:  true,
+			HealthVerified: true,
+		},
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(string(raw), `"notify"`) {
+		t.Fatalf("expected notify block, got %s", raw)
+	}
+
+	// Round-trip unmarshal
+	var decoded DeployState
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if decoded.Notify == nil {
+		t.Fatal("decoded Notify should not be nil")
+	}
+	if !decoded.Notify.Enabled {
+		t.Error("decoded Notify.Enabled should be true")
+	}
+	if !decoded.Notify.HookInstalled {
+		t.Error("decoded Notify.HookInstalled should be true")
+	}
+	if !decoded.Notify.CodexInjected {
+		t.Error("decoded Notify.CodexInjected should be true")
+	}
+	if !decoded.Notify.HealthVerified {
+		t.Error("decoded Notify.HealthVerified should be true")
+	}
+}
+
+func TestDeployStateJSONNotifyNil(t *testing.T) {
+	// Marshal with Notify: nil -> no "notify" key in JSON
+	state := DeployState{
+		BinaryHash:    "sha256:abc",
+		BinaryVersion: "v0.1.0",
+		ShimInstalled: true,
+		Notify:        nil,
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	raw := string(data)
+	if strings.Contains(raw, `"notify"`) {
+		t.Fatalf("JSON should not contain 'notify' key when Notify is nil, got: %s", raw)
+	}
+}
+
+func TestDeployStateJSONUnmarshalOldFormatNoNotify(t *testing.T) {
+	// Unmarshal old JSON (no notify field) -> Notify: nil, no error
+	raw := `{
+  "binary_hash": "sha256:deadbeef",
+  "binary_version": "v0.2.0",
+  "shim_installed": true,
+  "shim_target": "wl-paste",
+  "path_fixed": false
+}`
+
+	var state DeployState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("failed to unmarshal old format: %v", err)
+	}
+
+	if state.Notify != nil {
+		t.Fatalf("Notify should be nil for old format JSON, got: %+v", state.Notify)
+	}
+}
+
+func TestNeedsNotifySetup(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{
+			name:   "nil remote state",
+			remote: nil,
+			want:   true,
+		},
+		{
+			name:   "nil Notify field",
+			remote: &DeployState{},
+			want:   true,
+		},
+		{
+			name: "Notify not enabled",
+			remote: &DeployState{
+				Notify: &NotifyDeployState{
+					Enabled: false,
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Notify enabled",
+			remote: &DeployState{
+				Notify: &NotifyDeployState{
+					Enabled:        true,
+					HookInstalled:  true,
+					HealthVerified: true,
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NeedsNotifySetup(tt.remote)
+			if got != tt.want {
+				t.Errorf("NeedsNotifySetup() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNeedsCodexSetup(t *testing.T) {
 	tests := []struct {
 		name   string
