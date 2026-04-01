@@ -1,0 +1,230 @@
+{
+  "version": "1.3",
+  "schemaVersion": "1.0",
+  "generatedBy": "ecc-tools",
+  "generatedAt": "2026-04-01T16:48:54.322Z",
+  "repo": "https://github.com/ShunmeiCho/cc-clip",
+  "profiles": {
+    "requested": "developer",
+    "recommended": "developer",
+    "effective": "developer",
+    "requestedAlias": "developer",
+    "recommendedAlias": "developer",
+    "effectiveAlias": "developer"
+  },
+  "requestedProfile": "developer",
+  "profile": "developer",
+  "recommendedProfile": "developer",
+  "effectiveProfile": "developer",
+  "tier": "free",
+  "requestedComponents": [
+    "repo-baseline",
+    "workflow-automation"
+  ],
+  "selectedComponents": [
+    "repo-baseline",
+    "workflow-automation"
+  ],
+  "requestedAddComponents": [],
+  "requestedRemoveComponents": [],
+  "blockedRemovalComponents": [],
+  "tierFilteredComponents": [],
+  "requestedRootPackages": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "selectedRootPackages": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "requestedPackages": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "requestedAddPackages": [],
+  "requestedRemovePackages": [],
+  "selectedPackages": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "packages": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "blockedRemovalPackages": [],
+  "tierFilteredRootPackages": [],
+  "tierFilteredPackages": [],
+  "conflictingPackages": [],
+  "dependencyGraph": {
+    "runtime-core": [],
+    "workflow-pack": [
+      "runtime-core"
+    ]
+  },
+  "resolutionOrder": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "requestedModules": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "selectedModules": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "modules": [
+    "runtime-core",
+    "workflow-pack"
+  ],
+  "managedFiles": [
+    ".claude/skills/cc-clip/SKILL.md",
+    ".agents/skills/cc-clip/SKILL.md",
+    ".agents/skills/cc-clip/agents/openai.yaml",
+    ".claude/identity.json",
+    ".codex/config.toml",
+    ".codex/AGENTS.md",
+    ".codex/agents/explorer.toml",
+    ".codex/agents/reviewer.toml",
+    ".codex/agents/docs-researcher.toml",
+    ".claude/homunculus/instincts/inherited/cc-clip-instincts.yaml",
+    ".claude/commands/feature-development.md",
+    ".claude/commands/test-driven-development.md",
+    ".claude/commands/refactoring.md"
+  ],
+  "packageFiles": {
+    "runtime-core": [
+      ".claude/skills/cc-clip/SKILL.md",
+      ".agents/skills/cc-clip/SKILL.md",
+      ".agents/skills/cc-clip/agents/openai.yaml",
+      ".claude/identity.json",
+      ".codex/config.toml",
+      ".codex/AGENTS.md",
+      ".codex/agents/explorer.toml",
+      ".codex/agents/reviewer.toml",
+      ".codex/agents/docs-researcher.toml",
+      ".claude/homunculus/instincts/inherited/cc-clip-instincts.yaml"
+    ],
+    "workflow-pack": [
+      ".claude/commands/feature-development.md",
+      ".claude/commands/test-driven-development.md",
+      ".claude/commands/refactoring.md"
+    ]
+  },
+  "moduleFiles": {
+    "runtime-core": [
+      ".claude/skills/cc-clip/SKILL.md",
+      ".agents/skills/cc-clip/SKILL.md",
+      ".agents/skills/cc-clip/agents/openai.yaml",
+      ".claude/identity.json",
+      ".codex/config.toml",
+      ".codex/AGENTS.md",
+      ".codex/agents/explorer.toml",
+      ".codex/agents/reviewer.toml",
+      ".codex/agents/docs-researcher.toml",
+      ".claude/homunculus/instincts/inherited/cc-clip-instincts.yaml"
+    ],
+    "workflow-pack": [
+      ".claude/commands/feature-development.md",
+      ".claude/commands/test-driven-development.md",
+      ".claude/commands/refactoring.md"
+    ]
+  },
+  "files": [
+    {
+      "moduleId": "runtime-core",
+      "path": ".claude/skills/cc-clip/SKILL.md",
+      "description": "Repository-specific Claude Code skill generated from git history."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".agents/skills/cc-clip/SKILL.md",
+      "description": "Codex-facing copy of the generated repository skill."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".agents/skills/cc-clip/agents/openai.yaml",
+      "description": "Codex skill metadata so the repo skill appears cleanly in the skill interface."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".claude/identity.json",
+      "description": "Suggested identity.json baseline derived from repository conventions."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".codex/config.toml",
+      "description": "Repo-local Codex MCP and multi-agent baseline aligned with ECC defaults."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".codex/AGENTS.md",
+      "description": "Codex usage guide that points at the generated repo skill and workflow bundle."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".codex/agents/explorer.toml",
+      "description": "Read-only explorer role config for Codex multi-agent work."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".codex/agents/reviewer.toml",
+      "description": "Read-only reviewer role config focused on correctness and security."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".codex/agents/docs-researcher.toml",
+      "description": "Read-only docs researcher role config for API verification."
+    },
+    {
+      "moduleId": "runtime-core",
+      "path": ".claude/homunculus/instincts/inherited/cc-clip-instincts.yaml",
+      "description": "Continuous-learning instincts derived from repository patterns."
+    },
+    {
+      "moduleId": "workflow-pack",
+      "path": ".claude/commands/feature-development.md",
+      "description": "Workflow command scaffold for feature-development."
+    },
+    {
+      "moduleId": "workflow-pack",
+      "path": ".claude/commands/test-driven-development.md",
+      "description": "Workflow command scaffold for test-driven-development."
+    },
+    {
+      "moduleId": "workflow-pack",
+      "path": ".claude/commands/refactoring.md",
+      "description": "Workflow command scaffold for refactoring."
+    }
+  ],
+  "workflows": [
+    {
+      "command": "feature-development",
+      "path": ".claude/commands/feature-development.md"
+    },
+    {
+      "command": "test-driven-development",
+      "path": ".claude/commands/test-driven-development.md"
+    },
+    {
+      "command": "refactoring",
+      "path": ".claude/commands/refactoring.md"
+    }
+  ],
+  "adapters": {
+    "claudeCode": {
+      "skillPath": ".claude/skills/cc-clip/SKILL.md",
+      "identityPath": ".claude/identity.json",
+      "commandPaths": [
+        ".claude/commands/feature-development.md",
+        ".claude/commands/test-driven-development.md",
+        ".claude/commands/refactoring.md"
+      ]
+    },
+    "codex": {
+      "configPath": ".codex/config.toml",
+      "agentsGuidePath": ".codex/AGENTS.md",
+      "skillPath": ".agents/skills/cc-clip/SKILL.md"
+    }
+  }
+}
