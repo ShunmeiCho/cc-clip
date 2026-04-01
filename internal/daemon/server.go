@@ -36,6 +36,7 @@ type Server struct {
 	clipboard    ClipboardReader
 	tokens       *token.Manager
 	sessions     *session.Store
+	dedup        *Deduper
 	notifyCh     chan NotifyEnvelope
 	criticalCh   chan NotifyEnvelope
 	notifyNonces map[string]struct{}
@@ -49,6 +50,7 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 		clipboard:    clipboard,
 		tokens:       tokens,
 		sessions:     sessions,
+		dedup:        NewDeduper(12 * time.Second),
 		notifyCh:     make(chan NotifyEnvelope, notifyChCap),
 		criticalCh:   make(chan NotifyEnvelope, criticalChCap),
 		notifyNonces: make(map[string]struct{}),
@@ -88,12 +90,15 @@ func (s *Server) validNotificationNonce(nonce string) bool {
 	return ok
 }
 
-// enqueueEnvelope routes a notification envelope to the appropriate
-// channel. Critical envelopes (e.g. permission_prompt with Urgency=2)
-// attempt a send to criticalCh with a 500ms timeout to prevent
-// deadlocking the HTTP handler. Non-critical envelopes use a
-// select-default send to notifyCh, dropping on full.
+// enqueueEnvelope deduplicates then routes a notification envelope to
+// the appropriate channel. Repeated non-critical notifications within
+// the dedup window are suppressed. Critical envelopes (permission_prompt)
+// bypass dedup and use criticalCh with a 500ms timeout. Non-critical
+// envelopes use a select-default send to notifyCh, dropping on full.
 func (s *Server) enqueueEnvelope(env NotifyEnvelope) {
+	if allowed, _ := s.dedup.AllowAt(env, time.Now()); !allowed {
+		return
+	}
 	if isAlwaysCritical(env) {
 		select {
 		case s.criticalCh <- env:

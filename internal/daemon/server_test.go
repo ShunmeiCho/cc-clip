@@ -406,3 +406,87 @@ func TestRegisterNonceEndpointRejectsInvalidJSON(t *testing.T) {
 		t.Fatalf("expected 400 for invalid JSON, got %d", w.Code)
 	}
 }
+
+func TestDedupSuppressesRepeatedNotifyAtRuntime(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	srv.RegisterNotificationNonce("nonce-dedup")
+
+	postNotify := func() int {
+		body := strings.NewReader(`{"title":"Claude finished","body":"Done","urgency":0}`)
+		req := httptest.NewRequest("POST", "/notify", body)
+		req.Header.Set("Authorization", "Bearer nonce-dedup")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// First request: accepted (204)
+	if code := postNotify(); code != http.StatusNoContent {
+		t.Fatalf("first notify: expected 204, got %d", code)
+	}
+
+	// Second identical request within dedup window: still 204 from handler
+	// (dedup happens at enqueue, not at HTTP level) but the envelope
+	// should NOT reach the channel.
+	if code := postNotify(); code != http.StatusNoContent {
+		t.Fatalf("second notify: expected 204, got %d", code)
+	}
+
+	// Only one envelope should have been enqueued
+	select {
+	case <-srv.notifyCh:
+		// good, first one is there
+	default:
+		t.Fatal("expected first envelope in notifyCh")
+	}
+	select {
+	case <-srv.notifyCh:
+		t.Fatal("dedup should have suppressed the second envelope")
+	default:
+		// good, channel is empty
+	}
+}
+
+func TestDedupDoesNotSuppressCriticalPermissionPrompt(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	srv.RegisterNotificationNonce("nonce-crit-dedup")
+
+	postCritical := func() int {
+		body := strings.NewReader(`{"hook_event_name":"Notification","type":"permission_prompt","title":"Approve","body":"Edit main.go","_cc_clip_host":"venus"}`)
+		req := httptest.NewRequest("POST", "/notify", body)
+		req.Header.Set("Authorization", "Bearer nonce-crit-dedup")
+		req.Header.Set("Content-Type", "application/x-claude-hook")
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// Send two identical permission_prompt notifications
+	if code := postCritical(); code != http.StatusNoContent {
+		t.Fatalf("first critical: expected 204, got %d", code)
+	}
+	if code := postCritical(); code != http.StatusNoContent {
+		t.Fatalf("second critical: expected 204, got %d", code)
+	}
+
+	// Both should be in criticalCh (not deduped)
+	count := 0
+	for range 2 {
+		select {
+		case <-srv.criticalCh:
+			count++
+		case <-time.After(200 * time.Millisecond):
+			// timeout
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 critical envelopes, got %d", count)
+	}
+}
