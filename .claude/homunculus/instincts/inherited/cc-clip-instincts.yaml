@@ -1,0 +1,641 @@
+# Instincts generated from https://github.com/ShunmeiCho/cc-clip
+# Generated: 2026-04-01T16:21:00.523Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cc-clip-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, docs, feat
+
+## Evidence
+
+- 71 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: wire notification dedup into runtime, feat: add SSH notification bridge with hook classification and delivery chain
+
+---
+id: cc-clip-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Length
+
+## Action
+
+Write moderate-length commit messages (~56 characters)
+
+## Evidence
+
+- Average commit message length: 56 chars
+- Based on 71 commits
+
+---
+id: cc-clip-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: cc-clip-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cc-clip-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: cc-clip-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cc-clip-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~20x per month
+- Files: **/*.test.*
+
+---
+id: cc-clip-workflow-test-driven-development
+trigger: "when adding new functionality"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Test Driven Development
+
+## Action
+
+Follow the test-driven-development workflow:
+1. Write failing test
+2. Implement code to pass test
+3. Refactor if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: **/*.test.*, **/*.spec.*, src/**/*
+
+---
+id: cc-clip-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/**/*
+
+---
+id: cc-clip-workflow-feature-implementation-with-tests-and-docs
+trigger: "when doing feature implementation with tests and docs"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Feature Implementation With Tests And Docs
+
+## Action
+
+Follow the feature-implementation-with-tests-and-docs workflow:
+1. Add or modify implementation files in cmd/cc-clip/, internal/, or similar directories.
+2. Add or update corresponding *_test.go test files.
+3. Add or update design documentation in docs/plans/.
+4. Update README.md or other user-facing docs if needed.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: cmd/cc-clip/*.go, cmd/cc-clip/*_test.go, internal/**/*.go
+
+---
+id: cc-clip-workflow-windows-platform-support-extension
+trigger: "when doing windows platform support extension"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Windows Platform Support Extension
+
+## Action
+
+Follow the windows-platform-support-extension workflow:
+1. Add or modify Windows-specific implementation files (suffix _windows.go, _other.go, etc.) in cmd/cc-clip/, internal/, or related directories.
+2. Add or update corresponding *_test.go test files for Windows code.
+3. Update platform-specific documentation (e.g., docs/windows-quickstart.md, README.md).
+4. Update Makefile and .goreleaser.yaml for Windows build targets.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: cmd/cc-clip/*_windows.go, cmd/cc-clip/*_other.go, cmd/cc-clip/*_windows_test.go
+
+---
+id: cc-clip-workflow-bugfix-with-targeted-test-update
+trigger: "when doing bugfix with targeted test update"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Bugfix With Targeted Test Update
+
+## Action
+
+Follow the bugfix-with-targeted-test-update workflow:
+1. Modify implementation files to fix the bug.
+2. Add or update a relevant *_test.go file to cover the bug scenario.
+3. Reference the bug or PR in the commit message.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: cmd/cc-clip/*.go, cmd/cc-clip/*_test.go, internal/**/*.go
+
+---
+id: cc-clip-workflow-documentation-enhancement-or-troubleshooting-update
+trigger: "when doing documentation enhancement or troubleshooting update"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Documentation Enhancement Or Troubleshooting Update
+
+## Action
+
+Follow the documentation-enhancement-or-troubleshooting-update workflow:
+1. Edit or expand README.md with new sections, diagrams, or troubleshooting.
+2. Add or update files in docs/ (e.g., plans, troubleshooting, marketing, or quickstart guides).
+3. Add or update images or demo GIFs.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: README.md, docs/**/*.md, docs/marketing/*.gif
+
+---
+id: cc-clip-workflow-platform-specific-refactor-or-fix
+trigger: "when doing platform specific refactor or fix"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Platform Specific Refactor Or Fix
+
+## Action
+
+Follow the platform-specific-refactor-or-fix workflow:
+1. Modify or refactor files with platform-specific suffixes (_windows.go, _darwin.go, _unix.go, _other.go).
+2. Update or add tests for the affected platform.
+3. Update build scripts or Makefile if needed.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: cmd/cc-clip/*_windows.go, cmd/cc-clip/*_darwin.go, cmd/cc-clip/*_unix.go
+
+---
+id: cc-clip-instinct-naming-files
+trigger: "When creating or renaming a file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Naming Files
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in files: cmd/cc-clip/hotkey_windows.go
+- internal/session/session_manager.go
+
+---
+id: cc-clip-instinct-naming-functions
+trigger: "When defining a function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-naming-classes
+trigger: "When defining a struct or class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Naming Classes
+
+## Action
+
+Use PascalCase for struct or class names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Import Style
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- Pattern in Go codebase
+- Go import statements
+
+---
+id: cc-clip-instinct-export-style
+trigger: "When exporting functions or variables"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in Go codebase
+- Go export convention (capitalized identifiers)
+
+---
+id: cc-clip-instinct-test-location
+trigger: "When adding tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Location
+
+## Action
+
+Place test files in separate directories, using *_test.go suffix
+
+## Evidence
+
+- Pattern in files: cmd/cc-clip/hotkey_windows_test.go
+- internal/session/session_manager_test.go
+
+---
+id: cc-clip-instinct-test-pattern
+trigger: "When writing a test for a feature or bugfix"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Pattern
+
+## Action
+
+Create or update a *_test.go file covering the relevant code
+
+## Evidence
+
+- Seen in commit: test: add unit tests for PR #9 review fixes
+- Pattern in files: cmd/cc-clip/hotkey_windows_test.go
+
+---
+id: cc-clip-instinct-tdd
+trigger: "When following test-driven development"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Tdd
+
+## Action
+
+Write a failing test before implementing the feature or fix
+
+## Evidence
+
+- Workflow: test-driven-development
+- Seen in commit: test: add tests for user validation
+
+---
+id: cc-clip-instinct-git-commit-format
+trigger: "When making a commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Format
+
+## Action
+
+Use conventional commit prefixes (fix, feat, docs, style, test) followed by a colon and concise message
+
+## Evidence
+
+- Seen in commit: fix: wire notification dedup into runtime
+- feat: add SSH notification bridge with hook classification and delivery chain
+
+---
+id: cc-clip-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Length
+
+## Action
+
+Keep the subject line around 56 characters on average
+
+## Evidence
+
+- Pattern in commit examples
+- Average commit length: 56
+
+---
+id: cc-clip-instinct-feature-implementation-with-tests-and-docs
+trigger: "When adding a major new capability or subsystem"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Feature Implementation With Tests And Docs
+
+## Action
+
+Add or modify implementation files, update *_test.go files, update docs/plans/, and README.md as needed
+
+## Evidence
+
+- Workflow: feature-implementation-with-tests-and-docs
+- Seen in commit sequences and files: cmd/cc-clip/*.go, internal/**/*.go, docs/plans/*.md, README.md
+
+---
+id: cc-clip-instinct-windows-platform-support-extension
+trigger: "When adding or refining Windows-specific support"
+confidence: 0.92
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Windows Platform Support Extension
+
+## Action
+
+Modify *_windows.go and related files, update Windows tests, docs/windows-quickstart.md, README.md, Makefile, and .goreleaser.yaml
+
+## Evidence
+
+- Workflow: windows-platform-support-extension
+- Pattern in files: cmd/cc-clip/*_windows.go, docs/windows-quickstart.md
+
+---
+id: cc-clip-instinct-bugfix-with-targeted-test-update
+trigger: "When fixing a bug"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Bugfix With Targeted Test Update
+
+## Action
+
+Update implementation files and add or update a *_test.go file to cover the bug scenario, referencing the bug or PR in the commit message
+
+## Evidence
+
+- Workflow: bugfix-with-targeted-test-update
+- Seen in commit: fix: address PR #9 review round 2 (P1/P2/P3)
+
+---
+id: cc-clip-instinct-documentation-enhancement-or-troubleshooting-update
+trigger: "When improving documentation or troubleshooting guides"
+confidence: 0.93
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Documentation Enhancement Or Troubleshooting Update
+
+## Action
+
+Edit README.md, update docs/ (plans, troubleshooting, marketing), and add/update images or demo GIFs
+
+## Evidence
+
+- Workflow: documentation-enhancement-or-troubleshooting-update
+- Seen in commit: docs: add macOS and Windows demo GIFs to README
+
+---
+id: cc-clip-instinct-platform-specific-refactor-or-fix
+trigger: "When addressing platform-specific bugs or refactoring OS-specific code"
+confidence: 0.87
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Platform Specific Refactor Or Fix
+
+## Action
+
+Modify *_windows.go, *_darwin.go, *_unix.go, *_other.go files, update/add platform-specific tests, and update Makefile as needed
+
+## Evidence
+
+- Workflow: platform-specific-refactor-or-fix
+- Pattern in files: cmd/cc-clip/*_windows.go, internal/**/*_darwin.go
+
