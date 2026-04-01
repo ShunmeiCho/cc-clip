@@ -702,17 +702,33 @@ make build && make test
 
 ## Related
 
-**Claude Code:**
+**Claude Code — Clipboard:**
 - [anthropics/claude-code#5277](https://github.com/anthropics/claude-code/issues/5277) — Image paste in SSH sessions
 - [anthropics/claude-code#29204](https://github.com/anthropics/claude-code/issues/29204) — xclip/wl-paste dependency
 
-**Codex CLI:**
+**Claude Code — Notifications:**
+- [anthropics/claude-code#19976](https://github.com/anthropics/claude-code/issues/19976) — Terminal notifications fail in tmux/SSH
+- [anthropics/claude-code#29928](https://github.com/anthropics/claude-code/issues/29928) — Built-in completion notifications
+- [anthropics/claude-code#36885](https://github.com/anthropics/claude-code/issues/36885) — Notification when waiting for input (headless/SSH)
+- [anthropics/claude-code#29827](https://github.com/anthropics/claude-code/issues/29827) — Webhook/push notification for permission requests
+- [anthropics/claude-code#36850](https://github.com/anthropics/claude-code/issues/36850) — Terminal bell on tool approval prompt
+- [anthropics/claude-code#32610](https://github.com/anthropics/claude-code/issues/32610) — Terminal bell on completion
+- [anthropics/claude-code#40165](https://github.com/anthropics/claude-code/issues/40165) — OSC-99 notification support assumed, not queried
+
+**Codex CLI — Clipboard:**
 - [openai/codex#6974](https://github.com/openai/codex/issues/6974) — Linux: cannot paste image
 - [openai/codex#6080](https://github.com/openai/codex/issues/6080) — Image pasting issue
 - [openai/codex#13716](https://github.com/openai/codex/issues/13716) — Clipboard image paste failure on Linux
 - [openai/codex#7599](https://github.com/openai/codex/issues/7599) — Image clipboard does not work in WSL
 
-**Other:**
+**Codex CLI — Notifications:**
+- [openai/codex#3962](https://github.com/openai/codex/issues/3962) — Play a sound when Codex finishes (34 comments)
+- [openai/codex#8929](https://github.com/openai/codex/issues/8929) — Notify hook not getting triggered
+- [openai/codex#8189](https://github.com/openai/codex/issues/8189) — WSL2: notifications fail for approval prompts
+
+**Terminal / Multiplexer:**
+- [manaflow-ai/cmux#833](https://github.com/manaflow-ai/cmux/issues/833) — Notifications over SSH+tmux sessions
+- [manaflow-ai/cmux#559](https://github.com/manaflow-ai/cmux/issues/559) — Better SSH integration
 - [ghostty-org/ghostty#10517](https://github.com/ghostty-org/ghostty/discussions/10517) — SSH image paste discussion
 
 ## License
