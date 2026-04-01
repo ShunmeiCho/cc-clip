@@ -1,0 +1,447 @@
+# Instincts generated from https://github.com/ShunmeiCho/cc-clip
+# Generated: 2026-04-01T16:49:31.992Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cc-clip-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, docs, feat
+
+## Evidence
+
+- 72 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: resolve data race in test and relax envelope contract doc, feat: add SSH notification bridge with hook classification and delivery chain
+
+---
+id: cc-clip-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Length
+
+## Action
+
+Write moderate-length commit messages (~56 characters)
+
+## Evidence
+
+- Average commit message length: 56 chars
+- Based on 72 commits
+
+---
+id: cc-clip-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: cc-clip-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cc-clip-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: cc-clip-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cc-clip-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~19x per month
+- Files: **/*.test.*
+
+---
+id: cc-clip-workflow-test-driven-development
+trigger: "when adding new functionality"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Test Driven Development
+
+## Action
+
+Follow the test-driven-development workflow:
+1. Write failing test
+2. Implement code to pass test
+3. Refactor if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: **/*.test.*, **/*.spec.*, src/**/*
+
+---
+id: cc-clip-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/**/*
+
+---
+id: cc-clip-instinct-file-naming
+trigger: "When creating a new file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct File Naming
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in namingConventions.files: snake_case
+
+---
+id: cc-clip-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.functions: camelCase
+
+---
+id: cc-clip-instinct-class-naming
+trigger: "When defining a new class or struct"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase
+
+## Evidence
+
+- Pattern in namingConventions.classes: PascalCase
+
+---
+id: cc-clip-instinct-constant-naming
+trigger: "When defining a new constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in namingConventions.constants: SCREAMING_SNAKE_CASE
+
+---
+id: cc-clip-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: cc-clip-instinct-export-style
+trigger: "When exporting functions or variables"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: cc-clip-instinct-test-location
+trigger: "When adding new tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Location
+
+## Action
+
+Place test files in a separate test location, not mixed with source files
+
+## Evidence
+
+- Pattern in architecture.testLocation: separate
+
+---
+id: cc-clip-instinct-test-filename
+trigger: "When naming test files"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Filename
+
+## Action
+
+Use the .test. or .spec. suffix in the filename
+
+## Evidence
+
+- Pattern in workflows.test-driven-development.filesInvolved: **/*.test.*, **/*.spec.*
+
+---
+id: cc-clip-instinct-tdd-sequence
+trigger: "When following a test-driven development workflow"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Tdd Sequence
+
+## Action
+
+First write a failing test, then implement code to pass the test, then refactor if needed
+
+## Evidence
+
+- Pattern in workflows.test-driven-development.commitSequence
+
+---
+id: cc-clip-instinct-feature-dev-sequence
+trigger: "When developing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Feature Dev Sequence
+
+## Action
+
+Implement the feature, add corresponding tests, then update documentation
+
+## Evidence
+
+- Pattern in workflows.feature-development.commitSequence
+
+---
+id: cc-clip-instinct-refactor-sequence
+trigger: "When refactoring code"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Refactor Sequence
+
+## Action
+
+Ensure tests pass before refactoring, refactor code, then verify tests still pass
+
+## Evidence
+
+- Pattern in workflows.refactoring.commitSequence
+
+---
+id: cc-clip-instinct-git-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Format
+
+## Action
+
+Use a conventional commit prefix (fix, docs, feat, style, test) followed by a colon and a concise description
+
+## Evidence
+
+- Pattern in commits.prefixes: fix, docs, feat
+- Examples: 'fix: resolve data race in test...', 'feat: add SSH notification bridge...'
+
+---
+id: cc-clip-instinct-commit-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Commit Length
+
+## Action
+
+Keep the commit message around 56 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength: 56
+
