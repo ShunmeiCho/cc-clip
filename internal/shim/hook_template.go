@@ -27,7 +27,7 @@ d['_cc_clip_host'] = '${_CC_CLIP_HOST_ALIAS}'
 json.dump(d, sys.stdout)
 " 2>/dev/null || echo "$_payload")
 
-_http_code=$(curl -sf -o /dev/null -w '%%{http_code}' -X POST \
+_http_code=$(curl -sf --connect-timeout 2 --max-time 5 -o /dev/null -w '%%{http_code}' -X POST \
 	-H "Authorization: Bearer $_nonce" \
 	-H "Content-Type: application/x-claude-hook" \
 	-H "User-Agent: cc-clip-hook/0.1" \

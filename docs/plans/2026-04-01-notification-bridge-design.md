@@ -518,6 +518,43 @@ Phase 8: End-to-end verification
 | E2E | Chain fallthrough: kill cmux → macOS fallback fires | Manual |
 | E2E | Codex auto-detect: connect to host with ~/.codex/ → config injected | SSH to test server |
 
+## E2E Verification Notes (2026-04-02)
+
+Verified on venus (Ubuntu, SSH from macOS). Issues found and resolved during testing:
+
+### Issues Found
+
+1. **Hook script had no curl** — Venus had an old placeholder `cc-clip-hook` from a previous install that contained no curl logic. The new hook template must be deployed via `cc-clip connect` or manual install.
+
+2. **curl had no timeout** — The hook template's curl command lacked `--connect-timeout` and `--max-time`. When the tunnel was down, hooks blocked for 2+ minutes, causing Claude Code's "running stop hooks" to stall. Fixed: `--connect-timeout 2 --max-time 5`.
+
+3. **Stale sshd RemoteForward** — Old SSH sessions leave `sshd` child processes holding port 18339 in `CLOSE_WAIT` state. New SSH connections' RemoteForward silently fails because the port is already bound. Fix: `sudo kill $(sudo lsof -ti :18339)` before reconnecting. This is the same pitfall documented in CLAUDE.md "Known Pitfalls". The `cc-clip connect` flow should add a remote port cleanup step.
+
+4. **Nonce not provisioned** — Plain `ssh venus` does not generate or register a notification nonce. Users must either use `cc-clip connect` (which handles this automatically) or manually generate and register a nonce. Consider auto-provisioning nonce during the notification setup step of `cc-clip connect`.
+
+5. **Daemon binary mismatch** — The running daemon was an old binary without the `/notify` route. After rebuilding, the daemon must be restarted. The `/notify` endpoint hung instead of returning 404, which was confusing.
+
+6. **User-Agent required for /register-nonce** — The `authMiddleware` requires `User-Agent: cc-clip/0.1`. Manual curl without this header gets 403, which is not obvious.
+
+### Verified Working
+
+| Test | Result |
+|------|--------|
+| Manual `echo ... \| cc-clip-hook` → local popup | PASS |
+| Claude Code Stop hook → local popup ("Claude stopped") | PASS |
+| Image paste Ctrl+V in Claude Code | PASS |
+| Image paste notification (v0.5.0 path) | PASS |
+| Dedup: 3x identical Stop in 12s → 1 popup | PASS |
+| DeliveryChain: cmux fail → macOS fallback | PASS |
+| Tunnel health: `curl /health` from venus | PASS |
+
+### Not Triggered (By Design)
+
+| Event | Why no notification |
+|-------|-------------------|
+| Claude waiting for user input | Not a hook event — normal interaction loop |
+| Claude using tools (Bash/Edit) | `PreToolUse` hook not installed in V1 |
+
 ## Relationship to Existing Notification System
 
 This design extends, not replaces, the v0.5.0 clipboard notification system:
