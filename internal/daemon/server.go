@@ -39,7 +39,7 @@ type Server struct {
 	dedup        *Deduper
 	notifyCh     chan NotifyEnvelope
 	criticalCh   chan NotifyEnvelope
-	notifyNonces map[string]struct{}
+	notifyNonces map[string]nonceEntry
 	noncesMu     sync.RWMutex
 	addr         string
 	mux          *http.ServeMux
@@ -53,7 +53,7 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 		dedup:        NewDeduper(12 * time.Second),
 		notifyCh:     make(chan NotifyEnvelope, notifyChCap),
 		criticalCh:   make(chan NotifyEnvelope, criticalChCap),
-		notifyNonces: make(map[string]struct{}),
+		notifyNonces: make(map[string]nonceEntry),
 		addr:         addr,
 		mux:          http.NewServeMux(),
 	}
@@ -65,29 +65,74 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 	return s
 }
 
+// nonceEntry tracks metadata for a registered notification nonce.
+type nonceEntry struct {
+	Host       string
+	IssuedAt   time.Time
+	ExpiresAt  time.Time
+}
+
+// nonceTTL is the default lifetime for notification nonces.
+const nonceTTL = 7 * 24 * time.Hour // 7 days
+
 // RegisterNotificationNonce adds a nonce to the dedicated notification
 // auth registry. Notification nonces are separate from clipboard bearer
-// tokens to enforce distinct auth domains. Returns an error if the nonce
-// is empty or collides with a valid clipboard token.
+// tokens to enforce distinct auth domains. When a new nonce is registered
+// for the same host, any previous nonce for that host is revoked.
+// Returns an error if the nonce is empty or collides with a valid clipboard token.
 func (s *Server) RegisterNotificationNonce(nonce string) error {
+	return s.RegisterNotificationNonceForHost(nonce, "")
+}
+
+// RegisterNotificationNonceForHost registers a nonce bound to a specific host.
+// Any previous nonce for the same host is automatically revoked.
+func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 	if nonce == "" {
 		return fmt.Errorf("empty nonce is not allowed")
 	}
 	if s.tokens.Validate(nonce) == nil {
 		return fmt.Errorf("refusing to register clipboard token as notification nonce")
 	}
+	now := time.Now()
 	s.noncesMu.Lock()
 	defer s.noncesMu.Unlock()
-	s.notifyNonces[nonce] = struct{}{}
+	// Revoke previous nonce for the same host.
+	if host != "" {
+		for k, v := range s.notifyNonces {
+			if v.Host == host {
+				delete(s.notifyNonces, k)
+			}
+		}
+	}
+	s.notifyNonces[nonce] = nonceEntry{
+		Host:      host,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(nonceTTL),
+	}
 	return nil
 }
 
-// validNotificationNonce checks whether the given nonce is registered.
+// validNotificationNonce checks whether the given nonce is registered and not expired.
 func (s *Server) validNotificationNonce(nonce string) bool {
 	s.noncesMu.RLock()
 	defer s.noncesMu.RUnlock()
-	_, ok := s.notifyNonces[nonce]
-	return ok
+	entry, ok := s.notifyNonces[nonce]
+	if !ok {
+		return false
+	}
+	return time.Now().Before(entry.ExpiresAt)
+}
+
+// CleanupExpiredNonces removes nonces that have passed their TTL.
+func (s *Server) CleanupExpiredNonces() {
+	now := time.Now()
+	s.noncesMu.Lock()
+	defer s.noncesMu.Unlock()
+	for k, v := range s.notifyNonces {
+		if now.After(v.ExpiresAt) {
+			delete(s.notifyNonces, k)
+		}
+	}
 }
 
 // enqueueEnvelope deduplicates then routes a notification envelope to

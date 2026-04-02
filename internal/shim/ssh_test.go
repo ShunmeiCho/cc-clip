@@ -192,12 +192,19 @@ func TestGenerateNotificationNonceDistinctFromSessionID(t *testing.T) {
 }
 
 func TestCodexNotifyManagedBlockUsesConfigArray(t *testing.T) {
-	block := codexNotifyManagedBlock("start", "end")
+	block := codexNotifyManagedBlock("start", "end", 18339)
 	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--from-codex-stdin"]`) {
 		t.Fatalf("expected notify array config, got %q", block)
 	}
 	if strings.Contains(block, "[notify]") {
 		t.Fatalf("unexpected legacy [notify] table in %q", block)
+	}
+}
+
+func TestCodexNotifyManagedBlockNonDefaultPort(t *testing.T) {
+	block := codexNotifyManagedBlock("start", "end", 9999)
+	if !strings.Contains(block, "CC_CLIP_PORT=9999") {
+		t.Fatalf("expected CC_CLIP_PORT=9999 for non-default port, got %q", block)
 	}
 }
 

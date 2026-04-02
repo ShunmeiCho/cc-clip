@@ -772,7 +772,7 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, 
 	codexInjected := false
 	if shim.RemoteHasCodex(session) {
 		fmt.Println("  [N5] Codex detected, injecting notify config...")
-		if err := shim.EnsureRemoteCodexNotifyConfig(session); err != nil {
+		if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
 			log.Printf("      warning: codex config injection failed: %v", err)
 		} else {
 			codexInjected = true

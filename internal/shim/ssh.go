@@ -256,14 +256,24 @@ func InstallRemoteHookScript(session *SSHSession, port int) error {
 // ~/.local/bin/claude on the remote. The wrapper auto-injects notification
 // hooks via --settings when the cc-clip tunnel is alive, and transparently
 // passes through to the real claude binary when the tunnel is down.
+//
+// If an existing file at ~/.local/bin/claude is found that is NOT a cc-clip
+// wrapper, it is backed up to ~/.local/bin/claude.cc-clip-bak before overwriting.
+// The backup can be restored by cc-clip uninstall or manually.
 func InstallRemoteClaudeWrapper(session *SSHSession, port int) error {
+	// Check if an existing non-cc-clip wrapper exists and back it up.
+	out, _ := session.Exec("head -5 ~/.local/bin/claude 2>/dev/null || true")
+	if out != "" && !strings.Contains(out, "cc-clip claude wrapper") {
+		session.Exec("cp ~/.local/bin/claude ~/.local/bin/claude.cc-clip-bak 2>/dev/null || true")
+	}
+
 	script := ClaudeWrapperScript(port)
 	args := append(session.connArgs(), session.host,
 		"mkdir -p ~/.local/bin && cat > ~/.local/bin/claude && chmod +x ~/.local/bin/claude")
 	cmd := exec.Command("ssh", args...)
 	cmd.Stdin = strings.NewReader(script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to install remote claude wrapper: %s: %w", strings.TrimSpace(string(out)), err)
+	if outErr, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install remote claude wrapper: %s: %w", strings.TrimSpace(string(outErr)), err)
 	}
 	return nil
 }
@@ -277,12 +287,14 @@ func RemoteHasCodex(session *SSHSession) bool {
 // EnsureRemoteCodexNotifyConfig injects the cc-clip notification hook
 // block into ~/.codex/config.toml using # cc-clip-managed guard markers.
 // Idempotent: if the managed block already exists, it is replaced.
-func EnsureRemoteCodexNotifyConfig(session *SSHSession) error {
+// If the user already has a non-managed `notify` key, injection is refused
+// to avoid creating duplicate TOML keys.
+func EnsureRemoteCodexNotifyConfig(session *SSHSession, port int) error {
 	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
 	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
 	const configPath = "~/.codex/config.toml"
 
-	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd)
+	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd, port)
 
 	// Check if the managed block already exists.
 	out, _ := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", markerStart, configPath))
@@ -292,6 +304,13 @@ func EnsureRemoteCodexNotifyConfig(session *SSHSession) error {
 			`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
 			sedEscape(markerStart), sedEscape(markerEnd), configPath, configPath)
 		session.Exec(sedCmd)
+	} else {
+		// Check for a user-managed notify key (not ours) to avoid duplicate keys.
+		userNotify, _ := session.Exec(fmt.Sprintf(
+			"grep -E '^\\s*notify\\s*=' %s 2>/dev/null || true", configPath))
+		if strings.TrimSpace(userNotify) != "" {
+			return fmt.Errorf("existing notify setting found in %s — refusing to inject duplicate. Remove or comment out the existing notify line first", configPath)
+		}
 	}
 
 	// Append the managed block to the config file.
@@ -306,12 +325,15 @@ func EnsureRemoteCodexNotifyConfig(session *SSHSession) error {
 	return nil
 }
 
-func codexNotifyManagedBlock(markerStart, markerEnd string) string {
-	// Codex notify is configured as a command array in config.toml. The payload
-	// JSON is provided on stdin, so the managed command reads from stdin instead
-	// of relying on shell interpolation.
+func codexNotifyManagedBlock(markerStart, markerEnd string, port int) string {
+	// Include port in CC_CLIP_PORT env so non-default ports work.
+	if port == 18339 {
+		return markerStart + "\n" +
+			`notify = ["cc-clip", "notify", "--from-codex-stdin"]` + "\n" +
+			markerEnd
+	}
 	return markerStart + "\n" +
-		`notify = ["cc-clip", "notify", "--from-codex-stdin"]` + "\n" +
+		fmt.Sprintf(`notify = ["env", "CC_CLIP_PORT=%d", "cc-clip", "notify", "--from-codex-stdin"]`, port) + "\n" +
 		markerEnd
 }
 
