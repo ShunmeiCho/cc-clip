@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg" alt="Go"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8.svg" alt="Go"></a>
   <a href="https://github.com/ShunmeiCho/cc-clip/stargazers"><img src="https://img.shields.io/github/stars/ShunmeiCho/cc-clip?style=social" alt="Stars"></a>
 </p>
 
@@ -17,6 +17,33 @@
   <br>
   <em>Install → setup → paste. Clipboard works over SSH.</em>
 </p>
+
+---
+
+<details>
+<summary><b>Table of Contents</b></summary>
+
+- [The Problem](#the-problem)
+- [The Solution](#the-solution)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Why cc-clip?](#why-cc-clip)
+- [How It Works](#how-it-works)
+- [SSH Notifications](#ssh-notifications)
+- [Security](#security)
+- [Daily Usage](#daily-usage)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [Platform Support](#platform-support)
+- [Requirements](#requirements)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [Related](#related)
+- [License](#license)
+
+</details>
+
+---
 
 ## The Problem
 
@@ -93,17 +120,11 @@ cc-clip --version
 
 ### Step 2: Setup (one command)
 
-macOS:
-
 ```bash
-# For Claude Code only
 cc-clip setup myserver
-
-# For both Claude Code + Codex CLI
-cc-clip setup myserver --codex
 ```
 
-This single command:
+This single command handles everything:
 1. Installs local dependencies (`pngpaste`)
 2. Configures SSH (`RemoteForward`, `ControlMaster no`)
 3. Starts the local daemon (via macOS launchd)
@@ -116,33 +137,37 @@ This single command:
 </p>
 </details>
 
-> **If setup reports an error**, read the error message carefully — it includes specific instructions for how to fix the issue. For example, if `Xvfb` is not found on the remote server and auto-install fails, you will see the exact command to run:
->
-> ```bash
-> # SSH into your server and install manually:
-> ssh myserver
-> sudo apt install xvfb          # Debian/Ubuntu
-> sudo dnf install xorg-x11-server-Xvfb   # RHEL/Fedora
-> ```
->
-> After fixing, re-run `cc-clip setup myserver --codex`.
+<details>
+<summary>Also use Codex CLI? Add <code>--codex</code></summary>
 
-Windows:
+```bash
+cc-clip setup myserver --codex
+```
 
-Use the dedicated guide:
+This additionally installs Xvfb and the x11-bridge on the remote. If `Xvfb` is not found and auto-install fails, you'll see the exact command to run:
+
+```bash
+ssh myserver
+sudo apt install xvfb          # Debian/Ubuntu
+sudo dnf install xorg-x11-server-Xvfb   # RHEL/Fedora
+```
+
+Then re-run `cc-clip setup myserver --codex`.
+
+</details>
+
+<details>
+<summary>Windows? Use the dedicated guide</summary>
 
 - [Windows Quick Start](docs/windows-quickstart.md)
 
-<details>
-<summary>See it in action (Windows)</summary>
 <p align="center">
   <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows demo" width="720">
 </p>
+
 </details>
 
 ### Step 3: Connect and use
-
-macOS:
 
 Open a **new** SSH session to your server (the tunnel activates on SSH connection):
 
@@ -153,12 +178,6 @@ ssh myserver
 Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from your Mac clipboard.
 
 > **Important:** The image paste works through the SSH tunnel. You must connect via `ssh myserver` (the host you set up). The tunnel is established on each SSH connection.
-
-Windows:
-
-See:
-
-- [Windows Quick Start](docs/windows-quickstart.md)
 
 ### Verify it works
 
@@ -692,13 +711,19 @@ See [Troubleshooting Guide](docs/troubleshooting.md) for detailed diagnostics, o
 
 ## Contributing
 
-Contributions and bug reports welcome. Please [open an issue](https://github.com/ShunmeiCho/cc-clip/issues) first for major changes.
+Contributions welcome! For bug reports and feature requests, [open an issue](https://github.com/ShunmeiCho/cc-clip/issues).
+
+For code contributions:
 
 ```bash
 git clone https://github.com/ShunmeiCho/cc-clip.git
 cd cc-clip
 make build && make test
 ```
+
+- **Bug fixes:** Open a PR directly with a clear description of the fix
+- **New features:** Open an issue first to discuss the approach
+- **Commit style:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
 
 ## Related
 
