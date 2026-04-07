@@ -24,10 +24,24 @@ make build                          # Build binary with version from git tags
 make test                           # Run all tests (go test ./... -count=1)
 make vet                            # Run go vet
 go test ./internal/tunnel/ -v -run TestFetchImageRoundTrip  # Single test
-make release-local                  # Build for all platforms (dist/)
+make release-local                  # Build bare binaries for all platforms (dist/), local testing only
 ```
 
 Version is injected via `-X main.version=$(VERSION)` ldflags. The `version` variable in `cmd/cc-clip/main.go` defaults to `"dev"`.
+
+### Release Process
+
+Production releases use **goreleaser** via GitHub Actions (`.github/workflows/release.yml`). Push a version tag to trigger:
+
+```bash
+git tag v0.6.0
+git push origin v0.6.0
+# CI runs: test → contract check → goreleaser → published release with tar.gz + checksums
+```
+
+**NEVER release manually with `make release-local` + `gh release create`.** The install script (`scripts/install.sh`) expects goreleaser's naming convention (`cc-clip_{version}_{os}_{arch}.tar.gz`). Bare binaries from `make release-local` use a different naming scheme (`cc-clip-{os}-{arch}`) and will cause install script 404s. `make release-local` is for local cross-compilation testing only.
+
+goreleaser config: `.goreleaser.yaml`. Release is published automatically (not draft).
 
 ## Architecture
 
@@ -126,3 +140,4 @@ When `connect` detects a different remote arch (e.g., Mac arm64 → Linux amd64)
 - Adding a new notification kind: `daemon/envelope.go` (NotifyKind + payload struct) + `daemon/classifier.go` (hook→envelope mapping) + `daemon/deliver.go` (formatNotification display text)
 - Changing hook injection: `shim/claude_wrapper.go` (wrapper template) + `shim/hook_template.go` (hook script) + `shim/connect.go` (deploy steps)
 - Adding a notification adapter: implement `Deliverer` interface + register in `daemon/deliver.go:BuildDeliveryChain()`
+- Changing release asset format: `.goreleaser.yaml` (archive naming/format) + `scripts/install.sh` (download URL + extraction logic) — these MUST stay in sync

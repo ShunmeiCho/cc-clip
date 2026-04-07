@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 )
 
 // DarwinNotifier delivers macOS notifications with image thumbnails
@@ -17,13 +18,41 @@ type DarwinNotifier struct {
 	terminalNotifier   string // path to terminal-notifier binary, empty if not found
 }
 
+// maxPreviewFiles limits the number of preview images retained on disk.
+const maxPreviewFiles = 50
+
 func NewDarwinNotifier() *DarwinNotifier {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".cache", "cc-clip", "previews")
 	os.MkdirAll(dir, 0700)
+	cleanupPreviews(dir, maxPreviewFiles)
 
 	tn, _ := exec.LookPath("terminal-notifier")
 	return &DarwinNotifier{previewDir: dir, terminalNotifier: tn}
+}
+
+// cleanupPreviews removes the oldest preview files when the count exceeds max.
+// Uses modification time for accurate ordering regardless of filename format.
+func cleanupPreviews(dir string, max int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) <= max {
+		return
+	}
+	type fileWithTime struct {
+		name    string
+		modTime int64
+	}
+	files := make([]fileWithTime, 0, len(entries))
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			files = append(files, fileWithTime{name: e.Name(), modTime: info.ModTime().UnixNano()})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].modTime < files[j].modTime })
+	toRemove := len(files) - max
+	for i := 0; i < toRemove; i++ {
+		os.Remove(filepath.Join(dir, files[i].name))
+	}
 }
 
 // platformDeliverer returns the darwin-specific notification adapter.
@@ -59,6 +88,7 @@ func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 			path := filepath.Join(n.previewDir, fmt.Sprintf("preview-%s-%d%s", sid, p.Seq, ext))
 			if err := os.WriteFile(path, p.ImageData, 0600); err == nil {
 				imagePath = path
+				cleanupPreviews(n.previewDir, maxPreviewFiles)
 			}
 		}
 	}
@@ -89,6 +119,8 @@ func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
 		previewPath = filepath.Join(n.previewDir, fmt.Sprintf("preview-%s-%d%s", sid, evt.Seq, ext))
 		if err := os.WriteFile(previewPath, evt.ImageData, 0600); err != nil {
 			previewPath = ""
+		} else {
+			cleanupPreviews(n.previewDir, maxPreviewFiles)
 		}
 	}
 

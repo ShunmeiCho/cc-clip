@@ -243,11 +243,23 @@ func cmdServe() {
 	log.Printf("Token expires at: %s", sess.ExpiresAt.Format(time.RFC3339))
 	log.Printf("Starting daemon on %s", addr)
 
-	// Start notification delivery and session cleanup in background
+	// Start notification delivery, session cleanup, and nonce cleanup in background
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go srv.RunNotifier(ctx, daemon.BuildDeliveryChain())
 	go store.RunCleanup(ctx, 30*time.Minute)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				srv.CleanupExpiredNonces()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
@@ -611,6 +623,7 @@ func runConnect(opts connectOpts) {
 			needsShim = true
 		}
 	}
+	var installOut string
 	if needsShim {
 		fmt.Printf("[5/7] Installing shim...\n")
 		installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
@@ -623,6 +636,7 @@ func runConnect(opts connectOpts) {
 				log.Fatalf("      remote install failed: %s: %v", out, err)
 			}
 		}
+		installOut = out
 		fmt.Printf("      %s\n", out)
 	} else {
 		fmt.Println("[5/7] Shim already installed, skipping")
@@ -665,15 +679,22 @@ func runConnect(opts connectOpts) {
 
 	// Update remote deploy state
 	localHash, _ := shim.LocalBinaryHash(localBin)
+	// Determine actual shim target from install output or prior state.
+	shimTarget := "xclip"
+	if needsShim {
+		// Parse install output: it prints "Installed shim: <target>"
+		if strings.Contains(installOut, "wl-paste") {
+			shimTarget = "wl-paste"
+		}
+	} else if remoteState != nil && remoteState.ShimTarget != "" {
+		shimTarget = remoteState.ShimTarget
+	}
 	newState := &shim.DeployState{
 		BinaryHash:    localHash,
 		BinaryVersion: version,
 		ShimInstalled: true,
-		ShimTarget:    "xclip",
+		ShimTarget:    shimTarget,
 		PathFixed:     pathFixed,
-	}
-	if remoteState != nil && remoteState.ShimTarget != "" {
-		newState.ShimTarget = remoteState.ShimTarget
 	}
 	// Preserve existing codex state when not using --codex.
 	if remoteState != nil && remoteState.Codex != nil && !opts.codex {
