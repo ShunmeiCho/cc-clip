@@ -46,9 +46,12 @@ func (c *darwinClipboard) Type() (ClipboardInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
 	defer cancel()
 
-	// Try pngpaste first to detect image
+	// Try pngpaste first to detect image.
+	// Discard stdout to prevent binary image data from leaking to the daemon's output.
 	if pngpastePath := findPngpaste(); pngpastePath != "" {
 		cmd := exec.CommandContext(ctx, pngpastePath, "-")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
 		if err := cmd.Run(); err == nil {
 			return ClipboardInfo{Type: ClipboardImage, Format: "png"}, nil
 		}

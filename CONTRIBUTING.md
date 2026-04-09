@@ -29,8 +29,12 @@ make test
 make build          # Build binary
 make test           # Run all tests
 make vet            # Run go vet
-make release-local  # Cross-compile for all platforms
+make release-local  # Cross-compile for local testing only (NOT for GitHub releases)
 ```
+
+> **Warning:** `make release-local` produces bare binaries with different naming than
+> goreleaser. Never upload these to GitHub Releases — the install script will 404.
+> Production releases are automated via GitHub Actions on tag push. See CLAUDE.md.
 
 ## How to Contribute
 
