@@ -50,8 +50,32 @@ func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreC
 	return nil
 }
 
+// clipboardPersistenceSnippet is prepended to every clipboard-setting
+// PowerShell script. Set-Clipboard and WinForms Clipboard.SetText ultimately
+// give ownership to a window owned by the short-lived PowerShell process; when
+// that process exits, Windows destroys the window and the clipboard data goes
+// with it. SetDataObject with $true asks WinForms to leave the data on the
+// clipboard after the app exits, and OleFlushClipboard forces the OLE
+// rendering path to actually commit it. Using both is belt-and-braces because
+// the exact persistence behavior depends on the data format and Windows
+// version.
+const clipboardPersistenceSnippet = `$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+if (-not ('CcClipOle' -as [type])) {
+  Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+public static class CcClipOle {
+    [DllImport("ole32.dll")]
+    public static extern int OleFlushClipboard();
+}
+"@
+}
+`
+
 func windowsSetClipboardText(text string) error {
-	script := `Set-Clipboard -Value $env:CC_CLIP_TEXT`
+	script := clipboardPersistenceSnippet + `
+[System.Windows.Forms.Clipboard]::SetDataObject($env:CC_CLIP_TEXT, $true)
+[void][CcClipOle]::OleFlushClipboard()`
 	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
 	cmd.Env = append(os.Environ(), "CC_CLIP_TEXT="+text)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -61,12 +85,14 @@ func windowsSetClipboardText(text string) error {
 }
 
 func windowsSetClipboardImage(imagePath string) error {
-	script := `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
+	script := clipboardPersistenceSnippet + `
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile($env:CC_CLIP_IMAGE_PATH)
 try {
-  [System.Windows.Forms.Clipboard]::SetImage($img)
+  $data = New-Object System.Windows.Forms.DataObject
+  $data.SetData([System.Windows.Forms.DataFormats]::Bitmap, $true, $img)
+  [System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
+  [void][CcClipOle]::OleFlushClipboard()
 } finally {
   $img.Dispose()
 }`
