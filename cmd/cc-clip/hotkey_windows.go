@@ -507,6 +507,21 @@ func parseHotkey(value string) (hotkeyBinding, error) {
 		return hotkeyBinding{}, err
 	}
 
+	// windowsSendCtrlShiftV synthesizes Ctrl+Shift+V; a binding with the
+	// same combination would be re-caught by our own RegisterHotKey loop
+	// (guarded by hotkeyRunning) and the paste would never reach the
+	// terminal. Ctrl+V is the system paste shortcut and must not be
+	// globally hijacked either.
+	const vkV = 0x56
+	if key == vkV {
+		if modifiers == (modControl | modShift) {
+			return hotkeyBinding{}, fmt.Errorf("hotkey %q conflicts with the simulated paste keystroke (ctrl+shift+v); choose a different combination", value)
+		}
+		if modifiers == modControl {
+			return hotkeyBinding{}, fmt.Errorf("hotkey %q conflicts with the system paste shortcut (ctrl+v); choose a different combination", value)
+		}
+	}
+
 	displayParts := make([]string, 0, 4)
 	if modifiers&modControl != 0 {
 		displayParts = append(displayParts, "ctrl")
