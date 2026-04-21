@@ -154,3 +154,17 @@ Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
 **Fix:** Copy an image on your Mac first:
 - **Screenshot to clipboard:** `Cmd + Shift + Ctrl + 4` (select area) or `Cmd + Shift + Ctrl + 3` (full screen)
 - **Copy from an app:** Right-click an image → Copy Image
+
+## Setup Fails: "killed" During Re-Deployment
+
+**Symptom:** `cc-clip setup` was working before, but now shows `zsh: killed` when re-running.
+
+**Cause:** The launchd service is running the old binary. Replacing the binary while the daemon holds it open can cause conflicts.
+
+**Fix:**
+
+```bash
+cc-clip service uninstall
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+cc-clip setup myserver
+```

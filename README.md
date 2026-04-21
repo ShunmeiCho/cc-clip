@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">cc-clip</h1>
 <p align="center">
-  <b>Paste images &amp; receive notifications across SSH — remote Claude Code, Codex CLI &amp; opencode feel local.</b>
+  <b>Paste images over SSH for Claude Code, Codex CLI, and opencode — plus desktop notifications for Claude Code and Codex CLI.</b>
 </p>
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
@@ -53,16 +53,17 @@ When running Claude Code, Codex CLI, or opencode on a remote server via SSH, **i
 
 ```text
 Image paste:
-  Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim      → Claude Code
-  Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP    → remote file path → Claude Code
-  Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb → Codex CLI
+  Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim        → Claude Code
+  Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP    → remote file path  → Claude Code
+  Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb   → Codex CLI
+  opencode:              Mac clipboard     → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
 
-Notifications:
+Notifications (Claude Code + Codex CLI):
   Claude Code hook → cc-clip-hook → SSH tunnel → local daemon → macOS/cmux notification
   Codex notify     → cc-clip notify             → SSH tunnel → local daemon → macOS/cmux notification
 ```
 
-One tool. No changes to Claude Code or Codex. Clipboard and notifications both work over SSH.
+One tool. No changes to Claude Code, Codex, or opencode. Clipboard works for all three; notifications are wired for Claude Code and Codex CLI.
 
 ## Prerequisites
 
@@ -99,6 +100,8 @@ Windows:
 Follow the dedicated guide:
 
 - [Windows Quick Start](docs/windows-quickstart.md)
+
+> **Windows support is experimental.** v0.6.0 ships the hotkey-conflict validation fix; clipboard persistence hardening is still being verified on real Windows hosts (tracked in [#30](https://github.com/ShunmeiCho/cc-clip/pull/30)).
 
 On macOS / Linux, add `~/.local/bin` to your PATH if prompted:
 
@@ -137,27 +140,35 @@ This single command handles everything:
 </p>
 </details>
 
+#### Which setup command do I run?
+
+Pick the row that matches your remote workflow. These are the only decisions you need to make:
+
+| Your remote CLI | Command | What it adds | Remote `sudo` needed? |
+|---|---|---|---|
+| Claude Code only | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ No |
+| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
+| opencode only | `cc-clip setup myserver` | shim only — opencode reads the clipboard via the same xclip / wl-paste path as Claude Code, so it works without `--codex` | ❌ No |
+| Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` | ❌ No |
+
+> **Prerequisite for `--codex`** (the only row in the table above that needs `sudo`): Xvfb must be installed on the remote. `cc-clip setup --codex` will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
+>
+> If your remote permits neither passwordless `sudo` nor a one-off manual install, stick with `cc-clip setup myserver` (without `--codex`). Clipboard paste still works for Claude Code and opencode; only the Codex CLI path needs Xvfb.
+
+> **Rule of thumb:** Use `--codex` **only** if you actually run Codex CLI on the remote. It is otherwise unnecessary overhead.
+
+### Step 3 (Codex CLI only): what `--codex` adds
+
+Codex CLI reads the clipboard via X11 directly (through the `arboard` crate) rather than shelling out to `xclip`, so the transparent shim cannot intercept it. `--codex` closes that gap by adding, on the remote:
+
+1. **Xvfb** — a headless X server. **Requires `sudo`:** `cc-clip` tries `sudo apt install xvfb` or `sudo dnf install xorg-x11-server-Xvfb` automatically if you have passwordless `sudo`. If not, it aborts with the exact command to run manually, then you re-run `cc-clip setup myserver --codex`.
+2. **`cc-clip x11-bridge`** — a background process that claims the Xvfb clipboard and serves image data on demand, fetched through the same SSH tunnel as the Claude Code path.
+3. **`DISPLAY=127.0.0.1:N`** — an injection into your shell rc on the remote, so Codex's next process picks it up automatically. (TCP-loopback form, not the Unix-socket `:N` form, because Codex CLI's sandbox blocks `/tmp/.X11-unix/`.)
+
+You do not need to understand any of this to use Codex paste — it's listed so you know what `--codex` touches on your server and how to diagnose it later.
+
 <details>
-<summary>Also use Codex CLI? Add <code>--codex</code></summary>
-
-```bash
-cc-clip setup myserver --codex
-```
-
-This additionally installs Xvfb and the x11-bridge on the remote. If `Xvfb` is not found and auto-install fails, you'll see the exact command to run:
-
-```bash
-ssh myserver
-sudo apt install xvfb          # Debian/Ubuntu
-sudo dnf install xorg-x11-server-Xvfb   # RHEL/Fedora
-```
-
-Then re-run `cc-clip setup myserver --codex`.
-
-</details>
-
-<details>
-<summary>Windows? Use the dedicated guide</summary>
+<summary>Windows local? Use the dedicated guide</summary>
 
 - [Windows Quick Start](docs/windows-quickstart.md)
 
@@ -165,9 +176,11 @@ Then re-run `cc-clip setup myserver --codex`.
   <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows demo" width="720">
 </p>
 
+Note: the Windows workflow is orthogonal to `--codex`. The Windows local machine uploads images via SCP; there is no Xvfb path on the local side.
+
 </details>
 
-### Step 3: Connect and use
+### Step 4: Connect and use
 
 Open a **new** SSH session to your server (the tunnel activates on SSH connection):
 
@@ -175,16 +188,52 @@ Open a **new** SSH session to your server (the tunnel activates on SSH connectio
 ssh myserver
 ```
 
-Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from your Mac clipboard.
+Then use Claude Code, Codex CLI, or opencode as normal — `Ctrl+V` (or whatever the agent binds to clipboard paste) now pastes images from your Mac clipboard.
 
 > **Important:** The image paste works through the SSH tunnel. You must connect via `ssh myserver` (the host you set up). The tunnel is established on each SSH connection.
 
 ### Verify it works
 
+Generic end-to-end check from your local machine (works for Claude Code, Codex, and opencode):
+
 ```bash
 # Copy an image to your Mac clipboard first (Cmd+Shift+Ctrl+4), then:
 cc-clip doctor --host myserver
 ```
+
+#### Codex-specific verify
+
+If you used `--codex`, these four commands on the remote server confirm the Codex-specific components are healthy. Copy an image on your Mac first, then SSH in:
+
+```bash
+ssh myserver
+
+# 1. DISPLAY is injected
+echo $DISPLAY                   # expected: 127.0.0.1:0 (or :1, :2, …)
+
+# 2. Xvfb is running
+ps aux | grep Xvfb | grep -v grep
+
+# 3. x11-bridge is running
+ps aux | grep 'cc-clip x11-bridge' | grep -v grep
+
+# 4. Clipboard negotiation works end-to-end
+xclip -selection clipboard -t TARGETS -o    # expected: image/png
+```
+
+If any step fails, the most common fix is `cc-clip connect myserver --codex --force` from your local machine — see the full recipe under [Troubleshooting](#troubleshooting) → "Ctrl+V doesn't paste images (Codex CLI)".
+
+### `setup` vs `connect` — which to run when
+
+You only need to know these three moves. Append `--codex` to the `setup` or `connect` commands below if you use Codex CLI on the remote; otherwise omit it.
+
+| Situation | Command (Claude Code only) | Command (also running Codex CLI) |
+|---|---|---|
+| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --codex` |
+| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --codex --force` |
+| **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
+
+`setup` is the first-time path (deps + SSH config + daemon + deploy). `connect` is the repair/redeploy path — same deploy steps, but it assumes SSH config and the local daemon are already in place.
 
 On Windows, the equivalent quick check is:
 
@@ -213,7 +262,8 @@ graph LR
     end
 
     subgraph remote ["Remote Linux"]
-        F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
+        F["Claude Code"] -- "Ctrl+V" --> E["xclip / wl-paste shim"]
+        M["opencode"] -- "Ctrl+V" --> E
         E -- "curl" --> D["127.0.0.1:18339"]
         K -- "ssh/scp upload" --> L["~/.cache/cc-clip/uploads"]
         L -- "paste path" --> F
@@ -229,134 +279,35 @@ graph LR
     style A fill:#e94560,stroke:#e94560,color:#fff
     style F fill:#0f3460,stroke:#0f3460,color:#fff
     style G fill:#0f3460,stroke:#0f3460,color:#fff
+    style M fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
-1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` shim fetches images through the SSH tunnel
-2. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
-3. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11
-4. **Notification path:** remote Claude Code hooks and Codex notify pipe events through `cc-clip-hook` → SSH tunnel → local daemon → macOS Notification Center or cmux
+1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` / `wl-paste` shim fetches images through the SSH tunnel
+2. **opencode path:** same shim as the Claude Code path — opencode reads the clipboard through `xclip` (X11) or `wl-paste` (Wayland), so cc-clip's shim transparently serves the Mac clipboard without any opencode-specific configuration
+3. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
+4. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11 (via the `arboard` crate, which cannot be shim-intercepted like `xclip`)
+5. **Notification path:** remote Claude Code hooks and Codex notify pipe events through `cc-clip-hook` → SSH tunnel → local daemon → macOS Notification Center or cmux
 
 ## SSH Notifications
 
-When Claude Code or Codex CLI runs on a remote server, **notifications don't work over SSH** — `TERM_PROGRAM` isn't forwarded, hooks execute on the remote where `terminal-notifier` doesn't exist, and tmux swallows OSC sequences.
+Remote hook events (Claude finishing, tool approval requests, image paste events, Codex task completion) travel through the same SSH tunnel as the clipboard and surface as native macOS / cmux notifications on your local machine. This solves the usual SSH notification failures — `TERM_PROGRAM` not forwarded, `terminal-notifier` absent on the remote, tmux swallowing OSC sequences.
 
-cc-clip solves this by acting as a **notification transport bridge**: remote hook events travel through the same SSH tunnel used for clipboard, and the local daemon delivers them to your macOS notification system (or cmux if installed).
+| Event | Notification |
+|-------|-------------|
+| Claude finishes responding | "Claude stopped" + last message preview |
+| Claude needs tool approval | "Tool approval needed" + tool name |
+| Codex task completes | "Codex" + completion message |
+| Image pasted via Ctrl+V | "cc-clip #N" + fingerprint + dimensions |
 
-### What you'll see
+**Coverage by CLI:**
 
-| Event | Notification | Example |
-|-------|-------------|---------|
-| Claude finishes responding | "Claude stopped" + last message preview | `Claude stopped: I've implemented the notification bridge...` |
-| Claude needs tool approval | "Tool approval needed" + tool name | `Tool approval needed: Claude wants to Edit cmd/main.go` |
-| Codex task completes | "Codex" + completion message | `Codex: Added error handling to fetch module` |
-| Image pasted via Ctrl+V | "cc-clip #N" + fingerprint + dimensions | `cc-clip #3: a1b2c3d4 . 1920x1080 . PNG` |
-| Duplicate image detected | Same as above + duplicate marker | `cc-clip #4: Duplicate of #2` |
+| CLI | Auto-configured by `cc-clip connect`? |
+|-----|----------------------------------------|
+| Codex CLI | ✅ If `~/.codex/` exists on the remote |
+| Claude Code | ⚠️ Manual — add `cc-clip-hook` to `~/.claude/settings.json` |
+| opencode | ❌ Not yet supported out of the box |
 
-Image paste notifications help you track what was pasted without leaving your workflow:
-- **Sequence number** (#1, #2, #3...) lets you detect gaps (e.g., #1 → #3 means #2 was lost)
-- **Duplicate detection** alerts when the same image is pasted twice within 5 images
-- **Click notification** to open the full image in Preview.app (macOS, requires `terminal-notifier`)
-
-### Setup notifications
-
-**Step 1:** Make sure `cc-clip serve` is running locally (or use `cc-clip service install` for auto-start).
-
-**Step 2:** Configure your remote Claude Code hooks. The easiest way is to **ask Claude Code itself to do it**. SSH into your server, start Claude Code, and paste this prompt:
-
-```
-Please add cc-clip-hook to my Claude Code hooks configuration. Add it to both Stop and Notification hooks in ~/.claude/settings.json. The command is just "cc-clip-hook" (it's already in PATH at ~/.local/bin/). Keep any existing hooks (like ralph-wiggum) — just append cc-clip-hook alongside them. Show me the diff before and after.
-```
-
-Claude Code will read your current `settings.json`, add the hooks correctly, and show you the changes.
-
-Alternatively, you can configure manually:
-
-<details>
-<summary>Manual hook configuration</summary>
-
-Edit `~/.claude/settings.json` on the **remote server** and add `cc-clip-hook` to the `Stop` and `Notification` hook arrays:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "cc-clip-hook" }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          { "type": "command", "command": "cc-clip-hook" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-If you already have hooks (e.g., `ralph-wiggum-stop.sh`), add a new entry to the array — don't replace existing ones.
-
-**Restart Claude Code** after editing (hooks are read at startup).
-
-</details>
-
-**Step 3 (Codex only):** Codex notification is auto-configured by `cc-clip connect` if `~/.codex/` exists on the remote. No manual steps needed.
-
-**Step 4:** Generate and register a notification nonce (if you haven't used `cc-clip connect`):
-
-```bash
-# On local Mac — generate nonce and write to remote
-NONCE=$(openssl rand -hex 32)
-curl -s -X POST -H "Authorization: Bearer $(head -1 ~/.cache/cc-clip/session.token)" \
-  -H "User-Agent: cc-clip/0.1" -H "Content-Type: application/json" \
-  -d "{\"nonce\":\"$NONCE\"}" http://127.0.0.1:18339/register-nonce
-ssh myserver "mkdir -p ~/.cache/cc-clip && echo '$NONCE' > ~/.cache/cc-clip/notify.nonce && chmod 600 ~/.cache/cc-clip/notify.nonce"
-```
-
-> **Note:** `cc-clip connect` handles steps 2-4 automatically. Manual setup is only needed if you use plain `ssh` instead of `cc-clip connect`.
-
-### Troubleshooting notifications
-
-<details>
-<summary><b>Notifications don't appear</b></summary>
-
-**Step-by-step verification (on the remote server):**
-
-```bash
-# 1. Is the tunnel working?
-curl -sf --connect-timeout 2 http://127.0.0.1:18339/health
-# Expected: {"status":"ok"}
-
-# 2. Is the hook script the correct version?
-grep "curl" ~/.local/bin/cc-clip-hook
-# Expected: a curl command with --connect-timeout
-
-# 3. Is the nonce file present?
-cat ~/.cache/cc-clip/notify.nonce
-# Expected: a 64-character hex string
-
-# 4. Manual test:
-echo '{"hook_event_name":"Stop","stop_hook_reason":"stop_at_end_of_turn","last_assistant_message":"test"}' | cc-clip-hook
-# Expected: local Mac shows notification popup
-
-# 5. Check health log for failures:
-cat ~/.cache/cc-clip/notify-health.log
-# If exists: shows timestamps and HTTP error codes
-```
-
-**Common issues:**
-
-| Problem | Fix |
-|---------|-----|
-| Tunnel down (step 1 fails) | Kill stale sshd: `sudo kill $(sudo lsof -ti :18339)`, then reconnect SSH |
-| Old hook script (step 2 empty) | Reinstall: `cc-clip connect myserver` or manually copy the script |
-| Missing nonce (step 3 fails) | Register nonce (see Step 4 above) |
-| Daemon running old binary | Rebuild (`make build`) and restart (`cc-clip serve`) |
-
-</details>
+Full setup, manual configuration for Claude Code, nonce registration, and troubleshooting: **[docs/notifications.md](docs/notifications.md)**.
 
 ## Security
 
@@ -398,80 +349,32 @@ The Windows workflow uses a dedicated remote-paste hotkey (default: `Alt+Shift+V
 
 ## Commands
 
+The 10 you'll actually use:
+
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
 | `cc-clip setup <host> --codex` | Full setup with Codex CLI support |
-| `cc-clip connect <host>` | Deploy to remote (incremental) |
-| `cc-clip connect <host> --token-only` | Sync token only (fast) |
-| `cc-clip connect <host> --force` | Full redeploy ignoring cache |
-| `cc-clip notify --title T --body B` | Send a notification through the tunnel |
-| `cc-clip notify --from-codex-stdin` | Read Codex JSON from stdin and notify |
+| `cc-clip connect <host> --force` | Repair/redeploy (when DISPLAY, x11-bridge, or tunnel is stuck) |
+| `cc-clip connect <host> --token-only` | Sync rotated token without redeploying binaries |
 | `cc-clip doctor --host <host>` | End-to-end health check |
 | `cc-clip status` | Show local component status |
-| `cc-clip service install` | Install macOS launchd service |
-| `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip service install` / `service uninstall` | Manage macOS launchd daemon auto-start |
+| `cc-clip notify --title T --body B` | Send a generic notification through the tunnel |
 | `cc-clip send [<host>] --paste` | Windows: upload clipboard image and paste remote path |
 | `cc-clip hotkey [<host>]` | Windows: register the remote upload/paste hotkey |
 
-<details>
-<summary>All commands</summary>
-
-| Command | Description |
-|---------|-------------|
-| `cc-clip setup <host>` | Full setup: deps, SSH config, daemon, deploy |
-| `cc-clip setup <host> --codex` | Full setup including Codex CLI support |
-| `cc-clip connect <host>` | Deploy to remote (incremental) |
-| `cc-clip connect <host> --codex` | Deploy with Codex support (Xvfb + x11-bridge) |
-| `cc-clip connect <host> --token-only` | Sync token only (fast) |
-| `cc-clip connect <host> --force` | Full redeploy ignoring cache |
-| `cc-clip serve` | Start daemon in foreground |
-| `cc-clip serve --rotate-token` | Start daemon with forced new token |
-| `cc-clip service install` | Install macOS launchd service |
-| `cc-clip service uninstall` | Remove launchd service |
-| `cc-clip service status` | Show service status |
-| `cc-clip send [<host>]` | Upload clipboard image to a remote file |
-| `cc-clip send [<host>] --paste` | Windows: paste the uploaded remote path into the active window |
-| `cc-clip hotkey [<host>]` | Windows: run a background remote-paste hotkey listener |
-| `cc-clip hotkey --enable-autostart` | Windows: start the hotkey listener automatically at login |
-| `cc-clip hotkey --disable-autostart` | Windows: remove hotkey auto-start at login |
-| `cc-clip hotkey --status` | Windows: show hotkey status |
-| `cc-clip hotkey --stop` | Windows: stop the hotkey listener |
-| `cc-clip notify --title T --body B` | Send a generic notification through the tunnel |
-| `cc-clip notify --from-codex "$1"` | Parse Codex JSON arg and notify |
-| `cc-clip notify --from-codex-stdin` | Read Codex JSON from stdin and notify |
-| `cc-clip doctor` | Local health check |
-| `cc-clip doctor --host <host>` | End-to-end health check |
-| `cc-clip status` | Show component status |
-| `cc-clip uninstall` | Remove xclip shim from remote |
-| `cc-clip uninstall --codex` | Remove Codex support (local) |
-| `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
-
-</details>
+Full command reference, including all flags and environment variables: **[docs/commands.md](docs/commands.md)**. Or run `cc-clip --help` for the authoritative list from the installed binary.
 
 ## Configuration
 
-All settings have sensible defaults. Override via environment variables:
+All settings have sensible defaults. Override via environment variables. Full list in [docs/commands.md](docs/commands.md#environment-variables):
 
 | Setting | Default | Env Var |
 |---------|---------|---------|
 | Port | 18339 | `CC_CLIP_PORT` |
 | Token TTL | 30d | `CC_CLIP_TOKEN_TTL` |
 | Debug logs | off | `CC_CLIP_DEBUG=1` |
-
-<details>
-<summary>All settings</summary>
-
-| Setting | Default | Env Var |
-|---------|---------|---------|
-| Port | 18339 | `CC_CLIP_PORT` |
-| Token TTL | 30d | `CC_CLIP_TOKEN_TTL` |
-| Output dir | `$XDG_RUNTIME_DIR/claude-images` | `CC_CLIP_OUT_DIR` |
-| Probe timeout | 500ms | `CC_CLIP_PROBE_TIMEOUT_MS` |
-| Fetch timeout | 5000ms | `CC_CLIP_FETCH_TIMEOUT_MS` |
-| Debug logs | off | `CC_CLIP_DEBUG=1` |
-
-</details>
 
 ## Platform Support
 
@@ -646,55 +549,6 @@ xclip -selection clipboard -t TARGETS -o
 | Step 6 (no image/png) | Copy an image on Mac first: `Cmd+Shift+Ctrl+4` |
 
 > **Note:** DISPLAY uses TCP loopback format (`127.0.0.1:N`) instead of Unix socket format (`:N`) because Codex CLI's sandbox blocks access to `/tmp/.X11-unix/`. If you previously set up cc-clip with an older version, re-run `cc-clip connect myserver --codex --force` to update.
-
-</details>
-
-<details>
-<summary><b>SSH ControlMaster breaks RemoteForward</b></summary>
-
-**Symptom:** Tunnel works during `connect`, but `curl http://127.0.0.1:18339/health` hangs in your SSH session.
-
-**Cause:** An existing SSH ControlMaster connection was reused without `RemoteForward`.
-
-**Fix:** `cc-clip setup` auto-configures this. If you set up SSH manually, add to `~/.ssh/config`:
-
-```
-Host myserver
-    ControlMaster no
-    ControlPath none
-```
-
-</details>
-
-<details>
-<summary><b>Stale sshd process blocks port 18339</b></summary>
-
-**Symptom:** `Warning: remote port forwarding failed for listen port 18339`
-
-**Fix:** Kill the stale process on remote:
-
-```bash
-sudo ss -tlnp | grep 18339     # find the PID
-sudo kill <PID>                  # kill it
-```
-
-Then reconnect: `ssh myserver`
-
-</details>
-
-<details>
-<summary><b>Token expired after 30+ days of inactivity</b></summary>
-
-**Fix:** `cc-clip connect myserver --token-only`
-
-Token uses sliding expiration — auto-renews on every use. Only expires after 30 days of zero activity.
-
-</details>
-
-<details>
-<summary><b>Launchd daemon can't find pngpaste</b></summary>
-
-**Fix:** `cc-clip service uninstall && cc-clip service install` (regenerates plist with correct PATH).
 
 </details>
 
