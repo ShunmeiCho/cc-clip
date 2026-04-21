@@ -251,11 +251,13 @@ _cc_clip_fetch_binary() {
 ARGS="$*"
 
 # Supported invocation shapes:
-#   Claude Code: wl-paste --list-types / wl-paste --type image/png
-#   opencode:    wl-paste -t image/png   (short -t instead of --type)
-# The patterns below cover both.
+#   Claude Code: wl-paste --list-types  /  wl-paste --type image/png
+#   opencode:    wl-paste -t image/png  (short -t instead of --type)
+# The patterns below cover both. We intentionally do not match the -l
+# short form of --list-types because no current consumer uses it and
+# matching standalone "-l" without false positives is non-trivial.
 case "$ARGS" in
-    *"--list-types"*|*" -l"|*"-l "*)
+    *"--list-types"*)
         # Type listing (Claude)
         _cc_clip_log "intercepting type listing"
         if _cc_clip_probe; then
