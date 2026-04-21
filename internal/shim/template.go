@@ -250,10 +250,14 @@ _cc_clip_fetch_binary() {
 
 ARGS="$*"
 
+# Supported invocation shapes:
+#   Claude Code: wl-paste --list-types / wl-paste --type image/png
+#   opencode:    wl-paste -t image/png   (short -t instead of --type)
+# The patterns below cover both.
 case "$ARGS" in
-    *"--list-types"*)
-        # Claude checks available types
-        _cc_clip_log "intercepting --list-types"
+    *"--list-types"*|*" -l"|*"-l "*)
+        # Type listing (Claude)
+        _cc_clip_log "intercepting type listing"
         if _cc_clip_probe; then
             RESULT=$(_cc_clip_fetch_json "/clipboard/type" 2>/dev/null) || {
                 _cc_clip_fallback "$@"
@@ -270,8 +274,9 @@ case "$ARGS" in
         fi
         ;;
 
-    *"--type"*"image/"*)
-        # Claude reads image data — fetch to temp file then cat (binary-safe + fallback-safe)
+    *"--type"*"image/"*|*"-t image/"*)
+        # Image read (Claude --type / opencode -t) — fetch to temp file then cat
+        # (binary-safe + fallback-safe)
         _cc_clip_log "intercepting image read"
         if _cc_clip_probe; then
             if _cc_clip_fetch_binary "/clipboard/image"; then

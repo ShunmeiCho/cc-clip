@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">cc-clip</h1>
 <p align="center">
-  <b>Paste images &amp; receive notifications across SSH — remote Claude Code &amp; Codex CLI feel local.</b>
+  <b>Paste images &amp; receive notifications across SSH — remote Claude Code, Codex CLI &amp; opencode feel local.</b>
 </p>
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
@@ -47,7 +47,7 @@
 
 ## The Problem
 
-When running Claude Code or Codex CLI on a remote server via SSH, **image paste often doesn't work** and **notifications don't reach you**. The remote clipboard is empty — no screenshots, no diagrams. And when Claude finishes a task or needs approval, you have no idea unless you're staring at the terminal.
+When running Claude Code, Codex CLI, or opencode on a remote server via SSH, **image paste often doesn't work** and **notifications don't reach you**. The remote clipboard is empty — no screenshots, no diagrams. And when your coding agent finishes a task or needs approval, you have no idea unless you're staring at the terminal.
 
 ## The Solution
 
@@ -480,6 +480,19 @@ All settings have sensible defaults. Override via environment variables:
 | macOS (Apple Silicon) | Linux (amd64) | Stable |
 | macOS (Intel) | Linux (arm64) | Stable |
 | Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
+
+### Supported Remote CLIs
+
+cc-clip works with **any coding agent that reads the clipboard via `xclip` or `wl-paste`** on Linux. No per-CLI configuration is needed — the transparent shim intercepts clipboard reads from any process that invokes these binaries.
+
+| CLI | Image paste | Notifications |
+|-----|-------------|----------------|
+| [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box (xclip / wl-paste shim) | ✅ via `cc-clip-hook` in `Stop` / `Notification` hooks |
+| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured during `cc-clip connect` if `~/.codex/` exists |
+| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ⚠️ not auto-configured — wire your own notifier if desired |
+| Any other `xclip`/`wl-paste` consumer | ✅ should just work — please [open a discussion](https://github.com/ShunmeiCho/cc-clip/discussions) if it doesn't | — |
+
+`cc-clip setup HOST` installs the xclip and wl-paste shims regardless of which CLI you use; opencode picks them up automatically the next time it reads the clipboard.
 
 ## Requirements
 
