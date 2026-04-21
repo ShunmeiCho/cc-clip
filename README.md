@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">cc-clip</h1>
 <p align="center">
-  <b>Paste images &amp; receive notifications across SSH — remote Claude Code &amp; Codex CLI feel local.</b>
+  <b>Paste images &amp; receive notifications across SSH — remote Claude Code, Codex CLI &amp; opencode feel local.</b>
 </p>
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
@@ -47,7 +47,7 @@
 
 ## The Problem
 
-When running Claude Code or Codex CLI on a remote server via SSH, **image paste often doesn't work** and **notifications don't reach you**. The remote clipboard is empty — no screenshots, no diagrams. And when Claude finishes a task or needs approval, you have no idea unless you're staring at the terminal.
+When running Claude Code, Codex CLI, or opencode on a remote server via SSH, **image paste often doesn't work** and **notifications don't reach you**. The remote clipboard is empty — no screenshots, no diagrams. And when your coding agent finishes a task or needs approval, you have no idea unless you're staring at the terminal.
 
 ## The Solution
 
@@ -481,6 +481,19 @@ All settings have sensible defaults. Override via environment variables:
 | macOS (Intel) | Linux (arm64) | Stable |
 | Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
 
+### Supported Remote CLIs
+
+cc-clip works with **any coding agent that reads the clipboard via `xclip` or `wl-paste`** on Linux. No per-CLI configuration is needed — the transparent shim intercepts clipboard reads from any process that invokes these binaries.
+
+| CLI | Image paste | Notifications |
+|-----|-------------|----------------|
+| [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box (xclip / wl-paste shim) | ✅ via `cc-clip-hook` in `Stop` / `Notification` hooks |
+| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured during `cc-clip connect` if `~/.codex/` exists |
+| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ⚠️ not auto-configured — wire your own notifier if desired |
+| Any other `xclip`/`wl-paste` consumer | ✅ should just work — please [open a discussion](https://github.com/ShunmeiCho/cc-clip/discussions) if it doesn't | — |
+
+`cc-clip setup HOST` installs the xclip and wl-paste shims regardless of which CLI you use; opencode picks them up automatically the next time it reads the clipboard.
+
 ## Requirements
 
 **Local (macOS):** macOS 13+ (`pngpaste`, auto-installed by `cc-clip setup`)
@@ -750,6 +763,16 @@ make build && make test
 - [openai/codex#3962](https://github.com/openai/codex/issues/3962) — Play a sound when Codex finishes (34 comments)
 - [openai/codex#8929](https://github.com/openai/codex/issues/8929) — Notify hook not getting triggered
 - [openai/codex#8189](https://github.com/openai/codex/issues/8189) — WSL2: notifications fail for approval prompts
+
+**opencode — Clipboard:**
+- [anomalyco/opencode#19294](https://github.com/anomalyco/opencode/issues/19294) — Image paste works over SSH, but sending fails with "invalid image data"
+- [anomalyco/opencode#16962](https://github.com/anomalyco/opencode/issues/16962) — Clipboard copy not working over SSH (Mac-to-Mac)
+- [anomalyco/opencode#15907](https://github.com/anomalyco/opencode/issues/15907) — Clipboard copy not working over SSH + tmux in Ghostty
+- [anomalyco/opencode#19502](https://github.com/anomalyco/opencode/issues/19502) — Windows Terminal + WSL: Ctrl+V image paste is inconsistent
+- [anomalyco/opencode#17616](https://github.com/anomalyco/opencode/issues/17616) — Image paste from clipboard broken on Windows
+
+**opencode — Notifications:**
+- [anomalyco/opencode#18004](https://github.com/anomalyco/opencode/issues/18004) — Allow notifications even when opencode is focused
 
 **Terminal / Multiplexer:**
 - [manaflow-ai/cmux#833](https://github.com/manaflow-ai/cmux/issues/833) — Notifications over SSH+tmux sessions

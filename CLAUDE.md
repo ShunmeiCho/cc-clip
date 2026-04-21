@@ -107,11 +107,11 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 
 ### Shim Interception Patterns
 
-The shim only intercepts these exact Claude Code invocations:
+The shim intercepts these invocation shapes (covers Claude Code and opencode; other consumers that use the same flags get interception for free):
 - xclip: `*"-selection clipboard"*"-t TARGETS"*"-o"*` and `*"-selection clipboard"*"-t image/"*"-o"*`
-- wl-paste: `*"--list-types"*` and `*"--type"*"image/"*`
+- wl-paste: `*"--list-types"*` (type listing — Claude) and `*"--type"*"image/"*`, `*"-t image/"*` (image read — Claude uses `--type`, opencode uses `-t`)
 
-Everything else passes through to the real binary via `exec`.
+Everything else passes through to the real binary via `exec`. The `-l` short form of `--list-types` is deliberately not matched because no current consumer uses it and matching standalone `-l` without false positives is non-trivial. End-to-end coverage is asserted by `TestShimInterceptsMatchingInvocations` in `internal/shim/template_test.go`, which runs the generated bash against a mock HTTP daemon and verifies stdout contains the daemon's payload for matched patterns (proving interception took the HTTP path) and fallback captures the original args for unmatched patterns.
 
 ## Cross-Architecture Binary Delivery
 
