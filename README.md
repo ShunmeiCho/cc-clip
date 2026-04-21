@@ -221,13 +221,13 @@ If any step fails, the most common fix is `cc-clip connect myserver --codex --fo
 
 ### `setup` vs `connect` — which to run when
 
-You only need to know these three moves:
+You only need to know these three moves. Append `--codex` to the `setup` or `connect` commands below if you use Codex CLI on the remote; otherwise omit it.
 
-| Situation | Command |
-|---|---|
-| **First-time install** on this host | `cc-clip setup myserver [--codex]` |
-| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver [--codex] --force` |
-| **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` |
+| Situation | Command (Claude Code only) | Command (also running Codex CLI) |
+|---|---|---|
+| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --codex` |
+| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --codex --force` |
+| **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
 
 `setup` is the first-time path (deps + SSH config + daemon + deploy). `connect` is the repair/redeploy path — same deploy steps, but it assumes SSH config and the local daemon are already in place.
 
@@ -258,7 +258,8 @@ graph LR
     end
 
     subgraph remote ["Remote Linux"]
-        F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
+        F["Claude Code"] -- "Ctrl+V" --> E["xclip / wl-paste shim"]
+        M["opencode"] -- "Ctrl+V" --> E
         E -- "curl" --> D["127.0.0.1:18339"]
         K -- "ssh/scp upload" --> L["~/.cache/cc-clip/uploads"]
         L -- "paste path" --> F
@@ -274,12 +275,14 @@ graph LR
     style A fill:#e94560,stroke:#e94560,color:#fff
     style F fill:#0f3460,stroke:#0f3460,color:#fff
     style G fill:#0f3460,stroke:#0f3460,color:#fff
+    style M fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
-1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` shim fetches images through the SSH tunnel
-2. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
-3. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11
-4. **Notification path:** remote Claude Code hooks and Codex notify pipe events through `cc-clip-hook` → SSH tunnel → local daemon → macOS Notification Center or cmux
+1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` / `wl-paste` shim fetches images through the SSH tunnel
+2. **opencode path:** same shim as the Claude Code path — opencode reads the clipboard through `xclip` (X11) or `wl-paste` (Wayland), so cc-clip's shim transparently serves the Mac clipboard without any opencode-specific configuration
+3. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
+4. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11 (via the `arboard` crate, which cannot be shim-intercepted like `xclip`)
+5. **Notification path:** remote Claude Code hooks and Codex notify pipe events through `cc-clip-hook` → SSH tunnel → local daemon → macOS Notification Center or cmux
 
 ## SSH Notifications
 
