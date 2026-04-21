@@ -137,27 +137,31 @@ This single command handles everything:
 </p>
 </details>
 
+#### Which setup command do I run?
+
+Pick the row that matches your remote workflow. These are the only decisions you need to make:
+
+| Your remote CLI | Command | What it adds |
+|---|---|---|
+| Claude Code only | `cc-clip setup myserver` | xclip / wl-paste shim (intercepts Claude Code's clipboard reads) |
+| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **plus** Xvfb + x11-bridge on the remote (see below) |
+| opencode only | `cc-clip setup myserver` | shim only — opencode reads the clipboard via the same xclip / wl-paste path as Claude Code, so it works without `--codex` |
+| Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` |
+
+> **Rule of thumb:** Use `--codex` **only** if you actually run Codex CLI on the remote. It is otherwise unnecessary overhead.
+
+### Step 3 (Codex CLI only): what `--codex` adds
+
+Codex CLI reads the clipboard via X11 directly (through the `arboard` crate) rather than shelling out to `xclip`, so the transparent shim cannot intercept it. `--codex` closes that gap by adding, on the remote:
+
+1. **Xvfb** — a headless X server (auto-installed if you have passwordless `sudo`; otherwise the CLI prints the exact `apt`/`dnf` command to run and you re-run `cc-clip setup myserver --codex`).
+2. **`cc-clip x11-bridge`** — a background process that claims the Xvfb clipboard and serves image data on demand, fetched through the same SSH tunnel as the Claude Code path.
+3. **`DISPLAY=127.0.0.1:N`** — an injection into your shell rc on the remote, so Codex's next process picks it up automatically. (TCP-loopback form, not the Unix-socket `:N` form, because Codex CLI's sandbox blocks `/tmp/.X11-unix/`.)
+
+You do not need to understand any of this to use Codex paste — it's listed so you know what `--codex` touches on your server and how to diagnose it later.
+
 <details>
-<summary>Also use Codex CLI? Add <code>--codex</code></summary>
-
-```bash
-cc-clip setup myserver --codex
-```
-
-This additionally installs Xvfb and the x11-bridge on the remote. If `Xvfb` is not found and auto-install fails, you'll see the exact command to run:
-
-```bash
-ssh myserver
-sudo apt install xvfb          # Debian/Ubuntu
-sudo dnf install xorg-x11-server-Xvfb   # RHEL/Fedora
-```
-
-Then re-run `cc-clip setup myserver --codex`.
-
-</details>
-
-<details>
-<summary>Windows? Use the dedicated guide</summary>
+<summary>Windows local? Use the dedicated guide</summary>
 
 - [Windows Quick Start](docs/windows-quickstart.md)
 
@@ -165,9 +169,11 @@ Then re-run `cc-clip setup myserver --codex`.
   <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows demo" width="720">
 </p>
 
+Note: the Windows workflow is orthogonal to `--codex`. The Windows local machine uploads images via SCP; there is no Xvfb path on the local side.
+
 </details>
 
-### Step 3: Connect and use
+### Step 4: Connect and use
 
 Open a **new** SSH session to your server (the tunnel activates on SSH connection):
 
@@ -175,16 +181,52 @@ Open a **new** SSH session to your server (the tunnel activates on SSH connectio
 ssh myserver
 ```
 
-Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from your Mac clipboard.
+Then use Claude Code, Codex CLI, or opencode as normal — `Ctrl+V` (or whatever the agent binds to clipboard paste) now pastes images from your Mac clipboard.
 
 > **Important:** The image paste works through the SSH tunnel. You must connect via `ssh myserver` (the host you set up). The tunnel is established on each SSH connection.
 
 ### Verify it works
 
+Generic end-to-end check from your local machine (works for Claude Code, Codex, and opencode):
+
 ```bash
 # Copy an image to your Mac clipboard first (Cmd+Shift+Ctrl+4), then:
 cc-clip doctor --host myserver
 ```
+
+#### Codex-specific verify
+
+If you used `--codex`, these four commands on the remote server confirm the Codex-specific components are healthy. Copy an image on your Mac first, then SSH in:
+
+```bash
+ssh myserver
+
+# 1. DISPLAY is injected
+echo $DISPLAY                   # expected: 127.0.0.1:0 (or :1, :2, …)
+
+# 2. Xvfb is running
+ps aux | grep Xvfb | grep -v grep
+
+# 3. x11-bridge is running
+ps aux | grep 'cc-clip x11-bridge' | grep -v grep
+
+# 4. Clipboard negotiation works end-to-end
+xclip -selection clipboard -t TARGETS -o    # expected: image/png
+```
+
+If any step fails, the most common fix is `cc-clip connect myserver --codex --force` from your local machine — see the full recipe under [Troubleshooting](#troubleshooting) → "Ctrl+V doesn't paste images (Codex CLI)".
+
+### `setup` vs `connect` — which to run when
+
+You only need to know these three moves:
+
+| Situation | Command |
+|---|---|
+| **First-time install** on this host | `cc-clip setup myserver [--codex]` |
+| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver [--codex] --force` |
+| **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` |
+
+`setup` is the first-time path (deps + SSH config + daemon + deploy). `connect` is the repair/redeploy path — same deploy steps, but it assumes SSH config and the local daemon are already in place.
 
 On Windows, the equivalent quick check is:
 
