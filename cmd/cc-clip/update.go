@@ -821,9 +821,20 @@ func printPostUpdateReminders(targetTag, binaryPath string, serviceRestarted boo
 		fmt.Println("  (macOS) cc-clip service uninstall && cc-clip service install")
 		fmt.Println("  (Linux foreground) stop your running `cc-clip serve` and start it again.")
 	}
-	fmt.Println("* Redeploy to every remote host you use with cc-clip:")
-	fmt.Println("    cc-clip connect <host> --force")
-	fmt.Println("    cc-clip connect <host> --codex --force   # if you use Codex CLI there")
+
+	// If the host registry has entries, print per-host commands — one line
+	// per host with the right --codex flag based on what the registry
+	// remembers. This turns the generic reminder into a copy-pasteable
+	// checklist. When there is no registry (fresh install, cc-clip update
+	// from pre-registry build), fall back to the old generic block so we
+	// never regress into silence.
+	printed := printPerHostRedeployReminders()
+	if !printed {
+		fmt.Println("* Redeploy to every remote host you use with cc-clip:")
+		fmt.Println("    cc-clip connect <host> --force")
+		fmt.Println("    cc-clip connect <host> --codex --force   # if you use Codex CLI there")
+	}
+
 	fmt.Println()
 	fmt.Printf("cc-clip %s installed at %s.\n", strings.TrimPrefix(targetTag, "v"), binaryPath)
 }

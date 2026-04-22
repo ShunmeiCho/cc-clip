@@ -65,6 +65,8 @@ func main() {
 		cmdSetup()
 	case "service":
 		cmdService()
+	case "hosts":
+		cmdHosts()
 	case "update":
 		cmdUpdate()
 	case "notify":
@@ -124,6 +126,10 @@ Remote:
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
+
+Known hosts (per-user registry):
+  hosts list         Show hosts this machine has connected to (version, codex, last seen)
+  hosts forget HOST  Stop tracking a host locally (remote is not touched)
 
 Self-update (macOS/Linux):
   update             Download and install the latest cc-clip release
@@ -470,6 +476,10 @@ func cmdUninstallCodexRemote(host string) {
 		os.Exit(1)
 	}
 	fmt.Println("Codex support removed successfully.")
+
+	// Reflect the Codex teardown in the local host registry. This is the
+	// only path that flips the sticky Codex flag back to false.
+	clearHostCodex(host)
 }
 
 // cmdUninstallCodexLocal cleans up Codex support on the local machine.
@@ -739,6 +749,13 @@ func runConnect(opts connectOpts) {
 			os.Exit(1)
 		}
 	}
+
+	// Record this host in the local registry so `cc-clip update` / `hosts list`
+	// can surface it later. Only reached when every earlier step succeeded
+	// (any error above exits via log.Fatal / os.Exit). Codex flag is sticky
+	// inside the registry, so a plain connect won't downgrade a previously
+	// recorded Codex=true.
+	recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
 }
 
 // connectNotifySetup performs notification bridge setup:
@@ -1012,6 +1029,11 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 
 	fmt.Println()
 	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard.")
+
+	// Record this host in the registry AFTER every setup step succeeded.
+	// cmdSetup uses hasFlag("codex") because the flag was parsed inline
+	// earlier in this function. Codex is sticky inside the registry.
+	recordHostConnect(host, registryVersionOrEmpty(), hasFlag("codex"))
 }
 
 // prepareBinaryLocal resolves the local binary path without performing remote operations.
