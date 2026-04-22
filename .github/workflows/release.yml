@@ -28,9 +28,14 @@ jobs:
           # goreleaser must produce cc-clip_{version}_{os}_{arch}.tar.gz
           grep -qP 'name_template:.*ProjectName.*Version.*Os.*Arch' .goreleaser.yaml
           # install.sh must expect the same format with version stripped of v prefix
-          grep -q 'cc-clip_${VERSION#v}_${PLATFORM}.tar.gz' scripts/install.sh
-          # archive format must be tar.gz (not bare binary)
-          grep -q 'format: tar.gz' .goreleaser.yaml
+          # (-F is literal match: the pattern contains ${...} / . which are
+          #  regex metacharacters — -F keeps this robust across grep flavors.)
+          grep -Fq 'cc-clip_${VERSION#v}_${PLATFORM}.tar.gz' scripts/install.sh
+          # goreleaser archives must default to tar.gz (darwin/linux); windows
+          # uses the `formats: [zip]` override in the same block. Schema is the
+          # plural GoReleaser v2 form introduced in PR #33.
+          grep -Fq 'formats: [tar.gz]' .goreleaser.yaml
+          grep -Fq 'formats: [zip]' .goreleaser.yaml
 
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
