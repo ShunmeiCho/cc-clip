@@ -65,6 +65,8 @@ func main() {
 		cmdSetup()
 	case "service":
 		cmdService()
+	case "update":
+		cmdUpdate()
 	case "notify":
 		cmdNotify()
 	case "x11-bridge":
@@ -122,6 +124,13 @@ Remote:
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
+
+Self-update (macOS/Linux):
+  update             Download and install the latest cc-clip release
+    --check          Only check whether a newer release exists; do not install
+    --force          Re-install even if already at target version; ignore
+                     conflict warnings from another daemon on the same port
+    --to VERSION     Install a specific version (e.g. v0.6.0) instead of latest
 
 Deploy (local -> remote):
   connect <host>     Deploy cc-clip to remote and establish session
