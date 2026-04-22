@@ -37,7 +37,35 @@ The remote update is driven from your local machine via
 
 ## macOS / Linux upgrade
 
-### Option A: re-run the install script (recommended)
+### Option A: `cc-clip update` (recommended, cc-clip 0.6.2+)
+
+```sh
+cc-clip update --check      # see what's newer without touching anything
+cc-clip update              # download, verify checksum, swap binary, restart daemon
+```
+
+This is the native one-shot path. Compared to re-running `install.sh`, it
+additionally:
+
+- Detects port-18339 conflicts *before* downloading. If another process
+  (a bundled `cc-clip` from a different tool, a forgotten stray daemon) is
+  holding the port, the update aborts with an actionable error instead of
+  silently leaving you with a mismatched token on remotes.
+- Verifies the staged archive's `--version` before swapping the binary, so
+  a mislabeled release cannot overwrite a working install.
+- Rolls the binary and launchd plist back automatically if
+  `GET /health` on the daemon port does not come up on the new binary
+  within 10s of the swap.
+
+`--force` re-installs even when already at the target version and bypasses
+the pre-download conflict check. `--to v0.6.0` pins a specific release
+instead of the latest (handy for rollback).
+
+Not yet supported: Windows (use the manual path below), and systemd-based
+Linux services (the updater prints a reminder instead of restarting the
+service).
+
+### Option B: re-run the install script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
@@ -45,9 +73,11 @@ curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/ins
 
 This fetches the archive for the latest `v*` tag, extracts it, replaces the
 binary at `~/.local/bin/cc-clip`, clears macOS Gatekeeper quarantine, and
-re-signs with `codesign --sign -`. The script is safe to re-run any time.
+re-signs with `codesign --sign -`. Safe to re-run any time; useful when
+`cc-clip update` is not yet available on your machine (first-time install,
+or pre-0.6.2 cc-clip).
 
-### Option B: manual download
+### Option C: manual download
 
 Pick the archive matching your OS and arch from
 <https://github.com/ShunmeiCho/cc-clip/releases/latest>, then:
@@ -179,13 +209,14 @@ The install script does not support Windows. Upgrade is manual.
 cc-clip version upgrades are reversible — just install an older version the
 same way.
 
-- **Via install script, pinned to a specific tag:**
+- **`cc-clip update --to v0.5.0`** (cc-clip 0.6.2+): same semantics as a
+  forward upgrade — checksum-verify, swap, restart, verify — but against
+  the pinned release tag instead of `/latest`.
 
-    ```sh
-    # install.sh always fetches /releases/latest. To install a specific version
-    # manually, use the Option B commands above with V= set to the version
-    # you want. For example, V=0.5.0 downgrades to v0.5.0.
-    ```
+- **Via install script, pinned to a specific tag:** `install.sh` always
+  fetches `/releases/latest`. To install a specific older version
+  manually, use the Option C commands above with `V=` set to the version
+  you want (for example `V=0.5.0` downgrades to `v0.5.0`).
 
 - **After downgrading, re-run `cc-clip connect <host> --force`** for each
   remote you use, so the remote side also goes back in sync.
