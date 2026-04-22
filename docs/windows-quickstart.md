@@ -11,7 +11,7 @@ On Windows, `cc-clip` does **not** rely on the remote `xclip` clipboard path.
 Instead, it:
 
 1. Reads the image from your Windows clipboard
-2. Uploads it to the remote host over SSH/SCP
+2. Uploads it to the remote host over SSH
 3. Pastes the remote file path into the active Claude Code terminal
 
 This is the recommended path for:
@@ -30,7 +30,7 @@ By default:
 You need all of these on your Windows machine:
 
 - Windows 10/11
-- `ssh` and `scp` in `PATH`
+- `ssh` in `PATH`
 - a working SSH host alias in `~/.ssh/config`
 
 Example:
@@ -112,6 +112,10 @@ Daily workflow:
 - paste the remote file path into the active terminal
 - restore your original clipboard image
 
+> **Focus warning.** After you press `Alt+Shift+V`, `cc-clip` uploads the image, waits ~150 ms, then synthesizes `Ctrl+Shift+V` to paste the remote path into **whichever window is focused at that moment**. Do not switch windows during this short window — if the remote path lands in a password field, an IM input, or a browser URL bar, it has been delivered to the wrong trust boundary.
+>
+> If you need to switch away during upload, cancel the hotkey (focus a safe window first, or run `cc-clip hotkey --stop`) rather than letting the paste fire into an unintended target. Tracking: issue [#43](https://github.com/ShunmeiCho/cc-clip/issues/43) covers a foreground-window guard so future versions abort instead of pasting when focus has changed.
+
 ## Manual Fallback
 
 If you do not want the background hotkey, run a one-shot paste instead:
@@ -183,7 +187,7 @@ cc-clip hotkey --disable-autostart
 If the hotkey is configured but image paste still does not work:
 
 1. Confirm `cc-clip hotkey --status` shows the expected host and hotkey
-2. Confirm `ssh myserver` and `scp` both work from the same terminal
+2. Confirm `ssh myserver` works from the same terminal
 3. Try the manual fallback:
 
 ```powershell

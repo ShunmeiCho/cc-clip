@@ -244,7 +244,7 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 		return nil, err
 	}
 
-	if err := scpUploadNoForward(host, localPath, remotePath); err != nil {
+	if err := sshUploadNoForward(host, localPath, remotePath); err != nil {
 		os.Remove(localPath)
 		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
 	}
@@ -257,12 +257,17 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 }
 
 func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
-	info, err := os.Stat(localFile)
+	// Lstat (not Stat) so symlinks are rejected instead of silently followed:
+	// a positional arg or --file could otherwise chase a link to a device,
+	// named pipe, or unexpected target. Require a regular file so the
+	// ssh-stdin upload is never asked to read from a FIFO (hangs) or a
+	// character device.
+	info, err := os.Lstat(localFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read --file %s: %w", localFile, err)
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("--file must point to an image file, got directory: %s", localFile)
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("--file must point to a regular image file, got %s: %s", describeFileMode(info.Mode()), localFile)
 	}
 
 	remoteHome, err := remoteHomeDir(host)
@@ -284,7 +289,7 @@ func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
 	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
 		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
 	}
-	if err := scpUploadNoForward(host, localFile, remotePath); err != nil {
+	if err := sshUploadNoForward(host, localFile, remotePath); err != nil {
 		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
 	}
 
@@ -360,15 +365,64 @@ func remoteExecNoForward(host, cmd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func scpUploadNoForward(host, localPath, remotePath string) error {
-	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", localPath, fmt.Sprintf("%s:%s", host, remotePath))
+func sshUploadNoForward(host, localPath, remotePath string) error {
+	// Stream the local file to the remote via `ssh host 'cat > <quoted>'`
+	// instead of scp. OpenSSH 9.0+ defaults `scp` to the SFTP subsystem,
+	// where the remote path is treated as an SFTP PATH rather than being
+	// expanded by a remote shell — shell-quoting `host:'remote path'` in
+	// that mode is interpreted literally and breaks uploads. Using ssh
+	// redirection keeps quoting semantics stable across versions and
+	// removes the leading-dash local-path hazard entirely (local path is
+	// no longer an argv positional to scp).
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, sshUploadRemoteCmd(remotePath))
+	c.Stdin = f
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("scp failed: %s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("ssh upload failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
+// sshUploadRemoteCmd returns the remote shell command used by
+// sshUploadNoForward. Extracted so tests can pin the exact quoting without
+// spawning a real ssh process.
+//
+// `umask 077` before `cat >` forces the created file to mode 0600 instead
+// of the default 0644 under a 022 umask. Clipboard images can contain
+// screenshots of tokens, password managers, or private chats, so they
+// must not be readable by other users on the remote host.
+func sshUploadRemoteCmd(remotePath string) string {
+	return "umask 077; cat > " + shQuote(remotePath)
+}
+
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// describeFileMode returns a short human-readable label for non-regular
+// file modes so the upload-local-file error tells the user what kind of
+// path they pointed at.
+func describeFileMode(m os.FileMode) string {
+	switch {
+	case m.IsDir():
+		return "directory"
+	case m&os.ModeSymlink != 0:
+		return "symlink"
+	case m&os.ModeNamedPipe != 0:
+		return "named pipe (FIFO)"
+	case m&os.ModeSocket != 0:
+		return "socket"
+	case m&os.ModeDevice != 0, m&os.ModeCharDevice != 0:
+		return "device"
+	case m&os.ModeIrregular != 0:
+		return "irregular file"
+	default:
+		return "non-regular file"
+	}
 }

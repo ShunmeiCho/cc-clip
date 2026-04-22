@@ -75,7 +75,8 @@ public static class CcClipOle {
 func windowsSetClipboardText(text string) error {
 	script := clipboardPersistenceSnippet + `
 [System.Windows.Forms.Clipboard]::SetDataObject($env:CC_CLIP_TEXT, $true)
-[void][CcClipOle]::OleFlushClipboard()`
+$hr = [CcClipOle]::OleFlushClipboard()
+if ($hr -ne 0) { throw "OleFlushClipboard failed with HRESULT 0x$($hr.ToString('X8'))" }`
 	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
 	cmd.Env = append(os.Environ(), "CC_CLIP_TEXT="+text)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -92,7 +93,8 @@ try {
   $data = New-Object System.Windows.Forms.DataObject
   $data.SetData([System.Windows.Forms.DataFormats]::Bitmap, $true, $img)
   [System.Windows.Forms.Clipboard]::SetDataObject($data, $true)
-  [void][CcClipOle]::OleFlushClipboard()
+  $hr = [CcClipOle]::OleFlushClipboard()
+  if ($hr -ne 0) { throw "OleFlushClipboard failed with HRESULT 0x$($hr.ToString('X8'))" }
 } finally {
   $img.Dispose()
 }`
