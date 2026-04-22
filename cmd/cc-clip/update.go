@@ -569,9 +569,26 @@ func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-func downloadAndVerifyArchive(ctx context.Context, tag string) (string, func(), error) {
+// releaseArchiveName returns the filename goreleaser publishes for a given
+// release tag + target triple. This is the single place where the
+// cc-clip-update path encodes its assumption about release asset naming.
+//
+// The same filename shape appears in two other places that MUST stay aligned:
+//
+//   - `.goreleaser.yaml` `name_template` (what goreleaser actually emits).
+//   - `scripts/install.sh` `ARCHIVE_NAME` (what the install-script path
+//     expects).
+//
+// `make release-preflight` greps for this constant in update.go alongside
+// the goreleaser/install.sh checks, so any future drift in one spot fails
+// the contract gate before a tag can be pushed.
+func releaseArchiveName(tag, goos, goarch string) string {
 	version := strings.TrimPrefix(tag, "v")
-	archiveName := fmt.Sprintf("cc-clip_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("cc-clip_%s_%s_%s.tar.gz", version, goos, goarch)
+}
+
+func downloadAndVerifyArchive(ctx context.Context, tag string) (string, func(), error) {
+	archiveName := releaseArchiveName(tag, runtime.GOOS, runtime.GOARCH)
 
 	tmpDir, err := os.MkdirTemp("", "cc-clip-update-*")
 	if err != nil {

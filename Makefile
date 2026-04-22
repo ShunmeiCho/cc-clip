@@ -49,6 +49,11 @@ release-preflight: test vet
 		|| { echo "FAIL: .goreleaser.yaml no longer declares formats: [tar.gz]"; exit 1; }
 	@grep -Fq 'formats: [zip]' .goreleaser.yaml \
 		|| { echo "FAIL: .goreleaser.yaml no longer declares the Windows formats: [zip] override"; exit 1; }
+	@echo "==> cc-clip update contract greps (keep update.go aligned with above)"
+	@grep -Fq 'cc-clip_%s_%s_%s.tar.gz' cmd/cc-clip/update.go \
+		|| { echo "FAIL: cmd/cc-clip/update.go archive-name drift; releaseArchiveName() must stay aligned with goreleaser name_template and scripts/install.sh"; exit 1; }
+	@grep -Fq 'checksums.txt' cmd/cc-clip/update.go \
+		|| { echo "FAIL: cmd/cc-clip/update.go no longer fetches checksums.txt; integrity verification broken"; exit 1; }
 	@echo "==> goreleaser snapshot build (no publish)"
 	@goreleaser release --snapshot --clean --skip=publish
 	@echo "==> release preflight OK. Safe to tag."

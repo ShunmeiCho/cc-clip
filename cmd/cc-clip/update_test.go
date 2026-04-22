@@ -8,6 +8,37 @@ import (
 	"time"
 )
 
+// TestReleaseArchiveName pins the exact filename the updater expects at
+// `<release>/cc-clip_<version>_<os>_<arch>.tar.gz`. If this shape ever
+// changes in goreleaser or scripts/install.sh without being reflected here
+// (or vice versa), the matching `make release-preflight` grep ensures the
+// drift is caught before a tag ships.
+func TestReleaseArchiveName(t *testing.T) {
+	cases := []struct {
+		name   string
+		tag    string
+		goos   string
+		goarch string
+		want   string
+	}{
+		{"darwin arm64", "v0.6.2", "darwin", "arm64", "cc-clip_0.6.2_darwin_arm64.tar.gz"},
+		{"linux amd64", "v0.6.2", "linux", "amd64", "cc-clip_0.6.2_linux_amd64.tar.gz"},
+		{"linux arm64", "v0.6.2", "linux", "arm64", "cc-clip_0.6.2_linux_arm64.tar.gz"},
+		{"darwin amd64", "v0.6.2", "darwin", "amd64", "cc-clip_0.6.2_darwin_amd64.tar.gz"},
+		{"tag without v prefix", "0.6.2", "darwin", "arm64", "cc-clip_0.6.2_darwin_arm64.tar.gz"},
+		{"older release", "v0.5.0", "linux", "amd64", "cc-clip_0.5.0_linux_amd64.tar.gz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := releaseArchiveName(tc.tag, tc.goos, tc.goarch)
+			if got != tc.want {
+				t.Errorf("releaseArchiveName(%q, %q, %q) = %q, want %q",
+					tc.tag, tc.goos, tc.goarch, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeVersion(t *testing.T) {
 	cases := []struct {
 		in   string
