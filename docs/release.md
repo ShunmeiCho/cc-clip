@@ -52,14 +52,26 @@ This target runs, in order:
 3. Cross-compile sanity for all six target triples.
 4. `goreleaser check` — validates `.goreleaser.yaml` against the current
    GoReleaser schema.
-5. The four contract greps the workflow runs
-   (`name_template`, `install.sh` archive name, `formats: [tar.gz]`,
-   `formats: [zip]`).
+5. The release-contract greps. These enforce that the three files below
+   agree on the archive naming and asset layout, because if any one of
+   them drifts alone, a real user-visible path breaks silently:
+   - `.goreleaser.yaml` — what goreleaser actually emits
+     (`name_template`, `formats: [tar.gz]`, `formats: [zip]`).
+   - `scripts/install.sh` — what the install-script path expects to
+     download.
+   - `cmd/cc-clip/update.go` — `releaseArchiveName()` is the single
+     source of truth for the `cc-clip update` command. The grep pins
+     the format string and the `checksums.txt` fetch, so any future
+     change to asset naming forces a matching update in the updater.
 6. `goreleaser release --snapshot --clean --skip=publish` — actually builds
    every archive to `dist/` without publishing, so archive-time issues
    surface locally.
 
 Stop and fix on the first failure.
+
+If a grep fails, fix the drift in the file it names AND in every other
+file in the list above. The contract is a three-way agreement, not
+two separate pairs.
 
 ## Phase 3: Cut and push the tag
 
@@ -129,6 +141,42 @@ gh run watch "$RUN_ID" --exit-status
 ```
 
 Non-zero exit means the release was not published. See **Phase 6** for recovery.
+
+## Phase 4.5: Write real release notes
+
+GoReleaser's default release body is a two-line commit list with SHAs,
+which is the minimum the release page can legally show. For every tag
+worth cutting, replace it with a user-facing summary before moving on.
+The tag annotation from Phase 3 is `git show $V` forever, but it is NOT
+what end users see on GitHub until this step happens.
+
+```bash
+V=v0.6.2
+gh release edit "$V" --notes-file path/to/notes.md
+```
+
+The notes file should cover, in this order:
+
+1. **What's New** — the flagship change, with a short code block if it
+   introduces a new command or flag.
+2. **Other Improvements** — documentation, tooling, CI, everything else
+   that users might notice but is not the headline.
+3. **Upgrade** — concrete commands per platform. On cc-clip this is
+   `cc-clip update` for 0.6.2+ users, `install.sh` for fresh installs
+   and Windows-to-manual, and always the `cc-clip connect <host> --force`
+   reminder for remote hosts.
+4. **Not in This Release** — features deferred, known limitations, links
+   to issues tracking follow-ups. This stops users filing "why didn't
+   X ship" questions.
+5. **Verification** — a short snippet showing how to check the archive
+   against `checksums.txt`. Makes integrity verification a copy-paste
+   one-liner.
+6. **Full Commit List + Diff link** — short SHAs, link to
+   `https://github.com/<repo>/compare/<prev>...<tag>`.
+
+Compare the end result against the release pages for the previous two
+versions — the shape should match so users subscribed to releases can
+skim instead of re-reading the format each time.
 
 ## Phase 5: Verify the published release
 
@@ -207,3 +255,27 @@ either (a) a drift between `.github/workflows/release.yml` contract checks and
 not normally compile for. Both classes are cheap to catch locally and expensive
 to catch after pushing a tag. `make release-preflight` is the one-shot that
 mirrors CI exactly, so the tag push becomes a ceremony rather than a gamble.
+
+### Appendix: the release contract is three-way
+
+The asset layout a cc-clip release ships is a shared contract across
+three files that MUST stay aligned:
+
+| File | Role | What it encodes |
+|---|---|---|
+| `.goreleaser.yaml` | emits | `name_template`, per-arch `formats` |
+| `scripts/install.sh` | consumes (new install) | `ARCHIVE_NAME` = `cc-clip_${VERSION#v}_${PLATFORM}.tar.gz` |
+| `cmd/cc-clip/update.go` | consumes (self-upgrade) | `releaseArchiveName()` format string + `checksums.txt` fetch |
+
+If any one of these changes alone, real users break silently:
+
+- drift in `.goreleaser.yaml` -> published archive filename no longer
+  matches what the downstream consumers expect.
+- drift in `install.sh` -> new installs 404 on download URL.
+- drift in `update.go` -> existing users on the previous release
+  cannot self-upgrade and get a 404 from `cc-clip update`.
+
+`make release-preflight` greps all three in the same step precisely so
+that a single-sided change trips the gate before it ships. If you ever
+find yourself changing asset naming, change all three in the same PR
+and verify `make release-preflight` still passes.
