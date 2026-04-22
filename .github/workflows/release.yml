@@ -26,7 +26,10 @@ jobs:
       - name: Verify release contract
         run: |
           # goreleaser must produce cc-clip_{version}_{os}_{arch}.tar.gz
-          grep -qP 'name_template:.*ProjectName.*Version.*Os.*Arch' .goreleaser.yaml
+          # -E (ERE) rather than -P (PCRE) so the same pattern is portable
+          # between the Ubuntu runner's GNU grep and BSD grep on developer
+          # macOS machines running `make release-preflight`.
+          grep -qE 'name_template:.*ProjectName.*Version.*Os.*Arch' .goreleaser.yaml
           # install.sh must expect the same format with version stripped of v prefix
           # (-F is literal match: the pattern contains ${...} / . which are
           #  regex metacharacters — -F keeps this robust across grep flavors.)
