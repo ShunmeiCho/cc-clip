@@ -367,7 +367,7 @@ The 10 you'll actually use:
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` / `service uninstall` | Manage macOS launchd daemon auto-start |
 | `cc-clip notify --title T --body B` | Send a generic notification through the tunnel |
-| `cc-clip send [<host>] --paste` | Windows: upload clipboard image and paste remote path |
+| `cc-clip send [<host>] [<file>] --paste` | Windows: upload clipboard image or saved file and paste remote path |
 | `cc-clip hotkey [<host>]` | Windows: register the remote upload/paste hotkey |
 
 Full command reference, including all flags and environment variables: **[docs/commands.md](docs/commands.md)**. Or run `cc-clip --help` for the authoritative list from the installed binary.

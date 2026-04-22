@@ -103,7 +103,8 @@ Remote:
     --host           Also clean up PATH marker on remote host
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
-  send [<host>]      Upload local clipboard image to remote file path
+  send [<host>] [<file>]
+                      Upload local clipboard image or file to remote file path
     --file           Upload this image file instead of reading the clipboard
     --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
     --paste          On Windows, paste the remote path into the active window
