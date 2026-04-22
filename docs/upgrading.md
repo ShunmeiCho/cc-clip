@@ -80,7 +80,25 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
     If you run it in the foreground yourself, just stop the old process
     (`Ctrl+C`) and start it again with `cc-clip serve`.
 
-2. **Redeploy to every remote host** you use with cc-clip. This pushes the new
+2. **Confirm the upgraded daemon owns the port.** If another cc-clip bundle or
+   old helper process is still listening on the daemon port, `connect` can talk
+   to the wrong daemon and sync the wrong token to the remote.
+
+    ```sh
+    launchctl list | grep -i cc-clip
+    lsof -nP -iTCP:18339 -sTCP:LISTEN
+    curl -i http://127.0.0.1:18339/register-nonce
+    ```
+
+    Expected:
+    - `launchctl` should show only the cc-clip daemon you intentionally run.
+    - `lsof` should show the listener path/PID belongs to your upgraded
+      `cc-clip` binary, not another bundled copy.
+    - `/register-nonce` should return `401` or `403` without auth. A `404`
+      means an old daemon that does not support notification nonce registration
+      is answering.
+
+3. **Redeploy to every remote host** you use with cc-clip. This pushes the new
    binary to the remote and rebuilds the shim / hooks / x11-bridge entries:
 
     ```sh
@@ -93,7 +111,7 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
     "binary unchanged, skipping" optimization so the new version actually
     lands on the remote.
 
-3. **Verify**:
+4. **Verify**:
 
     ```sh
     cc-clip --version
@@ -121,7 +139,9 @@ The install script does not support Windows. Upgrade is manual.
 4. Restart the hotkey listener:
 
     ```powershell
-    cc-clip hotkey --install
+    cc-clip hotkey
+    # or, to keep auto-start enabled:
+    cc-clip hotkey myserver --enable-autostart
     cc-clip hotkey --status          # confirms the new version is registered
     ```
 
@@ -137,6 +157,10 @@ The install script does not support Windows. Upgrade is manual.
   until the service is restarted. If `cc-clip --version` on the CLI shows
   the new version but clipboard paste still behaves like the old one,
   `cc-clip service uninstall && cc-clip service install`.
+- **Another daemon owns port 18339:** If `cc-clip connect` says the daemon is
+  running but paste still fails, inspect `lsof -nP -iTCP:18339 -sTCP:LISTEN`.
+  The process must be the upgraded cc-clip daemon you intend to use. Stop any
+  old bundled copy before running `cc-clip connect <host> --force` again.
 - **Remote cache says "unchanged":** `cc-clip connect` tracks the remote
   binary hash in `~/.cache/cc-clip/deploy-state.json` on the remote. If that
   file claims the binary is already current, `connect` will skip the upload.
