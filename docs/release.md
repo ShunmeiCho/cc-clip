@@ -4,7 +4,7 @@
 > [upgrading.md](upgrading.md). This document is for maintainers cutting a
 > new release.
 
-Production releases are cut by pushing a signed `v<semver>` tag to the `main`
+Production releases are cut by pushing an annotated `v<semver>` tag to the `main`
 branch. The `Release` workflow in `.github/workflows/release.yml` reacts to the
 tag push, runs the test suite, validates the release contract, and invokes
 GoReleaser to publish the archives and checksums.

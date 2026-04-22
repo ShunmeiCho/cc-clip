@@ -87,16 +87,17 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
     ```sh
     launchctl list | grep -i cc-clip
     lsof -nP -iTCP:18339 -sTCP:LISTEN
-    curl -i http://127.0.0.1:18339/register-nonce
+    curl -i -X POST http://127.0.0.1:18339/register-nonce
     ```
 
     Expected:
     - `launchctl` should show only the cc-clip daemon you intentionally run.
     - `lsof` should show the listener path/PID belongs to your upgraded
       `cc-clip` binary, not another bundled copy.
-    - `/register-nonce` should return `401` or `403` without auth. A `404`
-      means an old daemon that does not support notification nonce registration
-      is answering.
+    - `/register-nonce` is a `POST`-only endpoint. Without an auth header it
+      should return `401` or `403`. A `404` means an older daemon that does
+      not know about notification nonces is answering; a `405` (from a GET)
+      just means you forgot `-X POST`.
 
 3. **Redeploy to every remote host** you use with cc-clip. This pushes the new
    binary to the remote and rebuilds the shim / hooks / x11-bridge entries:
