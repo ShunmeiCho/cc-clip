@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestNormalizeVersion(t *testing.T) {
@@ -208,6 +210,36 @@ n/Users/shunmei/.local/bin/cc-clip
 				t.Errorf("parseLsofTextPath(...) = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRunVersionCommandTimeout guarantees that a binary that hangs on
+// `--version` cannot wedge the updater. Without a timeout this path would
+// block forever AFTER the binary swap had already happened, meaning no
+// rollback could ever run. We simulate the hang with a shell script that
+// sleeps for 30s and verify the call returns within 2s with an error.
+func TestRunVersionCommandTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script stub does not run on Windows")
+	}
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "fake-cc-clip")
+	// Stub ignores its argv and sleeps, so `--version` will never return.
+	script := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	_, err := runVersionCommandWithTimeout(stub, 500*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected non-nil error when --version exceeds timeout")
+	}
+	// Ceiling = timeout (500ms) + WaitDelay (1s) + scheduling slack.
+	if elapsed > 3*time.Second {
+		t.Errorf("runVersionCommandWithTimeout took %s, want < 3s (timeout not enforced)", elapsed)
 	}
 }
 

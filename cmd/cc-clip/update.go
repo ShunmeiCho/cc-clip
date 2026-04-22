@@ -105,6 +105,15 @@ func cmdUpdate() {
 		fmt.Printf("warning: ignoring conflict because --force was given: %s\n", conflict)
 	}
 
+	// Snapshot whether a service was running BEFORE any mutation. We need
+	// this later both to know whether to call `service install` after the
+	// swap AND to tell the rollback path whether to re-register the plist
+	// against the restored binary. Reading Status() mid-flight is not
+	// safe because the service may crash-loop during `service.Uninstall()`
+	// and look "not running" when in fact we need to restore it.
+	serviceWasRunning := detectServiceRunning()
+	fmt.Printf("service:  %s\n", describeServiceState(serviceWasRunning))
+
 	archivePath, cleanupArchive, err := downloadAndVerifyArchive(ctx, target)
 	if err != nil {
 		log.Fatalf("download/verify failed: %v", err)
@@ -157,23 +166,43 @@ func cmdUpdate() {
 
 	fmt.Printf("binary installed: %s\n", selfPath)
 
-	serviceWasRunning := restartDaemon(selfPath)
+	// If a service WAS running before the swap, re-register the plist so
+	// launchd reloads the job pointing at the new binary. Failure here is
+	// treated the same as any other post-install failure: roll back before
+	// returning.
+	if err := reinstallMacOSService(selfPath, serviceWasRunning); err != nil {
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning)
+		log.Fatalf("service restart failed (%v); rolled back to previous version.", err)
+	}
 
-	// Post-install re-verify. If the service restarted to a different binary
-	// (for example because launchd picked up a path different from selfPath)
-	// or if the binary we just copied refuses to exec, undo the swap so the
-	// user is left with the working old version and a loud error, not a
-	// half-broken upgrade.
+	// Post-install re-verify 1: does the new binary on disk actually run,
+	// and does it report the expected version? This catches an archive
+	// that staged correctly but then couldn't exec (missing codesign on
+	// macOS, broken linked library, etc.).
 	installedVersion, verifyErr := runVersionCommand(selfPath)
 	if verifyErr != nil {
-		rollbackAfterInstall(selfPath, backup)
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning)
 		log.Fatalf("post-install: installed binary failed to run (%v); rolled back to previous version.\ncheck %s for the archive you were trying to install.", verifyErr, backup)
 	}
 	if !stagedVersionMatches(installedVersion, target) {
-		rollbackAfterInstall(selfPath, backup)
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning)
 		log.Fatalf("post-install: installed binary reports %q, expected %s; rolled back.", installedVersion, target)
 	}
-	fmt.Printf("verified: %s\n", installedVersion)
+	fmt.Printf("verified binary: %s\n", installedVersion)
+
+	// Post-install re-verify 2: if a service was running before the update,
+	// it should be running AGAIN now, owned by the new binary. This catches
+	// the bad-state where launchd registered the new plist but the old
+	// (third-party) daemon is still holding the port — which is exactly
+	// what happens after `--force` past a conflict, or if `service install`
+	// silently succeeded but launchd's job crash-looped.
+	if serviceWasRunning {
+		if err := verifyRunningDaemon(selfPath, updateDaemonPort); err != nil {
+			rollbackAfterInstall(selfPath, backup, serviceWasRunning)
+			log.Fatalf("post-install: daemon verification failed (%v); rolled back to previous version.\nresolve the stray process on :%d (see `docs/upgrading.md`) and try again.", err, updateDaemonPort)
+		}
+		fmt.Println("verified daemon: responding on :" + strconv.Itoa(updateDaemonPort) + " from the new binary")
+	}
 
 	_ = os.Remove(backup)
 
@@ -191,19 +220,107 @@ func stagedVersionMatches(reported, targetTag string) bool {
 	return r == t && r != ""
 }
 
+// detectServiceRunning snapshots whether a cc-clip service is running now.
+// We read this BEFORE any mutation because once `service.Uninstall()` runs
+// the state is destroyed and we cannot tell from the outside whether the
+// service was supposed to exist or not.
+func detectServiceRunning() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	running, err := service.Status()
+	return err == nil && running
+}
+
+func describeServiceState(wasRunning bool) string {
+	if runtime.GOOS != "darwin" {
+		return "not managed (this OS does not use launchd)"
+	}
+	if wasRunning {
+		return "running (launchd)"
+	}
+	return "not running"
+}
+
+// reinstallMacOSService re-registers the launchd plist against binaryPath,
+// but only if a service was running before the update. Returns a non-nil
+// error so the caller can rollback; the function does not panic or exit.
+func reinstallMacOSService(binaryPath string, serviceWasRunning bool) error {
+	if runtime.GOOS != "darwin" || !serviceWasRunning {
+		return nil
+	}
+	if err := service.Uninstall(); err != nil {
+		return fmt.Errorf("service uninstall: %w", err)
+	}
+	if err := service.Install(binaryPath, updateDaemonPort); err != nil {
+		return fmt.Errorf("service install: %w", err)
+	}
+	return nil
+}
+
+// verifyRunningDaemon polls /health until 200 OK, then confirms that the
+// process listening on `port` is actually the binary at expectedPath. This
+// catches the scenario where launchd accepted the new plist but the old
+// third-party daemon is still bound to the port (common after `--force`
+// past a conflict check).
+func verifyRunningDaemon(expectedPath string, port int) error {
+	healthCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+
+	var lastErr error
+	client := &http.Client{Timeout: 2 * time.Second}
+	for {
+		req, err := http.NewRequestWithContext(healthCtx, "GET", healthURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+			lastErr = fmt.Errorf("GET /health -> %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-healthCtx.Done():
+			return fmt.Errorf("daemon did not respond 200 to /health within 10s (last: %v)", lastErr)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+
+	conflict, err := detectDaemonConflict(port, expectedPath)
+	if err != nil {
+		// We could not identify the listener binary (e.g. lsof missing).
+		// Health is already 200, so don't block the update on this; just
+		// warn so the user knows verification was partial.
+		fmt.Printf("warning: daemon is responding on :%d but we could not verify its binary path (%v)\n", port, err)
+		return nil
+	}
+	if conflict != "" {
+		return fmt.Errorf("daemon is up but owned by a different binary: %s", conflict)
+	}
+	return nil
+}
+
 // rollbackAfterInstall restores the backed-up binary after a failed
-// post-install verification. Also re-registers the launchd plist so the
-// service points back at the rolled-back binary.
-func rollbackAfterInstall(selfPath, backup string) {
+// post-install step. If a service was running before the update, also
+// re-register the launchd plist against the restored binary so the old
+// version keeps serving. All steps are best-effort: if any individual
+// operation fails, we still try the remaining ones because the user is
+// already in a broken state and we want to leave them as close to the
+// pre-update world as possible.
+func rollbackAfterInstall(selfPath, backup string, serviceWasRunning bool) {
 	_ = os.Remove(selfPath)
 	_ = os.Rename(backup, selfPath)
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" || !serviceWasRunning {
 		return
 	}
-	if running, err := service.Status(); err == nil && running {
-		_ = service.Uninstall()
-		_ = service.Install(selfPath, updateDaemonPort)
-	}
+	_ = service.Uninstall()
+	_ = service.Install(selfPath, updateDaemonPort)
 }
 
 func parseUpdateFlags(args []string) updateOptions {
@@ -653,34 +770,25 @@ func renameAtomic(src, dst string) error {
 	return os.Rename(dst+".new", dst)
 }
 
-// restartDaemon re-registers the launchd service (on macOS) so it picks up
-// the new binary. Returns true if the service was running (and got
-// reinstalled), false if there was no service to manage (e.g., the user runs
-// the daemon in the foreground or uses systemd we can't speak to yet).
-func restartDaemon(binaryPath string) bool {
-	if runtime.GOOS != "darwin" {
-		// On Linux we don't manage systemd yet; just note it.
-		fmt.Println("note: on Linux, restart the daemon yourself if you run it as a service.")
-		return false
-	}
-	running, err := service.Status()
-	if err != nil || !running {
-		fmt.Println("note: cc-clip service not detected as running; skipping service restart.")
-		return false
-	}
-	fmt.Println("restarting launchd service...")
-	if err := service.Uninstall(); err != nil {
-		fmt.Printf("warning: service uninstall failed: %v\n", err)
-	}
-	if err := service.Install(binaryPath, updateDaemonPort); err != nil {
-		fmt.Printf("warning: service install failed: %v\nyou may need to run `cc-clip service install` manually.\n", err)
-		return false
-	}
-	return true
+// runVersionCommand executes `<binaryPath> --version` with a hard timeout
+// so a hanging binary (bad linked library, waiting on some external
+// resource at startup, etc.) cannot wedge the updater. This matters most
+// AFTER the swap: a post-install verify that blocks forever means no
+// rollback runs, leaving the user with a broken binary and no recourse.
+func runVersionCommand(binaryPath string) (string, error) {
+	return runVersionCommandWithTimeout(binaryPath, 10*time.Second)
 }
 
-func runVersionCommand(binaryPath string) (string, error) {
-	cmd := exec.Command(binaryPath, "--version")
+func runVersionCommandWithTimeout(binaryPath string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binaryPath, "--version")
+	// Without WaitDelay, killing the direct child still leaves orphaned
+	// descendants holding the stdout pipe open; cmd.Output() would then
+	// wait indefinitely for EOF. WaitDelay forces the pipes closed after
+	// the grace window, so Output returns promptly even if a grandchild
+	// (shell -> sleep) is still writing.
+	cmd.WaitDelay = 1 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
