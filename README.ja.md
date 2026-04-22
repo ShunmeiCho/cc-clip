@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ d15a990fdccf3c2686a9dc69c26635f525ce65a1 -->
+<!-- i18n-source: README.md @ 9b3ca6d81fafa9f8a422a77ea2a86875662fe9c0 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -373,7 +373,7 @@ Windows ワークフローは専用の remote-paste hotkey（デフォルト: `A
 | `cc-clip status` | ローカルコンポーネントの状態を表示 |
 | `cc-clip service install` / `service uninstall` | macOS launchd daemon の自動起動を管理 |
 | `cc-clip notify --title T --body B` | tunnel 経由で generic notification を送信 |
-| `cc-clip send [<host>] --paste` | Windows: クリップボード画像をアップロードし、リモートパスを貼り付け |
+| `cc-clip send [<host>] [<file>] --paste` | Windows: クリップボード画像または保存済みファイルをアップロードし、リモートパスを貼り付け |
 | `cc-clip hotkey [<host>]` | Windows: remote upload/paste hotkey を登録 |
 
 すべての flag と環境変数を含む完全なコマンドリファレンスは **[docs/commands.md](docs/commands.md)** を参照してください。インストール済みバージョンの正確な一覧は `cc-clip --help` で確認できます。
