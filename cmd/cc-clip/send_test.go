@@ -132,3 +132,59 @@ func TestParseSendArgsRejectsNegativeDelay(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// TestShQuoteNeutralizesShellMetacharacters pins shQuote's behavior so that
+// scp remote-path hardening cannot silently regress. Every case would execute
+// a shell command if shQuote is removed or weakened.
+func TestShQuoteNeutralizesShellMetacharacters(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain", "foo.png", "'foo.png'"},
+		{"space", "my file.png", "'my file.png'"},
+		{"single quote", "foo's.png", `'foo'\''s.png'`},
+		{"semicolon injection", "foo; rm -rf /.png", "'foo; rm -rf /.png'"},
+		{"command substitution", "foo$(date).png", "'foo$(date).png'"},
+		{"dollar variable", "$HOME/foo.png", "'$HOME/foo.png'"},
+		{"backtick", "foo`date`.png", "'foo`date`.png'"},
+		{"ampersand", "foo & bar.png", "'foo & bar.png'"},
+		{"pipe", "foo|bar.png", "'foo|bar.png'"},
+		{"newline", "foo\nbar.png", "'foo\nbar.png'"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shQuote(tc.input)
+			if got != tc.want {
+				t.Fatalf("shQuote(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSafeScpLocalPathGuardsLeadingDash ensures paths like "-foo.png" cannot
+// be misinterpreted as scp options on versions that mishandle "--".
+func TestSafeScpLocalPathGuardsLeadingDash(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain absolute", "/tmp/foo.png", "/tmp/foo.png"},
+		{"plain relative", "foo.png", "foo.png"},
+		{"dotted relative", "./foo.png", "./foo.png"},
+		{"windows drive", `C:\test.png`, `C:\test.png`},
+		{"leading dash", "-foo.png", "./-foo.png"},
+		{"leading double dash", "--rf", "./--rf"},
+		{"leading dash-o", "-oBatchMode=no", "./-oBatchMode=no"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := safeScpLocalPath(tc.input)
+			if got != tc.want {
+				t.Fatalf("safeScpLocalPath(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

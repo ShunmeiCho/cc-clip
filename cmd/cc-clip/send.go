@@ -257,12 +257,16 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 }
 
 func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
-	info, err := os.Stat(localFile)
+	// Lstat (not Stat) so symlinks are rejected instead of silently followed:
+	// a positional arg or --file could otherwise chase a link to a device,
+	// named pipe, or unexpected target. Require a regular file so scp is
+	// never asked to read a FIFO (hangs) or character device.
+	info, err := os.Lstat(localFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read --file %s: %w", localFile, err)
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("--file must point to an image file, got directory: %s", localFile)
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("--file must point to a regular image file, got %s: %s", describeFileMode(info.Mode()), localFile)
 	}
 
 	remoteHome, err := remoteHomeDir(host)
@@ -361,7 +365,14 @@ func remoteExecNoForward(host, cmd string) (string, error) {
 }
 
 func scpUploadNoForward(host, localPath, remotePath string) error {
-	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", localPath, fmt.Sprintf("%s:%s", host, remotePath))
+	// scp's remote side is expanded by a remote shell, so remotePath must
+	// be shell-quoted to resist metachars (spaces, semicolons, $(...) etc.)
+	// in remoteDir or filename. "--" stops scp from interpreting a
+	// leading-dash local path as an option; safeScpLocalPath additionally
+	// prefixes "./" because older scp versions handle "--" inconsistently.
+	safeLocal := safeScpLocalPath(localPath)
+	target := fmt.Sprintf("%s:%s", host, shQuote(remotePath))
+	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", "--", safeLocal, target)
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("scp failed: %s: %w", strings.TrimSpace(string(out)), err)
@@ -369,6 +380,37 @@ func scpUploadNoForward(host, localPath, remotePath string) error {
 	return nil
 }
 
+// safeScpLocalPath defensively prefixes "./" for paths starting with "-"
+// so scp never parses them as flags on versions that mishandle "--".
+func safeScpLocalPath(p string) string {
+	if strings.HasPrefix(p, "-") {
+		return "./" + p
+	}
+	return p
+}
+
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// describeFileMode returns a short human-readable label for non-regular
+// file modes so the upload-local-file error tells the user what kind of
+// path they pointed at.
+func describeFileMode(m os.FileMode) string {
+	switch {
+	case m.IsDir():
+		return "directory"
+	case m&os.ModeSymlink != 0:
+		return "symlink"
+	case m&os.ModeNamedPipe != 0:
+		return "named pipe (FIFO)"
+	case m&os.ModeSocket != 0:
+		return "socket"
+	case m&os.ModeDevice != 0, m&os.ModeCharDevice != 0:
+		return "device"
+	case m&os.ModeIrregular != 0:
+		return "irregular file"
+	default:
+		return "non-regular file"
+	}
 }

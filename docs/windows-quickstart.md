@@ -112,6 +112,10 @@ Daily workflow:
 - paste the remote file path into the active terminal
 - restore your original clipboard image
 
+> **Focus warning.** After you press `Alt+Shift+V`, `cc-clip` uploads the image, waits ~150 ms, then synthesizes `Ctrl+Shift+V` to paste the remote path into **whichever window is focused at that moment**. Do not switch windows during this short window — if the remote path lands in a password field, an IM input, or a browser URL bar, it has been delivered to the wrong trust boundary.
+>
+> If you need to switch away during upload, cancel the hotkey (focus a safe window first, or run `cc-clip hotkey --stop`) rather than letting the paste fire into an unintended target. Tracking: issue [#43](https://github.com/ShunmeiCho/cc-clip/issues/43) covers a foreground-window guard so future versions abort instead of pasting when focus has changed.
+
 ## Manual Fallback
 
 If you do not want the background hotkey, run a one-shot paste instead:
