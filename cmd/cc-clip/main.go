@@ -143,11 +143,12 @@ Diagnostics:
 
 Notifications:
   notify             Send a notification to the local daemon
-    --title          Notification title
-    --body           Notification body
-    --urgency        Urgency level (default: 1)
-    --from-codex     Parse Codex JSON payload (extracts last-assistant-message)
-    --port           Daemon port (default: 18339, env: CC_CLIP_PORT)
+    --title              Notification title
+    --body               Notification body
+    --urgency            Urgency level (default: 1)
+    --from-codex         Parse Codex JSON payload (extracts last-assistant-message)
+    --from-codex-stdin   Read Codex JSON payload from stdin (mutually exclusive with --from-codex)
+    --port               Daemon port (default: 18339, env: CC_CLIP_PORT)
 
 Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
