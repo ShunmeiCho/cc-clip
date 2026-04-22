@@ -11,7 +11,7 @@ On Windows, `cc-clip` does **not** rely on the remote `xclip` clipboard path.
 Instead, it:
 
 1. Reads the image from your Windows clipboard
-2. Uploads it to the remote host over SSH/SCP
+2. Uploads it to the remote host over SSH
 3. Pastes the remote file path into the active Claude Code terminal
 
 This is the recommended path for:
@@ -30,7 +30,7 @@ By default:
 You need all of these on your Windows machine:
 
 - Windows 10/11
-- `ssh` and `scp` in `PATH`
+- `ssh` in `PATH`
 - a working SSH host alias in `~/.ssh/config`
 
 Example:
@@ -187,7 +187,7 @@ cc-clip hotkey --disable-autostart
 If the hotkey is configured but image paste still does not work:
 
 1. Confirm `cc-clip hotkey --status` shows the expected host and hotkey
-2. Confirm `ssh myserver` and `scp` both work from the same terminal
+2. Confirm `ssh myserver` works from the same terminal
 3. Try the manual fallback:
 
 ```powershell

@@ -134,8 +134,9 @@ func TestParseSendArgsRejectsNegativeDelay(t *testing.T) {
 }
 
 // TestShQuoteNeutralizesShellMetacharacters pins shQuote's behavior so that
-// scp remote-path hardening cannot silently regress. Every case would execute
-// a shell command if shQuote is removed or weakened.
+// remote-path hardening for mkdir -p and the ssh-stdin upload command cannot
+// silently regress. Every case would execute a shell command if shQuote is
+// removed or weakened.
 func TestShQuoteNeutralizesShellMetacharacters(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -164,24 +165,28 @@ func TestShQuoteNeutralizesShellMetacharacters(t *testing.T) {
 }
 
 // TestSSHUploadRemoteCmdQuotesPath pins the shape of the remote command used
-// by sshUploadNoForward. Uploads now stream via `ssh host 'cat > <quoted>'`
+// by sshUploadNoForward. Uploads stream via `ssh host 'umask 077; cat > <quoted>'`
 // instead of `scp host:<path>`, because OpenSSH 9.0+ scp defaults to the SFTP
 // subsystem where shell-quoting the remote side is interpreted literally and
-// breaks transfer. This test ensures the remote path always lands inside a
-// shell-quoted redirection target and that shell metacharacters are neutralized
-// by shQuote rather than reaching the remote shell verbatim.
+// breaks transfer. This test ensures:
+//
+//  1. The remote path always lands inside a shell-quoted redirection target and
+//     shell metacharacters are neutralized by shQuote rather than reaching the
+//     remote shell verbatim.
+//  2. The `umask 077;` prefix stays in place so uploaded clipboard images are
+//     created as 0600 regardless of the remote account's default umask.
 func TestSSHUploadRemoteCmdQuotesPath(t *testing.T) {
 	cases := []struct {
 		name       string
 		remotePath string
 		want       string
 	}{
-		{"plain", "/tmp/foo.png", "cat > '/tmp/foo.png'"},
-		{"with space", "/tmp/my file.png", "cat > '/tmp/my file.png'"},
-		{"semicolon injection", "/tmp/a; rm -rf /.png", "cat > '/tmp/a; rm -rf /.png'"},
-		{"command substitution", "/tmp/$(id).png", "cat > '/tmp/$(id).png'"},
-		{"single quote", "/tmp/foo's.png", `cat > '/tmp/foo'\''s.png'`},
-		{"backtick", "/tmp/`date`.png", "cat > '/tmp/`date`.png'"},
+		{"plain", "/tmp/foo.png", "umask 077; cat > '/tmp/foo.png'"},
+		{"with space", "/tmp/my file.png", "umask 077; cat > '/tmp/my file.png'"},
+		{"semicolon injection", "/tmp/a; rm -rf /.png", "umask 077; cat > '/tmp/a; rm -rf /.png'"},
+		{"command substitution", "/tmp/$(id).png", "umask 077; cat > '/tmp/$(id).png'"},
+		{"single quote", "/tmp/foo's.png", `umask 077; cat > '/tmp/foo'\''s.png'`},
+		{"backtick", "/tmp/`date`.png", "umask 077; cat > '/tmp/`date`.png'"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

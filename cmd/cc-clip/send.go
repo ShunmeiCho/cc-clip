@@ -259,8 +259,9 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
 	// Lstat (not Stat) so symlinks are rejected instead of silently followed:
 	// a positional arg or --file could otherwise chase a link to a device,
-	// named pipe, or unexpected target. Require a regular file so scp is
-	// never asked to read a FIFO (hangs) or character device.
+	// named pipe, or unexpected target. Require a regular file so the
+	// ssh-stdin upload is never asked to read from a FIFO (hangs) or a
+	// character device.
 	info, err := os.Lstat(localFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read --file %s: %w", localFile, err)
@@ -391,8 +392,13 @@ func sshUploadNoForward(host, localPath, remotePath string) error {
 // sshUploadRemoteCmd returns the remote shell command used by
 // sshUploadNoForward. Extracted so tests can pin the exact quoting without
 // spawning a real ssh process.
+//
+// `umask 077` before `cat >` forces the created file to mode 0600 instead
+// of the default 0644 under a 022 umask. Clipboard images can contain
+// screenshots of tokens, password managers, or private chats, so they
+// must not be readable by other users on the remote host.
 func sshUploadRemoteCmd(remotePath string) string {
-	return "cat > " + shQuote(remotePath)
+	return "umask 077; cat > " + shQuote(remotePath)
 }
 
 func shQuote(s string) string {
