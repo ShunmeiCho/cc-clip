@@ -30,8 +30,8 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 
 | Command | Description |
 |---------|-------------|
-| `cc-clip send [<host>]` | Upload clipboard image to a remote file |
-| `cc-clip send [<host>] --paste` | Windows: paste the uploaded remote path into the active window |
+| `cc-clip send [<host>] [<file>]` | Upload clipboard image, or a saved image file, to a remote file |
+| `cc-clip send [<host>] [<file>] --paste` | Windows: paste the uploaded remote path into the active window |
 | `cc-clip hotkey [<host>]` | Windows: run a background remote-paste hotkey listener |
 | `cc-clip hotkey --enable-autostart` | Windows: start the hotkey listener automatically at login |
 | `cc-clip hotkey --disable-autostart` | Windows: remove hotkey auto-start at login |

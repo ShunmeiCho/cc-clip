@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -17,30 +18,25 @@ import (
 )
 
 const defaultRemoteUploadDir = "~/.cache/cc-clip/uploads"
+const sendUsage = "usage: cc-clip send [<host>] [<file>] [--file PATH] [--remote-dir DIR] [--paste] [--delay-ms N] [--no-restore]"
+
+type sendOptions struct {
+	host      string
+	localFile string
+	remoteDir string
+	paste     bool
+	delayMS   int
+	noRestore bool
+}
 
 func cmdSend() {
-	host := ""
-	flagArgs := os.Args[2:]
-	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
-		host = os.Args[2]
-		flagArgs = os.Args[3:]
-	}
-
-	fs := flag.NewFlagSet("send", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-
-	localFile := fs.String("file", "", "upload this image file instead of reading the clipboard")
-	remoteDir := fs.String("remote-dir", defaultRemoteUploadDir, "remote upload directory")
-	paste := fs.Bool("paste", false, "paste the remote path into the active window")
-	delayMS := fs.Int("delay-ms", 150, "delay before Ctrl+Shift+V when --paste is used")
-	noRestore := fs.Bool("no-restore", false, "do not restore the original image clipboard after --paste")
-
-	if err := fs.Parse(flagArgs); err != nil {
+	cfg, err := parseSendArgs(os.Args[2:], os.Stderr)
+	if err != nil {
 		log.Fatal(err)
 	}
-	if *delayMS < 0 {
-		log.Fatalf("invalid --delay-ms: %d", *delayMS)
-	}
+
+	host := cfg.host
+
 	if host == "" {
 		var ok bool
 		var err error
@@ -49,12 +45,12 @@ func cmdSend() {
 			log.Fatalf("cannot resolve default host: %v", err)
 		}
 		if !ok || host == "" {
-			log.Fatal("usage: cc-clip send [<host>] [--file PATH] [--remote-dir DIR] [--paste] [--delay-ms N] [--no-restore]")
+			log.Fatal(sendUsage)
 		}
 	}
-	restoreClipboard := !*noRestore
+	restoreClipboard := !cfg.noRestore
 
-	result, err := uploadImage(host, *remoteDir, *localFile)
+	result, err := uploadImage(host, cfg.remoteDir, cfg.localFile)
 	if err != nil {
 		log.Fatalf("send failed: %v", err)
 	}
@@ -64,13 +60,135 @@ func cmdSend() {
 
 	fmt.Println(result.RemotePath)
 
-	if !*paste {
+	if !cfg.paste {
 		return
 	}
 
-	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, time.Duration(*delayMS)*time.Millisecond, restoreClipboard); err != nil {
+	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, time.Duration(cfg.delayMS)*time.Millisecond, restoreClipboard); err != nil {
 		log.Fatalf("send uploaded the image but failed to inject the remote path: %v", err)
 	}
+}
+
+func parseSendArgs(args []string, output io.Writer) (sendOptions, error) {
+	cfg := sendOptions{
+		remoteDir: defaultRemoteUploadDir,
+		delayMS:   150,
+	}
+	flagArgs, positionalFile, err := consumeLeadingSendPositionals(&cfg, args)
+	if err != nil {
+		return cfg, err
+	}
+
+	fs := flag.NewFlagSet("send", flag.ContinueOnError)
+	fs.SetOutput(output)
+
+	localFile := fs.String("file", "", "upload this image file instead of reading the clipboard")
+	remoteDir := fs.String("remote-dir", defaultRemoteUploadDir, "remote upload directory")
+	paste := fs.Bool("paste", false, "paste the remote path into the active window")
+	delayMS := fs.Int("delay-ms", 150, "delay before Ctrl+Shift+V when --paste is used")
+	noRestore := fs.Bool("no-restore", false, "do not restore the original image clipboard after --paste")
+
+	if err := fs.Parse(flagArgs); err != nil {
+		return cfg, err
+	}
+	if *delayMS < 0 {
+		return cfg, fmt.Errorf("invalid --delay-ms: %d", *delayMS)
+	}
+
+	cfg.localFile = *localFile
+	cfg.remoteDir = *remoteDir
+	cfg.paste = *paste
+	cfg.delayMS = *delayMS
+	cfg.noRestore = *noRestore
+
+	if positionalFile != "" {
+		if err := setPositionalSendFile(&cfg, positionalFile); err != nil {
+			return cfg, err
+		}
+	}
+	if err := applySendPositionals(&cfg, fs.Args()); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func consumeLeadingSendPositionals(cfg *sendOptions, args []string) ([]string, string, error) {
+	leading := make([]string, 0, 2)
+	flagStart := 0
+	for flagStart < len(args) && !strings.HasPrefix(args[flagStart], "-") {
+		leading = append(leading, args[flagStart])
+		flagStart++
+	}
+	if len(leading) > 2 {
+		return nil, "", fmt.Errorf("unexpected positional arguments %q; %s", strings.Join(leading[2:], " "), sendUsage)
+	}
+
+	switch len(leading) {
+	case 0:
+		return args, "", nil
+	case 1:
+		if looksLikeImagePath(leading[0]) {
+			return args[flagStart:], leading[0], nil
+		}
+		cfg.host = leading[0]
+		return args[flagStart:], "", nil
+	default:
+		cfg.host = leading[0]
+		return args[flagStart:], leading[1], nil
+	}
+}
+
+func applySendPositionals(cfg *sendOptions, args []string) error {
+	if err := rejectFlagLikeSendPositionals(args); err != nil {
+		return err
+	}
+
+	switch {
+	case len(args) == 0:
+		return nil
+	case cfg.host != "":
+		if len(args) > 1 {
+			return fmt.Errorf("unexpected positional arguments %q; %s", strings.Join(args[1:], " "), sendUsage)
+		}
+		return setPositionalSendFile(cfg, args[0])
+	case len(args) == 1:
+		if looksLikeImagePath(args[0]) {
+			return setPositionalSendFile(cfg, args[0])
+		}
+		cfg.host = args[0]
+		return nil
+	case len(args) == 2:
+		cfg.host = args[0]
+		return setPositionalSendFile(cfg, args[1])
+	default:
+		return fmt.Errorf("unexpected positional arguments %q; %s", strings.Join(args[2:], " "), sendUsage)
+	}
+}
+
+func rejectFlagLikeSendPositionals(args []string) error {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			return fmt.Errorf("flag %q must appear before positional arguments; %s", arg, sendUsage)
+		}
+	}
+	return nil
+}
+
+func setPositionalSendFile(cfg *sendOptions, file string) error {
+	if cfg.localFile != "" {
+		return fmt.Errorf("cannot use both --file and positional image path %q", file)
+	}
+	cfg.localFile = file
+	return nil
+}
+
+func looksLikeImagePath(arg string) bool {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(arg)), ".")
+	switch ext {
+	case "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic":
+		return true
+	}
+	return false
 }
 
 type uploadResult struct {
@@ -93,7 +211,7 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 		return nil, fmt.Errorf("clipboard probe failed: %w", err)
 	}
 	if info.Type != daemon.ClipboardImage {
-		return nil, fmt.Errorf("no image in clipboard (type: %s)", info.Type)
+		return nil, fmt.Errorf("no image in clipboard (type: %s); use --file PATH or a positional image path to upload a saved image", info.Type)
 	}
 
 	data, err := clip.ImageBytes()

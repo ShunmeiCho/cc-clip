@@ -126,6 +126,12 @@ Or, after you already saved a default host:
 cc-clip send --paste
 ```
 
+If you already saved the image as a file, pass it directly:
+
+```powershell
+cc-clip send --paste C:\path\to\screenshot.png
+```
+
 ## Change Host or Hotkey Later
 
 Change the default remote host:
