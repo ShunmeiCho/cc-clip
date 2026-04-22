@@ -104,8 +104,27 @@ git push origin "$V"
 
 ## Phase 4: Watch CI
 
+`gh run list --limit 1` picks "whatever the newest release workflow run is",
+which is a race: the tag push takes a few seconds to create a new run, and
+in that window you get the previous release's run id. Filter by the commit
+the tag points at, and poll until a matching run exists.
+
 ```bash
-RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+V=v0.6.2                                  # same tag as Phase 3
+COMMIT=$(git rev-parse "$V^{commit}")
+RUN_ID=""
+for attempt in $(seq 1 30); do
+  RUN_ID=$(gh run list \
+    --workflow=release.yml --event push --commit "$COMMIT" \
+    --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+  [ -n "$RUN_ID" ] && break
+  sleep 2
+done
+[ -z "$RUN_ID" ] && {
+  echo "ERROR: no release workflow run appeared for $COMMIT within 60s" >&2
+  exit 1
+}
+
 gh run watch "$RUN_ID" --exit-status
 ```
 
