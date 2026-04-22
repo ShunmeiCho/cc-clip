@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -122,20 +123,35 @@ func cmdUpdate() {
 		}
 	}
 
+	// Verify the staged binary BEFORE touching the installed binary. If the
+	// archive is corrupt or contains the wrong version, we abort cleanly with
+	// nothing installed. This matches a "trust but verify" contract: the
+	// checksum file says the archive matches a published asset, but nothing
+	// stops a future release-pipeline bug from publishing a mislabeled file.
+	stagedVersion, err := runVersionCommand(stagedBinary)
+	if err != nil {
+		log.Fatalf("staged binary from archive failed to run --version: %v\nthe archive may be corrupt for this platform (%s/%s)", err, runtime.GOOS, runtime.GOARCH)
+	}
+	if !stagedVersionMatches(stagedVersion, target) {
+		log.Fatalf("staged binary reports %q but target is %s; refusing to install (archive mislabeled?)\nnothing has been changed on disk.", stagedVersion, target)
+	}
+	fmt.Printf("staged binary verified: %s\n", stagedVersion)
+
 	backup := selfPath + ".bak"
 	if err := os.Rename(selfPath, backup); err != nil {
 		log.Fatalf("failed to back up current binary: %v", err)
 	}
-	rollback := func() {
+	restoreBinary := func() {
+		_ = os.Remove(selfPath)
 		_ = os.Rename(backup, selfPath)
 	}
 
 	if err := renameAtomic(stagedBinary, selfPath); err != nil {
-		rollback()
+		restoreBinary()
 		log.Fatalf("failed to install new binary (rolled back): %v", err)
 	}
 	if err := os.Chmod(selfPath, 0o755); err != nil {
-		rollback()
+		restoreBinary()
 		log.Fatalf("failed to chmod new binary (rolled back): %v", err)
 	}
 
@@ -143,18 +159,51 @@ func cmdUpdate() {
 
 	serviceWasRunning := restartDaemon(selfPath)
 
-	installedTag, verifyErr := runVersionCommand(selfPath)
+	// Post-install re-verify. If the service restarted to a different binary
+	// (for example because launchd picked up a path different from selfPath)
+	// or if the binary we just copied refuses to exec, undo the swap so the
+	// user is left with the working old version and a loud error, not a
+	// half-broken upgrade.
+	installedVersion, verifyErr := runVersionCommand(selfPath)
 	if verifyErr != nil {
-		fmt.Printf("warning: could not verify installed version: %v\n", verifyErr)
-	} else if installedTag != target && !strings.HasSuffix(installedTag, strings.TrimPrefix(target, "v")) {
-		fmt.Printf("warning: installed binary reports %q, expected %s\n", installedTag, target)
-	} else {
-		fmt.Printf("verified: %s\n", installedTag)
+		rollbackAfterInstall(selfPath, backup)
+		log.Fatalf("post-install: installed binary failed to run (%v); rolled back to previous version.\ncheck %s for the archive you were trying to install.", verifyErr, backup)
 	}
+	if !stagedVersionMatches(installedVersion, target) {
+		rollbackAfterInstall(selfPath, backup)
+		log.Fatalf("post-install: installed binary reports %q, expected %s; rolled back.", installedVersion, target)
+	}
+	fmt.Printf("verified: %s\n", installedVersion)
 
 	_ = os.Remove(backup)
 
 	printPostUpdateReminders(target, selfPath, serviceWasRunning)
+}
+
+// stagedVersionMatches compares `cc-clip --version` output (e.g. "cc-clip 0.6.1")
+// with a release tag (e.g. "v0.6.1"). The ldflags version baked into the
+// binary carries no "v" prefix, so we normalize both sides before comparing.
+func stagedVersionMatches(reported, targetTag string) bool {
+	r := strings.TrimSpace(reported)
+	r = strings.TrimPrefix(r, "cc-clip ")
+	r = strings.TrimPrefix(r, "v")
+	t := strings.TrimPrefix(strings.TrimSpace(targetTag), "v")
+	return r == t && r != ""
+}
+
+// rollbackAfterInstall restores the backed-up binary after a failed
+// post-install verification. Also re-registers the launchd plist so the
+// service points back at the rolled-back binary.
+func rollbackAfterInstall(selfPath, backup string) {
+	_ = os.Remove(selfPath)
+	_ = os.Rename(backup, selfPath)
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	if running, err := service.Status(); err == nil && running {
+		_ = service.Uninstall()
+		_ = service.Install(selfPath, updateDaemonPort)
+	}
 }
 
 func parseUpdateFlags(args []string) updateOptions {
@@ -192,7 +241,20 @@ func resolveSelfPath() (string, error) {
 }
 
 // normalizeVersion canonicalizes a version string into "vX.Y.Z" form, or
-// returns "" for unknown versions like "dev" or a git-describe SHA.
+// returns "" for anything that is not a clean release tag.
+//
+// Things we deliberately return "" for:
+//   - "dev" and empty: obvious non-release builds.
+//   - Bare commit SHAs (no dots).
+//   - `git describe` output between tags: `v0.6.1-1-g4d2038b`. These indicate
+//     a dev binary built off an untagged commit; treating them as "already at
+//     v0.6.1" would mask actual upgrades.
+//   - Dirty-tree markers (`-dirty` suffix). Same reason.
+//
+// Things we keep (so real release tags normalize cleanly):
+//   - Plain versions like `v0.6.1`, `0.6.1`.
+//   - Prerelease versions like `v0.6.1-rc1`, `v0.6.1-beta.2`.
+//   - Build metadata like `v0.6.1+build.7`.
 func normalizeVersion(v string) string {
 	v = strings.TrimSpace(v)
 	if v == "" || v == "dev" {
@@ -200,14 +262,24 @@ func normalizeVersion(v string) string {
 	}
 	v = strings.TrimPrefix(v, "cc-clip ")
 	v = strings.TrimPrefix(v, "v")
-	// Reject anything that doesn't look like semver (rejects "abc123" SHAs).
 	if !looksLikeSemver(v) {
 		return ""
 	}
 	return "v" + v
 }
 
+// gitDescribeMarker matches the "-<commits>-g<sha>" suffix that
+// `git describe --tags --always --dirty` appends between release tags.
+// The sha portion is at least 4 hex chars in practice.
+var gitDescribeMarker = regexp.MustCompile(`-\d+-g[0-9a-f]{4,}`)
+
 func looksLikeSemver(v string) bool {
+	if gitDescribeMarker.MatchString(v) {
+		return false
+	}
+	if strings.HasSuffix(v, "-dirty") {
+		return false
+	}
 	parts := strings.SplitN(v, ".", 4)
 	if len(parts) < 3 {
 		return false
@@ -322,13 +394,50 @@ func parseLsofPID(raw string) (int, error) {
 	return 0, nil
 }
 
+// readProcessBinary returns the absolute path to the binary executing the
+// given pid, or "" if we cannot resolve one on this platform.
+//
+// We deliberately do NOT use `ps -o comm=`: on Linux that returns just the
+// basename (often truncated to 15 chars), and on macOS it also truncates.
+// Comparing a truncated basename against an absolute path would flag every
+// listener as a conflict even when it IS the binary we are about to replace.
+// When the OS cannot give us an absolute path, we return "" so the caller
+// treats it as "conflict unknown, skip" rather than a hard abort.
 func readProcessBinary(pid int) (string, error) {
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("ps failed for pid %d: %w", pid, err)
+	switch runtime.GOOS {
+	case "linux":
+		// /proc/<pid>/exe is a symlink to the absolute executable path.
+		target, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		if err != nil {
+			return "", fmt.Errorf("read /proc/%d/exe: %w", pid, err)
+		}
+		if !filepath.IsAbs(target) {
+			return "", nil
+		}
+		return target, nil
+	case "darwin":
+		// `lsof -p <pid> -a -d txt -Fn` lists the text-segment files
+		// (executable + libraries). The first absolute path is the
+		// executable itself.
+		cmd := exec.Command("lsof", "-p", strconv.Itoa(pid), "-a", "-d", "txt", "-Fn")
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("lsof -p %d: %w", pid, err)
+		}
+		return parseLsofTextPath(string(out)), nil
 	}
-	return strings.TrimSpace(string(out)), nil
+	return "", nil
+}
+
+// parseLsofTextPath scans output from `lsof -Fn -d txt` and returns the
+// first absolute path. An "n" record in -F output looks like "n/abs/path".
+func parseLsofTextPath(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		if len(line) > 1 && line[0] == 'n' && line[1] == '/' {
+			return line[1:]
+		}
+	}
+	return ""
 }
 
 func samePath(a, b string) bool {
