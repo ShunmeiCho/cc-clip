@@ -163,27 +163,31 @@ func TestShQuoteNeutralizesShellMetacharacters(t *testing.T) {
 	}
 }
 
-// TestSafeScpLocalPathGuardsLeadingDash ensures paths like "-foo.png" cannot
-// be misinterpreted as scp options on versions that mishandle "--".
-func TestSafeScpLocalPathGuardsLeadingDash(t *testing.T) {
+// TestSSHUploadRemoteCmdQuotesPath pins the shape of the remote command used
+// by sshUploadNoForward. Uploads now stream via `ssh host 'cat > <quoted>'`
+// instead of `scp host:<path>`, because OpenSSH 9.0+ scp defaults to the SFTP
+// subsystem where shell-quoting the remote side is interpreted literally and
+// breaks transfer. This test ensures the remote path always lands inside a
+// shell-quoted redirection target and that shell metacharacters are neutralized
+// by shQuote rather than reaching the remote shell verbatim.
+func TestSSHUploadRemoteCmdQuotesPath(t *testing.T) {
 	cases := []struct {
-		name  string
-		input string
-		want  string
+		name       string
+		remotePath string
+		want       string
 	}{
-		{"plain absolute", "/tmp/foo.png", "/tmp/foo.png"},
-		{"plain relative", "foo.png", "foo.png"},
-		{"dotted relative", "./foo.png", "./foo.png"},
-		{"windows drive", `C:\test.png`, `C:\test.png`},
-		{"leading dash", "-foo.png", "./-foo.png"},
-		{"leading double dash", "--rf", "./--rf"},
-		{"leading dash-o", "-oBatchMode=no", "./-oBatchMode=no"},
+		{"plain", "/tmp/foo.png", "cat > '/tmp/foo.png'"},
+		{"with space", "/tmp/my file.png", "cat > '/tmp/my file.png'"},
+		{"semicolon injection", "/tmp/a; rm -rf /.png", "cat > '/tmp/a; rm -rf /.png'"},
+		{"command substitution", "/tmp/$(id).png", "cat > '/tmp/$(id).png'"},
+		{"single quote", "/tmp/foo's.png", `cat > '/tmp/foo'\''s.png'`},
+		{"backtick", "/tmp/`date`.png", "cat > '/tmp/`date`.png'"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := safeScpLocalPath(tc.input)
+			got := sshUploadRemoteCmd(tc.remotePath)
 			if got != tc.want {
-				t.Fatalf("safeScpLocalPath(%q) = %q, want %q", tc.input, got, tc.want)
+				t.Fatalf("sshUploadRemoteCmd(%q) = %q, want %q", tc.remotePath, got, tc.want)
 			}
 		})
 	}

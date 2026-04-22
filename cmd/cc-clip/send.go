@@ -244,7 +244,7 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 		return nil, err
 	}
 
-	if err := scpUploadNoForward(host, localPath, remotePath); err != nil {
+	if err := sshUploadNoForward(host, localPath, remotePath); err != nil {
 		os.Remove(localPath)
 		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
 	}
@@ -288,7 +288,7 @@ func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
 	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
 		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
 	}
-	if err := scpUploadNoForward(host, localFile, remotePath); err != nil {
+	if err := sshUploadNoForward(host, localFile, remotePath); err != nil {
 		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
 	}
 
@@ -364,29 +364,35 @@ func remoteExecNoForward(host, cmd string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func scpUploadNoForward(host, localPath, remotePath string) error {
-	// scp's remote side is expanded by a remote shell, so remotePath must
-	// be shell-quoted to resist metachars (spaces, semicolons, $(...) etc.)
-	// in remoteDir or filename. "--" stops scp from interpreting a
-	// leading-dash local path as an option; safeScpLocalPath additionally
-	// prefixes "./" because older scp versions handle "--" inconsistently.
-	safeLocal := safeScpLocalPath(localPath)
-	target := fmt.Sprintf("%s:%s", host, shQuote(remotePath))
-	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", "--", safeLocal, target)
+func sshUploadNoForward(host, localPath, remotePath string) error {
+	// Stream the local file to the remote via `ssh host 'cat > <quoted>'`
+	// instead of scp. OpenSSH 9.0+ defaults `scp` to the SFTP subsystem,
+	// where the remote path is treated as an SFTP PATH rather than being
+	// expanded by a remote shell — shell-quoting `host:'remote path'` in
+	// that mode is interpreted literally and breaks uploads. Using ssh
+	// redirection keeps quoting semantics stable across versions and
+	// removes the leading-dash local-path hazard entirely (local path is
+	// no longer an argv positional to scp).
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer f.Close()
+
+	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, sshUploadRemoteCmd(remotePath))
+	c.Stdin = f
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("scp failed: %s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("ssh upload failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-// safeScpLocalPath defensively prefixes "./" for paths starting with "-"
-// so scp never parses them as flags on versions that mishandle "--".
-func safeScpLocalPath(p string) string {
-	if strings.HasPrefix(p, "-") {
-		return "./" + p
-	}
-	return p
+// sshUploadRemoteCmd returns the remote shell command used by
+// sshUploadNoForward. Extracted so tests can pin the exact quoting without
+// spawning a real ssh process.
+func sshUploadRemoteCmd(remotePath string) string {
+	return "cat > " + shQuote(remotePath)
 }
 
 func shQuote(s string) string {
