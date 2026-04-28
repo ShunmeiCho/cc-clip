@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"text/tabwriter"
@@ -36,7 +37,7 @@ func cmdHosts() {
 	}
 }
 
-func hostsUsage(w *os.File) {
+func hostsUsage(w io.Writer) {
 	fmt.Fprintln(w, `usage: cc-clip hosts <subcommand>
 
 Subcommands:
@@ -161,27 +162,13 @@ func registryVersionOrEmpty() string {
 }
 
 // printPerHostRedeployReminders prints one `cc-clip connect ...` line per
-// known host, with the correct `--codex` flag based on what the registry
-// remembers. Returns true if anything was printed, so the caller can fall
-// back to the generic reminder when the registry is empty or unreadable.
-//
-// We never fail here: the update has already succeeded by the time this
-// runs, and a registry IO issue should never block the user from seeing a
-// useful reminder. Worst case, we return false and the caller prints the
-// generic fallback.
+// known host. Returns false (and writes nothing) on registry IO error or
+// empty registry so the caller can fall back to the generic reminder. Never
+// fails the update — the redeploy reminder is best-effort guidance.
 func printPerHostRedeployReminders() bool {
 	reg, err := hosts.Load()
-	if err != nil || len(reg.Hosts) == 0 {
+	if err != nil {
 		return false
 	}
-	entries := reg.Sorted()
-	fmt.Println("* Redeploy to every remote host you use with cc-clip:")
-	for _, e := range entries {
-		flags := "--force"
-		if e.Codex {
-			flags = "--codex --force"
-		}
-		fmt.Printf("    cc-clip connect %s %s\n", e.Host, flags)
-	}
-	return true
+	return reg.FormatRedeployReminder(os.Stdout)
 }

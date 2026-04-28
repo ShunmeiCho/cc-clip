@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -195,6 +196,37 @@ func TestSaveFilePermissions(t *testing.T) {
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Errorf("registry mode = %04o, want 0600", mode)
+	}
+}
+
+func TestFormatRedeployReminderEmpty(t *testing.T) {
+	r := &Registry{Hosts: map[string]Entry{}}
+	var buf bytes.Buffer
+	if r.FormatRedeployReminder(&buf) {
+		t.Error("empty registry returned true; expected false")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("empty registry wrote %q; expected nothing", buf.String())
+	}
+}
+
+func TestFormatRedeployReminderMixed(t *testing.T) {
+	r := &Registry{Hosts: map[string]Entry{}}
+	r.UpsertConnect("zeta", "0.6.2", false)
+	r.UpsertConnect("alpha", "0.6.2", true)
+	r.UpsertConnect("mid", "0.6.2", false)
+
+	var buf bytes.Buffer
+	if !r.FormatRedeployReminder(&buf) {
+		t.Fatal("non-empty registry returned false")
+	}
+	got := buf.String()
+	want := "* Redeploy to every remote host you use with cc-clip:\n" +
+		"    cc-clip connect alpha --codex --force\n" +
+		"    cc-clip connect mid --force\n" +
+		"    cc-clip connect zeta --force\n"
+	if got != want {
+		t.Errorf("reminder output mismatch\ngot:\n%q\nwant:\n%q", got, want)
 	}
 }
 

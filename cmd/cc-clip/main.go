@@ -576,6 +576,12 @@ func runConnect(opts connectOpts) {
 		}
 
 		connectVerifyTunnel(session, port, host)
+
+		// Record this host even on the --token-only path so `hosts list` and
+		// per-host update reminders reflect the most recent successful sync.
+		// Codex flag is sticky in the registry, so passing opts.codex here
+		// (which is false for plain --token-only) won't downgrade an entry.
+		recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
 		return
 	}
 
@@ -1029,11 +1035,6 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 
 	fmt.Println()
 	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard.")
-
-	// Record this host in the registry AFTER every setup step succeeded.
-	// cmdSetup uses hasFlag("codex") because the flag was parsed inline
-	// earlier in this function. Codex is sticky inside the registry.
-	recordHostConnect(host, registryVersionOrEmpty(), hasFlag("codex"))
 }
 
 // prepareBinaryLocal resolves the local binary path without performing remote operations.

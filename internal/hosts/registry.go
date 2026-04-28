@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,10 +52,20 @@ type Registry struct {
 	Hosts map[string]Entry `json:"hosts"`
 }
 
-// defaultPath resolves the registry file for the current user. Overridden in
-// tests via the `RegistryPathOverride` helper below.
+// RegistryPathOverride redirects Path() to a test-controlled location.
+// Tests set this in TestMain or per-test setup; production code leaves it "".
 var RegistryPathOverride string
 
+// NamedEntry is what callers iterate when they need both the host key
+// and the per-host state in stable order. Returned by (*Registry).Sorted().
+type NamedEntry struct {
+	Host string
+	Entry
+}
+
+// Path returns the path to the registry file for the current user, or the
+// override path if set. Returns an error only when the home directory cannot
+// be resolved (e.g. HOME unset and no passwd entry).
 func Path() (string, error) {
 	if RegistryPathOverride != "" {
 		return RegistryPathOverride, nil
@@ -185,11 +196,6 @@ func (r *Registry) Forget(host string) bool {
 }
 
 // Sorted returns host entries ordered by host name so CLI output is stable.
-type NamedEntry struct {
-	Host string
-	Entry
-}
-
 func (r *Registry) Sorted() []NamedEntry {
 	names := make([]string, 0, len(r.Hosts))
 	for h := range r.Hosts {
@@ -201,4 +207,23 @@ func (r *Registry) Sorted() []NamedEntry {
 		out[i] = NamedEntry{Host: h, Entry: r.Hosts[h]}
 	}
 	return out
+}
+
+// FormatRedeployReminder writes a per-host `cc-clip connect` command list to w
+// for use after a self-update. Returns false (and writes nothing) when the
+// registry is empty so the caller can fall back to a generic reminder.
+func (r *Registry) FormatRedeployReminder(w io.Writer) bool {
+	entries := r.Sorted()
+	if len(entries) == 0 {
+		return false
+	}
+	fmt.Fprintln(w, "* Redeploy to every remote host you use with cc-clip:")
+	for _, e := range entries {
+		flags := "--force"
+		if e.Codex {
+			flags = "--codex --force"
+		}
+		fmt.Fprintf(w, "    cc-clip connect %s %s\n", e.Host, flags)
+	}
+	return true
 }
