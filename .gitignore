@@ -1,7 +1,9 @@
 # Go
 .gocache/
 /cc-clip
+/cc-clip-dev
 *.exe
+*.test
 
 # Go telemetry / sandbox artifacts
 .home/
@@ -14,3 +16,12 @@
 .vscode/
 dist/
 AGENTS.md
+
+# Local tool artifacts (per-machine, not part of the repo)
+.claude/
+.playwright-mcp/
+
+# Local planning scratch files (use docs/ for anything worth keeping)
+/findings.md
+/progress.md
+/task_plan.md
