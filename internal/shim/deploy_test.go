@@ -512,3 +512,42 @@ func TestNeedsCodexSetup(t *testing.T) {
 		})
 	}
 }
+
+func TestDeployState_ClaudeWrapperRoundtrip(t *testing.T) {
+	in := &DeployState{
+		BinaryHash:    "sha256:abc",
+		BinaryVersion: "v0.7.1-test",
+		ShimInstalled: true,
+		ShimTarget:    "xclip",
+		ClaudeWrapper: &ClaudeWrapperState{
+			Installed:    true,
+			OriginKind:   "symlink",
+			OriginTarget: "/home/u/.local/share/claude/versions/2.1.132",
+		},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out DeployState
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ClaudeWrapper == nil {
+		t.Fatal("ClaudeWrapper missing after roundtrip")
+	}
+	if out.ClaudeWrapper.OriginKind != "symlink" {
+		t.Fatalf("OriginKind: got %q, want symlink", out.ClaudeWrapper.OriginKind)
+	}
+}
+
+func TestDeployState_ClaudeWrapperOmitemptyWhenNil(t *testing.T) {
+	in := &DeployState{BinaryHash: "x"}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "claude_wrapper") {
+		t.Fatalf("nil ClaudeWrapper should be omitted, got: %s", data)
+	}
+}

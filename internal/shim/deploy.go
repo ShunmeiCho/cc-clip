@@ -26,16 +26,27 @@ type NotifyDeployState struct {
 	HealthVerified bool `json:"health_verified"`
 }
 
+// ClaudeWrapperState records what InstallRemoteClaudeWrapper replaced at
+// ~/.local/bin/claude. Used by uninstall and future doctor commands; the
+// wrapper bash script itself does NOT read this — it only checks file
+// existence/executability of the sidecar.
+type ClaudeWrapperState struct {
+	Installed    bool   `json:"installed"`
+	OriginKind   string `json:"origin_kind"`             // "none" | "regular" | "symlink"
+	OriginTarget string `json:"origin_target,omitempty"` // resolved path when OriginKind=="symlink"
+}
+
 // DeployState represents the state of a cc-clip deployment on a remote host.
 // It is stored as ~/.cache/cc-clip/deploy.json on the remote.
 type DeployState struct {
-	BinaryHash    string             `json:"binary_hash"`
-	BinaryVersion string             `json:"binary_version"`
-	ShimInstalled bool               `json:"shim_installed"`
-	ShimTarget    string             `json:"shim_target"`
-	PathFixed     bool               `json:"path_fixed"`
-	Notify        *NotifyDeployState `json:"notify,omitempty"`
-	Codex         *CodexDeployState  `json:"codex,omitempty"`
+	BinaryHash    string              `json:"binary_hash"`
+	BinaryVersion string              `json:"binary_version"`
+	ShimInstalled bool                `json:"shim_installed"`
+	ShimTarget    string              `json:"shim_target"`
+	PathFixed     bool                `json:"path_fixed"`
+	Notify        *NotifyDeployState  `json:"notify,omitempty"`
+	Codex         *CodexDeployState   `json:"codex,omitempty"`
+	ClaudeWrapper *ClaudeWrapperState `json:"claude_wrapper,omitempty"`
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
