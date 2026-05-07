@@ -5,19 +5,27 @@ import "fmt"
 const claudeWrapperTemplate = `#!/usr/bin/env bash
 # cc-clip claude wrapper — auto-inject notification hooks
 # Installed by: cc-clip connect
-# Remove with:  rm ~/.local/bin/claude
+# Remove with:  cc-clip uninstall --host <this-host>
 
-# Find the real claude binary (skip our own directory)
+# Find the real claude binary.
+# Priority 1: ~/.local/bin/claude.cc-clip-real (the sidecar set by install).
+# Priority 2: walk $PATH skipping our own directory (legacy install fallback).
 _REAL_CLAUDE=""
 _SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-IFS=: read -ra _PATH_DIRS <<< "$PATH"
-for _dir in "${_PATH_DIRS[@]}"; do
-    [ "$_dir" = "$_SELF_DIR" ] && continue
-    [ -x "$_dir/claude" ] && _REAL_CLAUDE="$_dir/claude" && break
-done
+_SIDECAR="$_SELF_DIR/claude.cc-clip-real"
+
+if [ -x "$_SIDECAR" ]; then
+    _REAL_CLAUDE="$_SIDECAR"
+else
+    IFS=: read -ra _PATH_DIRS <<< "$PATH"
+    for _dir in "${_PATH_DIRS[@]}"; do
+        [ "$_dir" = "$_SELF_DIR" ] && continue
+        [ -x "$_dir/claude" ] && _REAL_CLAUDE="$_dir/claude" && break
+    done
+fi
 
 if [ -z "$_REAL_CLAUDE" ]; then
-    echo "cc-clip: real claude binary not found in PATH" >&2
+    echo "cc-clip: real claude binary not found (no sidecar at $_SIDECAR and no claude on PATH outside $_SELF_DIR)" >&2
     exit 1
 fi
 

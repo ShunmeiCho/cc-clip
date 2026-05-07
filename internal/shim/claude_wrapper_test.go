@@ -64,3 +64,28 @@ func TestClaudeWrapperHasShebangAndHeader(t *testing.T) {
 		t.Error("expected header comment")
 	}
 }
+
+func TestClaudeWrapperScript_PrefersSidecar(t *testing.T) {
+	script := ClaudeWrapperScript(18339)
+	if !strings.Contains(script, "claude.cc-clip-real") {
+		t.Fatal("wrapper does not reference sidecar path")
+	}
+	// Sidecar branch must precede PATH-discovery fallback.
+	sidecarIdx := strings.Index(script, "claude.cc-clip-real")
+	pathDiscoveryIdx := strings.Index(script, "_PATH_DIRS")
+	if sidecarIdx == -1 || pathDiscoveryIdx == -1 {
+		t.Fatal("wrapper missing one of: sidecar branch, PATH-discovery fallback")
+	}
+	if sidecarIdx >= pathDiscoveryIdx {
+		t.Fatal("sidecar branch must precede PATH-discovery fallback")
+	}
+}
+
+func TestClaudeWrapperScript_KeepsPathFallback(t *testing.T) {
+	// PATH-discovery must remain for backward compat with legacy installs
+	// that have no sidecar.
+	script := ClaudeWrapperScript(18339)
+	if !strings.Contains(script, "_PATH_DIRS") || !strings.Contains(script, "_SELF_DIR") {
+		t.Fatal("wrapper missing PATH-discovery fallback")
+	}
+}
