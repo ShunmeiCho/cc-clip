@@ -4,11 +4,31 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 )
+
+// SessionExecutor abstracts a remote SSH session for install/uninstall/
+// detect/recover testing. *SSHSession satisfies this interface; tests use
+// a localSession stub that runs commands locally against a temp $HOME.
+type SessionExecutor interface {
+	// Exec runs a remote shell command and returns STDOUT only.
+	// Stderr is intentionally discarded to match the existing semantics of
+	// (*SSHSession).Exec — SSH multiplex chatter (control socket noise,
+	// mux_client_forward, etc.) lands on stderr and would otherwise pollute
+	// callers that grep the output for content markers.
+	Exec(cmd string) (stdout string, err error)
+
+	// ExecWithStdin runs a remote shell command with the provided stdin
+	// and returns COMBINED stdout+stderr. Combined output is appropriate
+	// here because this method is used during install/uninstall where
+	// stderr diagnostics (e.g. "mv: cannot create regular file: Permission
+	// denied") are required for actionable error messages.
+	ExecWithStdin(cmd string, stdin io.Reader) (combinedOutput string, err error)
+}
 
 // SSHSession manages a persistent SSH ControlMaster connection for reuse
 // across multiple remote operations, avoiding repeated passphrase prompts.
@@ -122,6 +142,17 @@ func (s *SSHSession) Upload(localPath, remotePath string) error {
 	}
 
 	return nil
+}
+
+// ExecWithStdin runs a remote shell command with the provided stdin via
+// the SSH master connection. Returns combined stdout+stderr output for
+// install/uninstall error diagnostics.
+func (s *SSHSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
+	args := append(s.connArgs(), s.host, cmd)
+	c := exec.Command("ssh", args...)
+	c.Stdin = stdin
+	out, err := c.CombinedOutput()
+	return string(out), err
 }
 
 // Close terminates the SSH master connection.

@@ -231,3 +231,8 @@ func parseUnameOutput(output string) (string, string, error) {
 
 	return goos, goarch, nil
 }
+
+func TestSessionExecutorInterface_StaticConformance(t *testing.T) {
+	// Compile-time assertion: *SSHSession implements SessionExecutor.
+	var _ SessionExecutor = (*SSHSession)(nil)
+}
