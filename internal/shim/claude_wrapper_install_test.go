@@ -1,6 +1,7 @@
 package shim
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -370,5 +371,87 @@ func TestInstall_SymlinkOrigin_NativeInstallerLayout(t *testing.T) {
 	}
 	if wrapperInfo.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("claude should be a regular file after install (the wrapper)")
+	}
+}
+
+// rollbackInjectingSession wraps localSession and rewrites the install
+// command to force the final mv to fail, simulating a filesystem error
+// after the staging mv has already moved origin to the sidecar.
+type rollbackInjectingSession struct {
+	*localSession
+	binDir   string
+	injected bool
+}
+
+func (r *rollbackInjectingSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
+	if !r.injected && strings.Contains(cmd, "claude.cc-clip-real") {
+		r.injected = true
+		// Replace the final mv guard with a forced failure so the rollback
+		// branch (mv sidecar back to claude) is exercised.
+		cmd = strings.Replace(cmd,
+			`if ! mv "$tmp" "$HOME/.local/bin/claude"; then`,
+			`if ! false; then`, 1)
+	}
+	return r.localSession.ExecWithStdin(cmd, stdin)
+}
+
+func TestInstall_RollbackOnFinalMvFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based install path is Linux-only")
+	}
+	home, binDir := setupFakeHome(t)
+	originalContent := []byte("ORIGINAL-CLAUDE-BINARY-MUST-BE-RESTORED")
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), originalContent, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &rollbackInjectingSession{localSession: &localSession{home: home}, binDir: binDir}
+	err := InstallRemoteClaudeWrapper(s, 18339)
+	if err == nil {
+		t.Fatal("expected install to fail (we injected final-mv failure)")
+	}
+
+	// Origin must be restored at ~/.local/bin/claude.
+	restored, err := os.ReadFile(filepath.Join(binDir, "claude"))
+	if err != nil {
+		t.Fatalf("origin not restored: %v", err)
+	}
+	if string(restored) != string(originalContent) {
+		t.Fatal("origin content corrupted; rollback failed")
+	}
+
+	// Sidecar must NOT exist after rollback.
+	if _, err := os.Lstat(filepath.Join(binDir, "claude.cc-clip-real")); !os.IsNotExist(err) {
+		t.Fatal("sidecar lingered after rollback")
+	}
+}
+
+func TestInstall_MktempDoesNotFollowSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based install path is Linux-only")
+	}
+	home, binDir := setupFakeHome(t)
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("regular origin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plant a sensitive file outside binDir; install must not touch it.
+	// mktemp uses XXXXXX (random suffix), so collision probability is ~1/(62^6).
+	// This test confirms install succeeds and the sensitive file is unchanged,
+	// verifying mktemp is in use rather than a predictable name like $$.
+	sensitive := filepath.Join(home, "sensitive-file.txt")
+	if err := os.WriteFile(sensitive, []byte("DO NOT TOUCH"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &localSession{home: home}
+	if err := InstallRemoteClaudeWrapper(s, 18339); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Sensitive file must be unchanged.
+	pre, _ := os.ReadFile(sensitive)
+	if string(pre) != "DO NOT TOUCH" {
+		t.Fatal("sensitive file was modified — mktemp may not be in use")
 	}
 }
