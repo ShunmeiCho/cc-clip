@@ -294,9 +294,6 @@ func InstallRemoteHookScript(session *SSHSession, port int) error {
 //   - The wrapper script is written via mktemp + chmod + atomic mv.
 //   - On re-install over an existing cc-clip wrapper, the wrapper file is
 //     replaced atomically; the existing sidecar is left untouched.
-//
-// This task implements only the "none" branch; other branches return a
-// placeholder error so subsequent tasks (T7-T9) can fill them in.
 func InstallRemoteClaudeWrapper(s SessionExecutor, port int) error {
 	kind, err := classifyClaudeBin(s)
 	if err != nil {
@@ -305,6 +302,8 @@ func InstallRemoteClaudeWrapper(s SessionExecutor, port int) error {
 	switch kind {
 	case claudeBinNone:
 		return installWrapperNoOrigin(s, port)
+	case claudeBinCcWrapper:
+		return installWrapperOverwriteSelf(s, port)
 	case claudeBinRegular, claudeBinSymlink:
 		return installWrapperWithSidecar(s, port)
 	default:
@@ -366,6 +365,26 @@ trap - EXIT  # tmp now consumed by the mv`
 	outErr, err := s.ExecWithStdin(cmd, strings.NewReader(script))
 	if err != nil {
 		return fmt.Errorf("install (with-sidecar): %s: %w", strings.TrimSpace(outErr), err)
+	}
+	return nil
+}
+
+// installWrapperOverwriteSelf replaces our own previous wrapper at
+// ~/.local/bin/claude via mktemp + atomic mv. The sidecar is left untouched
+// because we already own the claude path (it's our wrapper, not user state).
+func installWrapperOverwriteSelf(s SessionExecutor, port int) error {
+	script := ClaudeWrapperScript(port)
+	cmd := `set -e
+mkdir -p "$HOME/.local/bin"
+tmp=$(mktemp "$HOME/.local/bin/.claude.cc-clip-tmp.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp"
+chmod +x "$tmp"
+mv "$tmp" "$HOME/.local/bin/claude"
+trap - EXIT`
+	out, err := s.ExecWithStdin(cmd, strings.NewReader(script))
+	if err != nil {
+		return fmt.Errorf("install (cc_wrapper overwrite): %s: %w", strings.TrimSpace(out), err)
 	}
 	return nil
 }

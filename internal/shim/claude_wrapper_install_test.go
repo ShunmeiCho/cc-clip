@@ -182,6 +182,49 @@ func TestInstall_NoPriorInstall(t *testing.T) {
 	}
 }
 
+func TestInstall_ReinstallOverCcWrapper(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based install path is Linux-only")
+	}
+	home, binDir := setupFakeHome(t)
+
+	// Existing cc-clip wrapper at claude (port 18339).
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(ClaudeWrapperScript(18339)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Existing sidecar from prior install.
+	sidecarContent := []byte("PRIOR-SIDECAR-CONTENT")
+	if err := os.WriteFile(filepath.Join(binDir, "claude.cc-clip-real"), sidecarContent, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &localSession{home: home}
+	if err := InstallRemoteClaudeWrapper(s, 19999); err != nil {
+		t.Fatalf("re-install: %v", err)
+	}
+
+	// Wrapper must be updated (port baked in is 19999 now).
+	data, err := os.ReadFile(filepath.Join(binDir, "claude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "19999") {
+		t.Fatal("wrapper port was not updated")
+	}
+	if strings.Contains(string(data), "18339") {
+		t.Fatal("wrapper still contains old port")
+	}
+
+	// Sidecar must be untouched (we don't displace re-install over our own wrapper).
+	sidecarPost, err := os.ReadFile(filepath.Join(binDir, "claude.cc-clip-real"))
+	if err != nil {
+		t.Fatalf("sidecar missing after re-install: %v", err)
+	}
+	if string(sidecarPost) != string(sidecarContent) {
+		t.Fatal("sidecar was modified during re-install (must be untouched)")
+	}
+}
+
 func TestInstall_SymlinkOrigin_NativeInstallerLayout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink semantics differ on Windows")
