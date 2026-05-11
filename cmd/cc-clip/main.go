@@ -1030,14 +1030,24 @@ func claudeHookConfigJSON() string {
   "hooks": {
     "Notification": [
       {
-        "type": "command",
-        "command": "cc-clip-hook"
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-clip-hook"
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "type": "command",
-        "command": "cc-clip-hook"
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-clip-hook"
+          }
+        ]
       }
     ]
   }

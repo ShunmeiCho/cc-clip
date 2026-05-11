@@ -17,6 +17,15 @@ CC_CLIP_PROBE_TIMEOUT_MS="${CC_CLIP_PROBE_TIMEOUT_MS:-500}"
 CC_CLIP_FETCH_TIMEOUT_MS="${CC_CLIP_FETCH_TIMEOUT_MS:-5000}"
 CC_CLIP_TOTAL_TIMEOUT_MS="${CC_CLIP_TOTAL_TIMEOUT_MS:-8000}"
 REAL_XCLIP="%s"
+_CC_CLIP_SELF_PATH="${BASH_SOURCE[0]:-$0}"
+case "$_CC_CLIP_SELF_PATH" in
+    */*) _CC_CLIP_SELF_DIR="${_CC_CLIP_SELF_PATH%%/*}" ;;
+    *) _CC_CLIP_SELF_DIR="$(pwd)" ;;
+esac
+if ! _CC_CLIP_SELF_DIR="$(cd "$_CC_CLIP_SELF_DIR" 2>/dev/null && pwd)"; then
+    _CC_CLIP_SELF_DIR="$(pwd)"
+fi
+_CC_CLIP_SELF_FILE="$_CC_CLIP_SELF_DIR/${_CC_CLIP_SELF_PATH##*/}"
 
 _cc_clip_log() {
     if [ "${CC_CLIP_DEBUG:-}" = "1" ]; then
@@ -24,9 +33,47 @@ _cc_clip_log() {
     fi
 }
 
+_cc_clip_resolve_real_xclip() {
+    if [ -n "${REAL_XCLIP:-}" ] && [ -x "$REAL_XCLIP" ]; then
+        local real_parent real_name real_dir real_path
+        case "$REAL_XCLIP" in
+            */*) real_parent="${REAL_XCLIP%%/*}"; real_name="${REAL_XCLIP##*/}" ;;
+            *) real_parent="."; real_name="$REAL_XCLIP" ;;
+        esac
+        real_dir="$(cd "$real_parent" 2>/dev/null && pwd)" || real_dir=""
+        real_path="$real_dir/$real_name"
+        if [ "$real_path" != "$_CC_CLIP_SELF_FILE" ]; then
+            printf '%%s\n' "$REAL_XCLIP"
+            return 0
+        fi
+    fi
+
+    local old_ifs="$IFS"
+    IFS=:
+    local dir
+    for dir in $PATH; do
+        [ -n "$dir" ] || dir="."
+        local abs_dir
+        abs_dir="$(cd "$dir" 2>/dev/null && pwd)" || continue
+        [ "$abs_dir" = "$_CC_CLIP_SELF_DIR" ] && continue
+        if [ -x "$abs_dir/xclip" ] && [ ! -d "$abs_dir/xclip" ]; then
+            IFS="$old_ifs"
+            printf '%%s\n' "$abs_dir/xclip"
+            return 0
+        fi
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
 _cc_clip_fallback() {
-    _cc_clip_log "falling back to real xclip: $REAL_XCLIP $*"
-    exec "$REAL_XCLIP" "$@"
+    local real_xclip
+    if ! real_xclip="$(_cc_clip_resolve_real_xclip)"; then
+        echo "cc-clip-shim: real xclip binary not found; install xclip or remove the cc-clip shim" >&2
+        exit 127
+    fi
+    _cc_clip_log "falling back to real xclip: $real_xclip $*"
+    exec "$real_xclip" "$@"
 }
 
 _cc_clip_read_token() {
@@ -168,6 +215,15 @@ CC_CLIP_SESSION_FILE="${CC_CLIP_SESSION_FILE:-${HOME}/.cache/cc-clip/session.id}
 CC_CLIP_PROBE_TIMEOUT_MS="${CC_CLIP_PROBE_TIMEOUT_MS:-500}"
 CC_CLIP_FETCH_TIMEOUT_MS="${CC_CLIP_FETCH_TIMEOUT_MS:-5000}"
 REAL_WL_PASTE="%s"
+_CC_CLIP_SELF_PATH="${BASH_SOURCE[0]:-$0}"
+case "$_CC_CLIP_SELF_PATH" in
+    */*) _CC_CLIP_SELF_DIR="${_CC_CLIP_SELF_PATH%%/*}" ;;
+    *) _CC_CLIP_SELF_DIR="$(pwd)" ;;
+esac
+if ! _CC_CLIP_SELF_DIR="$(cd "$_CC_CLIP_SELF_DIR" 2>/dev/null && pwd)"; then
+    _CC_CLIP_SELF_DIR="$(pwd)"
+fi
+_CC_CLIP_SELF_FILE="$_CC_CLIP_SELF_DIR/${_CC_CLIP_SELF_PATH##*/}"
 
 _cc_clip_log() {
     if [ "${CC_CLIP_DEBUG:-}" = "1" ]; then
@@ -175,9 +231,47 @@ _cc_clip_log() {
     fi
 }
 
+_cc_clip_resolve_real_wl_paste() {
+    if [ -n "${REAL_WL_PASTE:-}" ] && [ -x "$REAL_WL_PASTE" ]; then
+        local real_parent real_name real_dir real_path
+        case "$REAL_WL_PASTE" in
+            */*) real_parent="${REAL_WL_PASTE%%/*}"; real_name="${REAL_WL_PASTE##*/}" ;;
+            *) real_parent="."; real_name="$REAL_WL_PASTE" ;;
+        esac
+        real_dir="$(cd "$real_parent" 2>/dev/null && pwd)" || real_dir=""
+        real_path="$real_dir/$real_name"
+        if [ "$real_path" != "$_CC_CLIP_SELF_FILE" ]; then
+            printf '%%s\n' "$REAL_WL_PASTE"
+            return 0
+        fi
+    fi
+
+    local old_ifs="$IFS"
+    IFS=:
+    local dir
+    for dir in $PATH; do
+        [ -n "$dir" ] || dir="."
+        local abs_dir
+        abs_dir="$(cd "$dir" 2>/dev/null && pwd)" || continue
+        [ "$abs_dir" = "$_CC_CLIP_SELF_DIR" ] && continue
+        if [ -x "$abs_dir/wl-paste" ] && [ ! -d "$abs_dir/wl-paste" ]; then
+            IFS="$old_ifs"
+            printf '%%s\n' "$abs_dir/wl-paste"
+            return 0
+        fi
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
 _cc_clip_fallback() {
-    _cc_clip_log "falling back to real wl-paste: $REAL_WL_PASTE $*"
-    exec "$REAL_WL_PASTE" "$@"
+    local real_wl_paste
+    if ! real_wl_paste="$(_cc_clip_resolve_real_wl_paste)"; then
+        echo "cc-clip-shim: real wl-paste binary not found; install wl-paste or remove the cc-clip shim" >&2
+        exit 127
+    fi
+    _cc_clip_log "falling back to real wl-paste: $real_wl_paste $*"
+    exec "$real_wl_paste" "$@"
 }
 
 _cc_clip_read_token() {

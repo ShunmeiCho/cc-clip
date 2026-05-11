@@ -33,8 +33,18 @@ fi
 if curl -sf --connect-timeout 1 --max-time 2 "http://127.0.0.1:${CC_CLIP_PORT:-%d}/health" >/dev/null 2>&1; then
     exec "$_REAL_CLAUDE" --settings '{
   "hooks": {
-    "Stop": [{"type":"command","command":"cc-clip-hook"}],
-    "Notification": [{"type":"command","command":"cc-clip-hook"}]
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [{"type":"command","command":"cc-clip-hook"}]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [{"type":"command","command":"cc-clip-hook"}]
+      }
+    ]
   }
 }' "$@"
 else

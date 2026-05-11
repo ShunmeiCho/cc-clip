@@ -21,6 +21,9 @@ func TestXclipShimSubstitutesPortAndRealBinary(t *testing.T) {
 	if !strings.Contains(got, `REAL_XCLIP="/usr/bin/xclip"`) {
 		t.Fatalf("real xclip path substitution missing: %q", got)
 	}
+	if !strings.Contains(got, "_cc_clip_resolve_real_xclip") {
+		t.Fatalf("xclip fallback resolver missing: %q", got)
+	}
 }
 
 func TestWlPasteShimSubstitutesPortAndRealBinary(t *testing.T) {
@@ -30,6 +33,9 @@ func TestWlPasteShimSubstitutesPortAndRealBinary(t *testing.T) {
 	}
 	if !strings.Contains(got, `REAL_WL_PASTE="/usr/bin/wl-paste"`) {
 		t.Fatalf("real wl-paste path substitution missing: %q", got)
+	}
+	if !strings.Contains(got, "_cc_clip_resolve_real_wl_paste") {
+		t.Fatalf("wl-paste fallback resolver missing: %q", got)
 	}
 }
 
@@ -232,5 +238,69 @@ func TestShimInterceptsMatchingInvocations(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestXclipShimFallbackResolvesRealBinaryFromPathWhenConfiguredPathIsMissing(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	tmpDir := t.TempDir()
+	realDir := filepath.Join(tmpDir, "real")
+	if err := os.Mkdir(realDir, 0755); err != nil {
+		t.Fatalf("mkdir real dir: %v", err)
+	}
+	sentinel := filepath.Join(tmpDir, "fallback.log")
+	realBin := filepath.Join(realDir, "xclip")
+	fakeScript := "#!/bin/bash\n" +
+		"printf '%s\\n' \"$*\" > \"" + sentinel + "\"\n" +
+		"exit 0\n"
+	if err := os.WriteFile(realBin, []byte(fakeScript), 0755); err != nil {
+		t.Fatalf("write fake real xclip: %v", err)
+	}
+
+	shimPath := filepath.Join(tmpDir, "xclip")
+	if err := os.WriteFile(shimPath, []byte(XclipShim(18339, "/missing/xclip")), 0755); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+
+	cmd := exec.Command("bash", shimPath, "-selection", "primary", "-o")
+	cmd.Env = append(os.Environ(), "PATH="+tmpDir+string(os.PathListSeparator)+realDir)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("shim fallback failed: %v (stdout=%q)", err, string(out))
+	}
+	recorded, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("fallback sentinel missing: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(recorded)), "-selection primary -o"; got != want {
+		t.Fatalf("fallback args mismatch\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+func TestXclipShimFallbackFailsClearlyWhenRealBinaryIsMissing(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	tmpDir := t.TempDir()
+	shimPath := filepath.Join(tmpDir, "xclip")
+	if err := os.WriteFile(shimPath, []byte(XclipShim(18339, "/missing/xclip")), 0755); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+
+	cmd := exec.Command("bash", shimPath, "-selection", "primary", "-o")
+	cmd.Env = append(os.Environ(), "PATH="+tmpDir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected fallback failure when real xclip is absent, got success: %q", string(out))
+	}
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 127 {
+		t.Fatalf("expected exit 127, got err=%v output=%q", err, string(out))
+	}
+	if !strings.Contains(string(out), "real xclip binary not found") {
+		t.Fatalf("expected clear missing-binary error, got %q", string(out))
 	}
 }
