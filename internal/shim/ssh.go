@@ -569,41 +569,114 @@ fi`
 	return nil
 }
 
-// DetectV070Corruption returns true when the remote exhibits the exact
-// filesystem state produced by v0.7.0's buggy InstallRemoteClaudeWrapper:
+// V070State classifies the v0.7.0 wrapper-install bug aftermath into three
+// outcomes that the CLI N0 gate must distinguish:
 //
-//   C1: ~/.local/bin/claude is a symlink.
-//   C2: The symlink target's first 256 bytes contain the cc-clip wrapper marker.
-//   C3: ~/.local/bin/claude.cc-clip-bak exists as a regular file.
-//   C4: That backup is larger than 1 MiB.
-//   C5: That backup is NOT itself a cc-clip wrapper (guards against a double-
-//       install pathology where both target and backup are wrappers).
+//   V070NotCorrupted   : safe to proceed with install; either there is no
+//                        symlink at ~/.local/bin/claude, the symlink target
+//                        is not a cc-clip wrapper, or the target file does
+//                        not exist (broken symlink) — i.e. C1 or C2 failed.
+//   V070Recoverable    : C1..C5 all hold; --auto-recover can migrate the
+//                        backup at ~/.local/bin/claude.cc-clip-bak back to
+//                        the symlink target.
+//   V070NonRecoverable : C1+C2 hold (~/.local/bin/claude IS a symlink whose
+//                        target is a cc-clip wrapper) but the backup file
+//                        is missing, too small, or is itself a wrapper.
+//                        Auto-recovery cannot fix this — the real Native
+//                        Installer binary is lost. Operator must reinstall
+//                        Claude Code via curl https://claude.ai/install.sh
+//                        before re-running cc-clip.
 //
-// All five conditions must be true to return corrupted=true. The check is
-// strictly read-only — nothing is modified.
-func DetectV070Corruption(s SessionExecutor) (bool, error) {
+// The three-state split closes the fail-open gap that existed when the
+// detector only returned a boolean: previously, "target is wrapper but
+// backup is missing" collapsed into the same false branch as "no corruption
+// at all", and the install path proceeded unconditionally, layering a fresh
+// wrapper on top of an already-broken Native Installer layout.
+type V070State int
+
+const (
+	V070NotCorrupted V070State = iota
+	V070Recoverable
+	V070NonRecoverable
+)
+
+// String returns a stable short name suitable for diagnostic output.
+func (s V070State) String() string {
+	switch s {
+	case V070NotCorrupted:
+		return "not_corrupted"
+	case V070Recoverable:
+		return "recoverable"
+	case V070NonRecoverable:
+		return "non_recoverable"
+	default:
+		return "unknown"
+	}
+}
+
+// DetectV070State classifies the remote into one of three v0.7.0 states
+// and returns a stable diag token that pinpoints which condition decided
+// the outcome (useful for logs and tests). The check is strictly read-only.
+//
+// Diag tokens are stable identifiers (not human prose):
+//
+//   not_corrupted_C1_not_symlink     : ~/.local/bin/claude is not a symlink
+//   not_corrupted_C2_target_missing  : symlink target does not exist
+//   not_corrupted_C2_not_wrapper     : symlink target is not a cc-clip wrapper
+//   recoverable                       : all five conditions hold; auto-fix viable
+//   non_recoverable_C3_backup_missing : target IS wrapper but no backup
+//   non_recoverable_C4_backup_too_small : backup < 1 MiB (cannot be real binary)
+//   non_recoverable_C5_backup_is_wrapper : backup is itself a cc-clip wrapper
+//
+// Decision boundary: C1 and C2 are "is the install path actually broken?"
+// gates. If either fails, we are NOT corrupted — proceed with install. Only
+// after C1+C2 hold do C3/C4/C5 distinguish recoverable from non-recoverable.
+func DetectV070State(s SessionExecutor) (V070State, string, error) {
 	out, err := s.Exec(`set -e
 claude="$HOME/.local/bin/claude"
 bak="$HOME/.local/bin/claude.cc-clip-bak"
 # C1: claude is a symlink.
-[ -L "$claude" ] || { echo notcorrupted; exit 0; }
-# C2: target contains wrapper marker.
-target=$(readlink -f "$claude") || { echo notcorrupted; exit 0; }
-[ -f "$target" ] || { echo notcorrupted; exit 0; }
-head -c 256 "$target" 2>/dev/null | grep -qF "# cc-clip claude wrapper" || { echo notcorrupted; exit 0; }
+[ -L "$claude" ] || { echo not_corrupted_C1_not_symlink; exit 0; }
+# C2: target exists and contains wrapper marker.
+target=$(readlink -f "$claude") || { echo not_corrupted_C2_target_missing; exit 0; }
+[ -f "$target" ] || { echo not_corrupted_C2_target_missing; exit 0; }
+head -c 256 "$target" 2>/dev/null | grep -qF "# cc-clip claude wrapper" || { echo not_corrupted_C2_not_wrapper; exit 0; }
+# At this point C1+C2 hold: target IS a wrapper. Any failure below is non-recoverable.
 # C3: backup is a regular file.
-[ -f "$bak" ] || { echo notcorrupted; exit 0; }
+[ -f "$bak" ] || { echo non_recoverable_C3_backup_missing; exit 0; }
 # C4: backup > 1 MiB.
 size=$(wc -c < "$bak" | tr -d ' ')
-[ "$size" -gt 1048576 ] || { echo notcorrupted; exit 0; }
-# C5: backup is NOT a wrapper.
+[ "$size" -gt 1048576 ] || { echo non_recoverable_C4_backup_too_small; exit 0; }
+# C5: backup is NOT itself a wrapper.
 if head -c 256 "$bak" 2>/dev/null | grep -qF "# cc-clip claude wrapper"; then
-    echo notcorrupted
+    echo non_recoverable_C5_backup_is_wrapper
     exit 0
 fi
-echo corrupted`)
+echo recoverable`)
 	if err != nil {
-		return false, fmt.Errorf("detect v0.7.0 corruption: %w", err)
+		return V070NotCorrupted, "", fmt.Errorf("detect v0.7.0 state: %w", err)
 	}
-	return strings.TrimSpace(out) == "corrupted", nil
+	diag := strings.TrimSpace(out)
+	switch {
+	case strings.HasPrefix(diag, "not_corrupted"):
+		return V070NotCorrupted, diag, nil
+	case diag == "recoverable":
+		return V070Recoverable, diag, nil
+	case strings.HasPrefix(diag, "non_recoverable"):
+		return V070NonRecoverable, diag, nil
+	default:
+		return V070NotCorrupted, diag, fmt.Errorf("detect v0.7.0 state: unexpected diag %q", diag)
+	}
+}
+
+// DetectV070Corruption is the boolean compat wrapper kept for RecoverV070Corruption's
+// TOCTOU re-check. Returns true only on V070Recoverable — never on V070NonRecoverable,
+// because Recover would be unsafe in that state. Use DetectV070State for callers
+// that need to distinguish all three outcomes (i.e. the N0 gate).
+func DetectV070Corruption(s SessionExecutor) (bool, error) {
+	state, _, err := DetectV070State(s)
+	if err != nil {
+		return false, err
+	}
+	return state == V070Recoverable, nil
 }
