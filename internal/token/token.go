@@ -2,6 +2,7 @@ package token
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -86,7 +87,7 @@ func (m *Manager) Validate(tok string) error {
 	if time.Now().After(m.session.ExpiresAt) {
 		return ErrTokenExpired
 	}
-	if m.session.Token != strings.TrimSpace(tok) {
+	if !constantTimeTokenEqual(m.session.Token, strings.TrimSpace(tok)) {
 		return ErrTokenInvalid
 	}
 
@@ -99,6 +100,13 @@ func (m *Manager) Validate(tok string) error {
 	}
 
 	return nil
+}
+
+func constantTimeTokenEqual(expected, candidate string) bool {
+	if len(expected) != len(candidate) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(candidate)) == 1
 }
 
 func (m *Manager) Current() *Session {

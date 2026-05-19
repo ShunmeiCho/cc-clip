@@ -36,6 +36,18 @@ func TestValidateWrongToken(t *testing.T) {
 	}
 }
 
+func TestConstantTimeTokenEqual(t *testing.T) {
+	if !constantTimeTokenEqual("abc123", "abc123") {
+		t.Fatal("expected equal tokens to match")
+	}
+	if constantTimeTokenEqual("abc123", "abc124") {
+		t.Fatal("expected different tokens of equal length to be rejected")
+	}
+	if constantTimeTokenEqual("abc123", "abc1234") {
+		t.Fatal("expected different-length tokens to be rejected")
+	}
+}
+
 func TestValidateExpired(t *testing.T) {
 	m := NewManager(1 * time.Millisecond)
 
