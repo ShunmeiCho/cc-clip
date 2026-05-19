@@ -107,6 +107,41 @@ func TestAtomsToBytes(t *testing.T) {
 	}
 }
 
+func TestMaxDirectSizeFromRequestLengthUsesX11FourByteUnits(t *testing.T) {
+	got := maxDirectSizeFromRequestLength(65535)
+	want := 65535*4 - changePropertyRequestOverheadBytes
+	if got != want {
+		t.Fatalf("max direct size = %d, want %d", got, want)
+	}
+
+	if got := maxDirectSizeFromRequestLength(0); got != defaultMaxDirectSize {
+		t.Fatalf("zero max request should use default %d, got %d", defaultMaxDirectSize, got)
+	}
+
+	if got := maxDirectSizeFromRequestLength(4); got != 0 {
+		t.Fatalf("tiny max request should force INCR, got %d", got)
+	}
+}
+
+func TestPublishXEventStopsWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- publishXEvent(ctx, make(chan xgb.Event), make(chan xgb.Error), xproto.SelectionClearEvent{}, nil)
+	}()
+
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("publishXEvent should report false after context cancellation")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("publishXEvent blocked after context cancellation")
+	}
+}
+
 // --- Helpers for integration tests ---
 
 func requireXvfbAndXclip(t *testing.T) {

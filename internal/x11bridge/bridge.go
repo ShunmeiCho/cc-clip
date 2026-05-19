@@ -24,6 +24,8 @@ const (
 	// defaultChunkSize is the INCR chunk size (64KB is a safe, common choice).
 	defaultChunkSize = 64 * 1024
 
+	changePropertyRequestOverheadBytes = 24
+
 	// httpTimeout is the timeout for HTTP requests to the cc-clip daemon.
 	httpTimeout = 5 * time.Second
 )
@@ -125,18 +127,11 @@ func (b *Bridge) Run(ctx context.Context) error {
 	errors := make(chan xgb.Error, 16)
 
 	go func() {
+		defer close(events)
+		defer close(errors)
 		for {
 			ev, err := b.conn.WaitForEvent()
-			if ev != nil {
-				events <- ev
-			}
-			if err != nil {
-				errors <- err
-			}
-			if ev == nil && err == nil {
-				// Connection closed.
-				close(events)
-				close(errors)
+			if !publishXEvent(ctx, events, errors, ev, err) {
 				return
 			}
 		}
@@ -155,6 +150,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 		case ev, ok := <-events:
 			if !ok {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return fmt.Errorf("X11 connection closed")
 			}
 
@@ -202,6 +200,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 		case xerr, ok := <-errors:
 			if !ok {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return fmt.Errorf("X11 connection closed")
 			}
 			// Log X11 protocol errors but continue running.
@@ -233,6 +234,27 @@ func (b *Bridge) claimOwnership() error {
 	b.timestamp = xproto.TimeCurrentTime
 	log.Printf("x11-bridge: claimed CLIPBOARD ownership")
 	return nil
+}
+
+func publishXEvent(ctx context.Context, events chan<- xgb.Event, errors chan<- xgb.Error, ev xgb.Event, xerr xgb.Error) bool {
+	if ev == nil && xerr == nil {
+		return false
+	}
+	if ev != nil {
+		select {
+		case events <- ev:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	if xerr != nil {
+		select {
+		case errors <- xerr:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
 }
 
 // handleTargets responds to a TARGETS request.
@@ -267,11 +289,7 @@ func (b *Bridge) handleImage(event xproto.SelectionRequestEvent) {
 	}
 
 	// Determine max direct transfer size from X server's max request length.
-	maxDirect := defaultMaxDirectSize
-	maxReq := xproto.Setup(b.conn).MaximumRequestLength
-	if maxReq > 0 {
-		maxDirect = int(maxReq) * 4 / 4 // conservative: use 1/4 of max
-	}
+	maxDirect := maxDirectSizeFromRequestLength(xproto.Setup(b.conn).MaximumRequestLength)
 
 	incrData, err := handleImageRequest(b.conn, event, b.atoms, imageData, maxDirect)
 	if err != nil {
@@ -291,6 +309,17 @@ func (b *Bridge) handleImage(event xproto.SelectionRequestEvent) {
 		b.activeIncr = transfer
 		log.Printf("x11-bridge: started INCR transfer (%d bytes)", len(incrData))
 	}
+}
+
+func maxDirectSizeFromRequestLength(maxReq uint16) int {
+	if maxReq == 0 {
+		return defaultMaxDirectSize
+	}
+	n := int(maxReq)*4 - changePropertyRequestOverheadBytes
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // handleIncrChunk writes the next INCR chunk on PropertyDelete.
