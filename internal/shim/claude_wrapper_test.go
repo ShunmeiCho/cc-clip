@@ -1,6 +1,7 @@
 package shim
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -11,12 +12,67 @@ func TestClaudeWrapperContainsHookInjection(t *testing.T) {
 		"--settings",
 		`"Stop"`,
 		`"Notification"`,
+		`"matcher": ""`,
 		"cc-clip-hook",
 		"CC_CLIP_PORT:-18339",
 		"exec \"$_REAL_CLAUDE\"",
 	} {
 		if !strings.Contains(got, needle) {
 			t.Errorf("expected wrapper to contain %q", needle)
+		}
+	}
+}
+
+func TestClaudeWrapperUsesClaudeV2HookSchema(t *testing.T) {
+	script := ClaudeWrapperScript(18339)
+	const marker = "--settings '"
+	start := strings.Index(script, marker)
+	if start == -1 {
+		t.Fatal("wrapper missing --settings JSON")
+	}
+	start += len(marker)
+	end := strings.Index(script[start:], "' \"$@\"")
+	if end == -1 {
+		t.Fatal("wrapper settings JSON terminator not found")
+	}
+	assertClaudeV2HookSchema(t, script[start:start+end])
+}
+
+type claudeHookSettings struct {
+	Hooks map[string][]claudeHookMatcher `json:"hooks"`
+}
+
+type claudeHookMatcher struct {
+	Matcher string              `json:"matcher"`
+	Hooks   []claudeHookCommand `json:"hooks"`
+}
+
+type claudeHookCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+func assertClaudeV2HookSchema(t *testing.T, cfg string) {
+	t.Helper()
+
+	var settings claudeHookSettings
+	if err := json.Unmarshal([]byte(cfg), &settings); err != nil {
+		t.Fatalf("hook config is not valid JSON: %v\n%s", err, cfg)
+	}
+	for _, event := range []string{"Notification", "Stop"} {
+		matchers := settings.Hooks[event]
+		if len(matchers) != 1 {
+			t.Fatalf("%s: expected exactly one matcher entry, got %#v", event, matchers)
+		}
+		if matchers[0].Matcher != "" {
+			t.Fatalf("%s: expected empty matcher, got %q", event, matchers[0].Matcher)
+		}
+		if len(matchers[0].Hooks) != 1 {
+			t.Fatalf("%s: expected exactly one hook command, got %#v", event, matchers[0].Hooks)
+		}
+		cmd := matchers[0].Hooks[0]
+		if cmd.Type != "command" || cmd.Command != "cc-clip-hook" {
+			t.Fatalf("%s: unexpected hook command: %#v", event, cmd)
 		}
 	}
 }

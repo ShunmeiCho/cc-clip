@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -276,6 +277,50 @@ func TestClaudeHookConfigJSONIncludesNotificationAndStop(t *testing.T) {
 	}
 	if strings.Count(cfg, `"command": "cc-clip-hook"`) != 2 {
 		t.Fatalf("expected hook command to appear twice, got %q", cfg)
+	}
+}
+
+func TestClaudeHookConfigJSONUsesClaudeV2HookSchema(t *testing.T) {
+	cfg := claudeHookConfigJSON()
+	assertClaudeV2HookSchema(t, cfg)
+}
+
+type claudeHookSettings struct {
+	Hooks map[string][]claudeHookMatcher `json:"hooks"`
+}
+
+type claudeHookMatcher struct {
+	Matcher string              `json:"matcher"`
+	Hooks   []claudeHookCommand `json:"hooks"`
+}
+
+type claudeHookCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+func assertClaudeV2HookSchema(t *testing.T, cfg string) {
+	t.Helper()
+
+	var settings claudeHookSettings
+	if err := json.Unmarshal([]byte(cfg), &settings); err != nil {
+		t.Fatalf("hook config is not valid JSON: %v\n%s", err, cfg)
+	}
+	for _, event := range []string{"Notification", "Stop"} {
+		matchers := settings.Hooks[event]
+		if len(matchers) != 1 {
+			t.Fatalf("%s: expected exactly one matcher entry, got %#v", event, matchers)
+		}
+		if matchers[0].Matcher != "" {
+			t.Fatalf("%s: expected empty matcher, got %q", event, matchers[0].Matcher)
+		}
+		if len(matchers[0].Hooks) != 1 {
+			t.Fatalf("%s: expected exactly one hook command, got %#v", event, matchers[0].Hooks)
+		}
+		cmd := matchers[0].Hooks[0]
+		if cmd.Type != "command" || cmd.Command != "cc-clip-hook" {
+			t.Fatalf("%s: unexpected hook command: %#v", event, cmd)
+		}
 	}
 }
 
