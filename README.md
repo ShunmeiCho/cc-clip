@@ -42,6 +42,7 @@
 - [Configuration](#configuration)
 - [Platform Support](#platform-support)
 - [Requirements](#requirements)
+- [Alternatives and When Not to Use cc-clip](#alternatives-and-when-not-to-use-cc-clip)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [Related](#related)
@@ -71,11 +72,14 @@ Notifications (Claude Code + Codex CLI):
 
 One tool. No changes to Claude Code, Codex, or opencode. Clipboard works for all three; notifications are wired for Claude Code and Codex CLI.
 
+This is still an SSH clipboard bridge, not magic. Setup intentionally touches SSH config, installs remote clipboard shims, and relies on `RemoteForward`; the [Troubleshooting](#troubleshooting) section documents the SSH and shell gotchas cc-clip knows about.
+
 ## Prerequisites
 
 - **Local machine:** macOS 13+ or Windows 10/11
 - **Remote server:** Linux (amd64 or arm64) accessible via SSH
 - **SSH config:** You must have a Host entry in `~/.ssh/config` for your remote server
+- **Remote clipboard path:** `xclip` for X11 consumers, `wl-paste` for Wayland consumers, or `Xvfb` when using Codex CLI with `--codex`
 
 If you don't have an SSH config entry yet, add one:
 
@@ -319,12 +323,14 @@ Full setup, manual configuration for Claude Code, nonce registration, and troubl
 
 | Layer | Protection |
 |-------|-----------|
-| Network | Loopback only (`127.0.0.1`) — never exposed |
+| Network | Local daemon binds loopback only (`127.0.0.1`); SSH exposes only a remote loopback tunnel |
 | Clipboard auth | Bearer token with 30-day sliding expiration (auto-renews on use) |
 | Notification auth | Dedicated nonce per-connect session (separate from clipboard token) |
 | Token delivery | Via stdin, never in command-line args |
 | Notification trust | Hook notifications marked `verified`; generic JSON shows `[unverified]` prefix |
 | Transparency | Non-image calls pass through to real `xclip` unchanged |
+
+On a shared remote host, loopback is still shared by local users on that host. The token file is written `0600`, but cc-clip does not try to protect you from other users who can read your files, ptrace your processes, or otherwise act as your Unix account. See [SECURITY.md](SECURITY.md) for the explicit threat model.
 
 ## Daily Usage
 
@@ -386,8 +392,7 @@ All settings have sensible defaults. Override via environment variables. Full li
 
 | Local | Remote | Status |
 |-------|--------|--------|
-| macOS (Apple Silicon) | Linux (amd64) | Stable |
-| macOS (Intel) | Linux (arm64) | Stable |
+| macOS (Apple Silicon / Intel) | Linux (amd64/arm64) | Stable |
 | Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
 
 ### Supported Remote CLIs
@@ -409,9 +414,21 @@ cc-clip works with **any coding agent that reads the clipboard via `xclip` or `w
 
 **Local (Windows):** Windows 10/11 with PowerShell, `ssh`, and `scp` available in `PATH`
 
-**Remote:** Linux with `xclip`, `curl`, `bash`, and SSH access. The macOS tunnel/shim path is auto-configured by `cc-clip connect`; the Windows upload/hotkey path uses SSH/SCP directly.
+**Remote:** Linux with SSH access, `curl`, `bash`, and at least one clipboard backend: `xclip` for X11 consumers or `wl-paste` for Wayland consumers. The macOS tunnel/shim path is auto-configured by `cc-clip connect`; the Windows upload/hotkey path uses SSH/SCP directly.
 
 **Remote (Codex `--codex`):** Additionally requires `Xvfb`. Auto-installed if passwordless sudo is available, otherwise: `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora).
+
+## Alternatives and When Not to Use cc-clip
+
+Use a simpler path when it fits:
+
+- **VS Code Remote-SSH:** use the editor's built-in clipboard behavior if your workflow already lives in VS Code.
+- **OSC52:** good for text clipboard sync, but not a reliable binary image paste path for these CLI agents.
+- **`scp` or manual file upload:** best when image paste is rare and preserving `Ctrl+V` is not worth extra setup.
+- **General clipboard bridges such as lemonade or piknik:** better if you want a broad, bidirectional clipboard system instead of a narrow agent image-paste bridge.
+- **Untrusted shared jump hosts:** avoid cc-clip if other local users on the remote host should not be able to reach a loopback tunnel protected only by your user-scoped token.
+
+cc-clip is for the narrow case where you run coding agents over SSH and want image paste, plus optional notifications, to behave like a local session without changing the agent itself.
 
 ## Troubleshooting
 
