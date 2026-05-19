@@ -15,6 +15,8 @@ import (
 	"github.com/shunmei/cc-clip/internal/daemon"
 )
 
+var randReader io.Reader = rand.Reader
+
 var (
 	ErrNoImage      = errors.New("no image in clipboard")
 	ErrTokenInvalid = errors.New("token invalid or expired")
@@ -96,9 +98,11 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 		ext = "jpg"
 	}
 
-	randBytes := make([]byte, 4)
-	rand.Read(randBytes)
-	filename := fmt.Sprintf("%s-%s.%s", time.Now().Format("20060102-150405"), hex.EncodeToString(randBytes), ext)
+	suffix, err := randomHexSuffix(4)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate filename suffix: %w", err)
+	}
+	filename := fmt.Sprintf("%s-%s.%s", time.Now().Format("20060102-150405"), suffix, ext)
 	outPath := filepath.Join(outDir, filename)
 
 	f, err := os.Create(outPath)
@@ -113,6 +117,14 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 	}
 
 	return outPath, nil
+}
+
+func randomHexSuffix(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := io.ReadFull(randReader, b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func DefaultOutDir() string {

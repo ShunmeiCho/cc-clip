@@ -8,11 +8,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
 )
+
+type failingReader struct {
+	err error
+}
+
+func (r failingReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
 
 // newIPv4TestServer creates an httptest server bound to 127.0.0.1 (IPv4 only).
 // Returns nil and skips the test if binding fails (restricted sandbox/CI).
@@ -100,6 +109,41 @@ func TestFetchImageUnauthorized(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("expected ErrTokenInvalid, got: %v", err)
+	}
+}
+
+func TestFetchImageFailsWhenRandomSuffixGenerationFails(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("png-data"))
+	})
+
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	oldReader := randReader
+	randReader = failingReader{err: errors.New("entropy unavailable")}
+	defer func() {
+		randReader = oldReader
+	}()
+
+	client := NewClient(ts.URL, "test-token", 5*time.Second)
+	outDir := t.TempDir()
+	_, err := client.FetchImage(outDir)
+	if err == nil {
+		t.Fatal("expected random suffix generation error")
+	}
+	if !strings.Contains(err.Error(), "filename suffix") {
+		t.Fatalf("expected filename suffix error, got %v", err)
+	}
+
+	entries, readErr := os.ReadDir(outDir)
+	if readErr != nil {
+		t.Fatalf("failed to read output dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no partial files, found %d", len(entries))
 	}
 }
 
