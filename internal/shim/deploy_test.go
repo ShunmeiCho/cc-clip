@@ -131,6 +131,72 @@ func TestNeedsUploadNonExistentBinary(t *testing.T) {
 	}
 }
 
+func TestReadRemoteStateMissingFile(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState returned error for missing state file: %v", err)
+	}
+	if state != nil {
+		t.Fatalf("ReadRemoteState returned state for missing file: %+v", state)
+	}
+}
+
+func TestReadRemoteStateValidJSON(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:deadbeef",
+  "binary_version": "v0.7.2",
+  "shim_installed": true,
+  "shim_target": "xclip",
+  "path_fixed": true
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState returned error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("ReadRemoteState returned nil state")
+	}
+	if state.BinaryHash != "sha256:deadbeef" {
+		t.Fatalf("BinaryHash = %q, want %q", state.BinaryHash, "sha256:deadbeef")
+	}
+	if state.BinaryVersion != "v0.7.2" {
+		t.Fatalf("BinaryVersion = %q, want %q", state.BinaryVersion, "v0.7.2")
+	}
+	if !state.ShimInstalled || state.ShimTarget != "xclip" || !state.PathFixed {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+}
+
+func TestReadRemoteStateMalformedJSONReturnsError(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{broken json`)
+
+	state, err := ReadRemoteState(s)
+	if err == nil {
+		t.Fatal("ReadRemoteState returned nil error for malformed deploy state")
+	}
+	if state != nil {
+		t.Fatalf("ReadRemoteState returned state for malformed JSON: %+v", state)
+	}
+}
+
+func TestReadRemoteStateEmptyFileReturnsError(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, "")
+
+	state, err := ReadRemoteState(s)
+	if err == nil {
+		t.Fatal("ReadRemoteState returned nil error for empty deploy state")
+	}
+	if state != nil {
+		t.Fatalf("ReadRemoteState returned state for empty JSON: %+v", state)
+	}
+}
+
 func TestNeedsShimInstall(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -265,6 +331,18 @@ func TestDeployStateJSONCodexNil(t *testing.T) {
 	raw := string(data)
 	if strings.Contains(raw, `"codex"`) {
 		t.Fatalf("JSON should not contain 'codex' key when Codex is nil, got: %s", raw)
+	}
+}
+
+func writeRemoteDeployState(t *testing.T, home, content string) {
+	t.Helper()
+
+	stateDir := filepath.Join(home, ".cache", "cc-clip")
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		t.Fatalf("failed to create remote state dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "deploy.json"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write remote deploy state: %v", err)
 	}
 }
 

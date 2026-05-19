@@ -15,6 +15,7 @@ import (
 
 	"github.com/shunmei/cc-clip/internal/daemon"
 	"github.com/shunmei/cc-clip/internal/session"
+	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
 )
 
@@ -136,6 +137,79 @@ func TestManualFlagParsingRejectsExplicitFalseBool(t *testing.T) {
 
 	if hasFlag("force") {
 		t.Fatal("hasFlag(force) should not treat --force=false as enabled")
+	}
+}
+
+func TestNewDeployStateReturnsHashError(t *testing.T) {
+	_, err := newDeployState("/nonexistent/cc-clip", "v0.7.2", "xclip", true, nil, false)
+	if err == nil {
+		t.Fatal("newDeployState should return an error when local binary hashing fails")
+	}
+}
+
+func TestNewDeployStatePreservesCodexWhenNotRequested(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "cc-clip")
+	if err := os.WriteFile(binPath, []byte("binary"), 0755); err != nil {
+		t.Fatalf("failed to write test binary: %v", err)
+	}
+	existingCodex := &shim.CodexDeployState{
+		Enabled:      true,
+		Mode:         "x11-bridge",
+		DisplayFixed: true,
+	}
+	existingNotify := &shim.NotifyDeployState{
+		Enabled:        true,
+		HookInstalled:  true,
+		CodexInjected:  true,
+		HealthVerified: true,
+	}
+	existingWrapper := &shim.ClaudeWrapperState{
+		Installed:  true,
+		OriginKind: "symlink",
+	}
+
+	state, err := newDeployState(binPath, "v0.7.2", "xclip", true, &shim.DeployState{
+		Codex:         existingCodex,
+		Notify:        existingNotify,
+		ClaudeWrapper: existingWrapper,
+	}, false)
+	if err != nil {
+		t.Fatalf("newDeployState returned error: %v", err)
+	}
+	if state.BinaryHash == "" {
+		t.Fatal("newDeployState should populate BinaryHash")
+	}
+	if state.Codex != existingCodex {
+		t.Fatal("newDeployState should preserve existing Codex state when --codex is not requested")
+	}
+	if state.Notify != existingNotify {
+		t.Fatal("newDeployState should preserve existing Notify state")
+	}
+	if state.ClaudeWrapper != existingWrapper {
+		t.Fatal("newDeployState should preserve existing ClaudeWrapper state")
+	}
+}
+
+func TestNewDeployStateDoesNotPreserveCodexWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "cc-clip")
+	if err := os.WriteFile(binPath, []byte("binary"), 0755); err != nil {
+		t.Fatalf("failed to write test binary: %v", err)
+	}
+
+	state, err := newDeployState(binPath, "v0.7.2", "xclip", true, &shim.DeployState{
+		Codex: &shim.CodexDeployState{
+			Enabled:      true,
+			Mode:         "x11-bridge",
+			DisplayFixed: true,
+		},
+	}, true)
+	if err != nil {
+		t.Fatalf("newDeployState returned error: %v", err)
+	}
+	if state.Codex != nil {
+		t.Fatal("newDeployState should let --codex rebuild Codex state")
 	}
 }
 

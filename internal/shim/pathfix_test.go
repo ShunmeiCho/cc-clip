@@ -374,8 +374,8 @@ func TestPathBlock(t *testing.T) {
 
 func TestSedEscape(t *testing.T) {
 	escaped := sedEscape("# >>> cc-clip PATH (do not edit) >>>")
-	if strings.Contains(escaped, "(") && !strings.Contains(escaped, `\(`) {
-		t.Fatal("parentheses should be escaped")
+	if strings.Contains(escaped, `\(`) || strings.Contains(escaped, `\)`) {
+		t.Fatal("parentheses must stay literal for basic sed regex matching")
 	}
 }
 
