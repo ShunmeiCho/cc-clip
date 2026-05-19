@@ -123,6 +123,64 @@ func TestMaxDirectSizeFromRequestLengthUsesX11FourByteUnits(t *testing.T) {
 	}
 }
 
+func TestIncrTimeoutTickInterval(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{
+			name:    "production timeout capped at one second",
+			timeout: 30 * time.Second,
+			want:    time.Second,
+		},
+		{
+			name:    "short test timeout checks faster",
+			timeout: 50 * time.Millisecond,
+			want:    25 * time.Millisecond,
+		},
+		{
+			name:    "non-positive timeout falls back to cap",
+			timeout: 0,
+			want:    time.Second,
+		},
+		{
+			name:    "sub-millisecond timeout still ticks",
+			timeout: time.Nanosecond,
+			want:    time.Millisecond,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := incrTimeoutTickInterval(tt.timeout); got != tt.want {
+				t.Fatalf("incrTimeoutTickInterval(%s) = %s, want %s", tt.timeout, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClearExpiredIncr(t *testing.T) {
+	b := &Bridge{
+		activeIncr:   &IncrTransfer{Requestor: 42},
+		incrDeadline: time.Unix(10, 0),
+		incrTimeout:  50 * time.Millisecond,
+	}
+
+	b.clearExpiredIncr(time.Unix(9, 0))
+	if b.activeIncr == nil {
+		t.Fatal("clearExpiredIncr cleared transfer before deadline")
+	}
+
+	b.clearExpiredIncr(time.Unix(10, 0))
+	if b.activeIncr != nil {
+		t.Fatal("clearExpiredIncr should clear transfer at deadline")
+	}
+	if !b.incrDeadline.IsZero() {
+		t.Fatal("clearExpiredIncr should clear deadline")
+	}
+}
+
 func TestPublishXEventStopsWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -335,6 +393,20 @@ func waitForMatchingEvent(t *testing.T, conn *xgb.Conn, timeout time.Duration, m
 
 	t.Fatalf("timed out after %s waiting for matching X11 event", timeout)
 	return nil
+}
+
+func waitForSelectionNotify(t *testing.T, conn *xgb.Conn, window xproto.Window, timeout time.Duration) xproto.SelectionNotifyEvent {
+	t.Helper()
+
+	ev := waitForMatchingEvent(t, conn, timeout, func(ev xgb.Event) bool {
+		notify, ok := ev.(xproto.SelectionNotifyEvent)
+		return ok && notify.Requestor == window
+	})
+	notify, ok := ev.(xproto.SelectionNotifyEvent)
+	if !ok {
+		t.Fatalf("matched event was %T, want SelectionNotifyEvent", ev)
+	}
+	return notify
 }
 
 // --- Integration tests (require Xvfb + xclip) ---
@@ -568,6 +640,135 @@ func TestBridge_ImageLargeINCRSendsFinalZeroLengthChunk(t *testing.T) {
 
 	if !bytes.Equal(received, imageData) {
 		t.Fatalf("INCR payload mismatch: got %d bytes, want %d", len(received), len(imageData))
+	}
+}
+
+func TestBridge_INCRTimeoutAllowsNextImageRequest(t *testing.T) {
+	requireXvfbAndXclip(t)
+	display := startTestXvfb(t)
+
+	imageData := make([]byte, 512*1024)
+	rand.Read(imageData)
+
+	tokenFile := writeTokenFile(t, "test-token")
+	srv := startMockDaemon(t, "image", imageData, "test-token")
+	port := portFromURL(srv.URL)
+
+	bridge, err := New(display, port, tokenFile, WithIncrTimeout(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bridge.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+
+	conn1, window1, property1 := newX11Requestor(t, display)
+	atoms1 := NewAtomCache(conn1)
+	clipboardAtom1 := atoms1.MustGet(AtomNameClipboard)
+	imagePNGAtom1 := atoms1.MustGet(AtomNameImagePNG)
+	incrAtom1 := atoms1.MustGet(AtomNameIncr)
+
+	if err := xproto.ConvertSelectionChecked(
+		conn1,
+		window1,
+		clipboardAtom1,
+		imagePNGAtom1,
+		property1,
+		xproto.TimeCurrentTime,
+	).Check(); err != nil {
+		t.Fatalf("first ConvertSelection failed: %v", err)
+	}
+	notify1 := waitForSelectionNotify(t, conn1, window1, 2*time.Second)
+	if notify1.Property != property1 {
+		t.Fatalf("first request should start INCR on property %d, got property %d", property1, notify1.Property)
+	}
+	reply1, err := xproto.GetProperty(conn1, false, window1, property1, xproto.GetPropertyTypeAny, 0, math.MaxUint32).Reply()
+	if err != nil {
+		t.Fatalf("first INCR marker GetProperty failed: %v", err)
+	}
+	if reply1.Type != incrAtom1 {
+		t.Fatalf("first request should receive INCR marker type %d, got %d", incrAtom1, reply1.Type)
+	}
+
+	// Do not delete property1. A client that never acknowledges the INCR marker
+	// used to leave activeIncr set forever, causing later image requests to be refused.
+	time.Sleep(150 * time.Millisecond)
+
+	conn2, window2, property2 := newX11Requestor(t, display)
+	atoms2 := NewAtomCache(conn2)
+	clipboardAtom2 := atoms2.MustGet(AtomNameClipboard)
+	imagePNGAtom2 := atoms2.MustGet(AtomNameImagePNG)
+	incrAtom2 := atoms2.MustGet(AtomNameIncr)
+
+	if err := xproto.ConvertSelectionChecked(
+		conn2,
+		window2,
+		clipboardAtom2,
+		imagePNGAtom2,
+		property2,
+		xproto.TimeCurrentTime,
+	).Check(); err != nil {
+		t.Fatalf("second ConvertSelection failed: %v", err)
+	}
+	notify2 := waitForSelectionNotify(t, conn2, window2, 2*time.Second)
+	if notify2.Property == xproto.AtomNone {
+		t.Fatal("second image request was refused; INCR timeout did not clear the stalled transfer")
+	}
+	if notify2.Property != property2 {
+		t.Fatalf("second request property = %d, want %d", notify2.Property, property2)
+	}
+	reply2, err := xproto.GetProperty(conn2, false, window2, property2, xproto.GetPropertyTypeAny, 0, math.MaxUint32).Reply()
+	if err != nil {
+		t.Fatalf("second INCR marker GetProperty failed: %v", err)
+	}
+	if reply2.Type != incrAtom2 {
+		t.Fatalf("second request should receive INCR marker type %d, got %d", incrAtom2, reply2.Type)
+	}
+}
+
+func TestBridge_INCRTimeoutDoesNotBreakCompletedTransfer(t *testing.T) {
+	requireXvfbAndXclip(t)
+	display := startTestXvfb(t)
+
+	imageData := make([]byte, 512*1024)
+	rand.Read(imageData)
+
+	tokenFile := writeTokenFile(t, "test-token")
+	srv := startMockDaemon(t, "image", imageData, "test-token")
+	port := portFromURL(srv.URL)
+
+	bridge, err := New(display, port, tokenFile, WithIncrTimeout(50*time.Millisecond))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bridge.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+
+	cmd := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o")
+	cmd.Env = append(os.Environ(), "DISPLAY="+display)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xclip image read failed: %v", err)
+	}
+	if !bytes.Equal(out, imageData) {
+		t.Fatalf("INCR image data mismatch: got %d bytes, want %d", len(out), len(imageData))
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	cmd = exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o")
+	cmd.Env = append(os.Environ(), "DISPLAY="+display)
+	out, err = cmd.Output()
+	if err != nil {
+		t.Fatalf("second xclip image read failed after timeout window: %v", err)
+	}
+	if !bytes.Equal(out, imageData) {
+		t.Fatalf("second INCR image data mismatch: got %d bytes, want %d", len(out), len(imageData))
 	}
 }
 

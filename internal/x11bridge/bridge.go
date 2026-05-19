@@ -26,9 +26,26 @@ const (
 
 	changePropertyRequestOverheadBytes = 24
 
+	defaultIncrTimeout = 30 * time.Second
+	maxIncrTimeoutTick = time.Second
+
 	// httpTimeout is the timeout for HTTP requests to the cc-clip daemon.
 	httpTimeout = 5 * time.Second
 )
+
+// Option configures a Bridge.
+type Option func(*Bridge)
+
+// WithIncrTimeout sets the inactivity timeout for an INCR transfer. A stalled
+// requestor that never deletes the transfer property is cleared after this
+// duration so future paste requests are not refused forever.
+func WithIncrTimeout(d time.Duration) Option {
+	return func(b *Bridge) {
+		if d > 0 {
+			b.incrTimeout = d
+		}
+	}
+}
 
 // Bridge is an X11 clipboard selection owner that serves image data
 // fetched on-demand from a cc-clip HTTP daemon via SSH tunnel.
@@ -43,8 +60,10 @@ type Bridge struct {
 	atoms     *AtomCache
 	timestamp xproto.Timestamp
 
-	activeIncr *IncrTransfer
-	httpClient *http.Client
+	activeIncr   *IncrTransfer
+	incrTimeout  time.Duration
+	incrDeadline time.Time
+	httpClient   *http.Client
 }
 
 // clipboardTypeResponse mirrors daemon.ClipboardInfo.
@@ -54,7 +73,7 @@ type clipboardTypeResponse struct {
 }
 
 // New creates a Bridge connected to the given X display.
-func New(display string, port int, tokenFile string) (*Bridge, error) {
+func New(display string, port int, tokenFile string, opts ...Option) (*Bridge, error) {
 	conn, err := xgb.NewConnDisplay(display)
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to X display %s: %w", display, err)
@@ -68,15 +87,19 @@ func New(display string, port int, tokenFile string) (*Bridge, error) {
 	screen := setup.Roots[0]
 
 	b := &Bridge{
-		display:   display,
-		port:      port,
-		tokenFile: tokenFile,
-		conn:      conn,
-		screen:    &screen,
-		atoms:     NewAtomCache(conn),
+		display:     display,
+		port:        port,
+		tokenFile:   tokenFile,
+		conn:        conn,
+		screen:      &screen,
+		atoms:       NewAtomCache(conn),
+		incrTimeout: defaultIncrTimeout,
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 		},
+	}
+	for _, opt := range opts {
+		opt(b)
 	}
 
 	// Create an invisible window for selection ownership.
@@ -141,6 +164,8 @@ func (b *Bridge) Run(ctx context.Context) error {
 	targetsAtom := b.atoms.MustGet(AtomNameTargets)
 	timestampAtom, _ := b.atoms.Get(AtomNameTimestamp)
 	imagePNGAtom := b.atoms.MustGet(AtomNameImagePNG)
+	incrTicker := time.NewTicker(incrTimeoutTickInterval(b.incrTimeout))
+	defer incrTicker.Stop()
 
 	for {
 		select {
@@ -158,6 +183,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 			switch e := ev.(type) {
 			case xproto.SelectionRequestEvent:
+				b.clearExpiredIncr(time.Now())
 				if e.Selection != clipboardAtom {
 					refuseRequest(b.conn, e)
 					continue
@@ -190,6 +216,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 				}
 
 			case xproto.PropertyNotifyEvent:
+				b.clearExpiredIncr(time.Now())
 				if b.activeIncr != nil &&
 					e.Atom == b.activeIncr.Property &&
 					e.Window == b.activeIncr.Requestor &&
@@ -207,6 +234,9 @@ func (b *Bridge) Run(ctx context.Context) error {
 			}
 			// Log X11 protocol errors but continue running.
 			log.Printf("x11-bridge: X11 error: %v", xerr)
+
+		case now := <-incrTicker.C:
+			b.clearExpiredIncr(now)
 		}
 	}
 }
@@ -306,7 +336,7 @@ func (b *Bridge) handleImage(event xproto.SelectionRequestEvent) {
 			refuseRequest(b.conn, event)
 			return
 		}
-		b.activeIncr = transfer
+		b.startActiveIncr(transfer)
 		log.Printf("x11-bridge: started INCR transfer (%d bytes)", len(incrData))
 	}
 }
@@ -330,14 +360,48 @@ func (b *Bridge) handleIncrChunk() {
 
 	if err := writeNextChunk(b.conn, b.activeIncr); err != nil {
 		log.Printf("x11-bridge: INCR chunk write failed: %v", err)
-		b.activeIncr = nil
+		b.clearActiveIncr()
 		return
 	}
 
 	if b.activeIncr.IsComplete() {
 		log.Printf("x11-bridge: INCR transfer complete")
-		b.activeIncr = nil
+		b.clearActiveIncr()
+		return
 	}
+	b.incrDeadline = time.Now().Add(b.incrTimeout)
+}
+
+func (b *Bridge) startActiveIncr(transfer *IncrTransfer) {
+	b.activeIncr = transfer
+	b.incrDeadline = time.Now().Add(b.incrTimeout)
+}
+
+func (b *Bridge) clearActiveIncr() {
+	b.activeIncr = nil
+	b.incrDeadline = time.Time{}
+}
+
+func (b *Bridge) clearExpiredIncr(now time.Time) {
+	if b.activeIncr == nil || b.incrDeadline.IsZero() || now.Before(b.incrDeadline) {
+		return
+	}
+	log.Printf("x11-bridge: INCR transfer timed out after %s, clearing stalled transfer (window=0x%x)", b.incrTimeout, b.activeIncr.Requestor)
+	b.clearActiveIncr()
+}
+
+func incrTimeoutTickInterval(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return maxIncrTimeoutTick
+	}
+	interval := timeout / 2
+	if interval <= 0 {
+		return time.Millisecond
+	}
+	if interval > maxIncrTimeoutTick {
+		return maxIncrTimeoutTick
+	}
+	return interval
 }
 
 // readToken reads the session token from the token file.
