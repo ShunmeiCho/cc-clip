@@ -390,9 +390,19 @@ trap - EXIT`
 }
 
 // RemoteHasCodex checks whether ~/.codex directory exists on the remote.
-func RemoteHasCodex(session *SSHSession) bool {
-	_, err := session.Exec("test -d ~/.codex")
-	return err == nil
+func RemoteHasCodex(session RemoteExecutor) (bool, error) {
+	out, err := session.Exec("if [ -d ~/.codex ]; then echo yes; else echo no; fi")
+	if err != nil {
+		return false, fmt.Errorf("failed to check remote Codex config dir: %w", err)
+	}
+	switch strings.TrimSpace(out) {
+	case "yes":
+		return true, nil
+	case "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected Codex config dir probe output: %q", out)
+	}
 }
 
 // EnsureRemoteCodexNotifyConfig injects the cc-clip notification hook
@@ -400,7 +410,7 @@ func RemoteHasCodex(session *SSHSession) bool {
 // Idempotent: if the managed block already exists, it is replaced.
 // If the user already has a non-managed `notify` key, injection is refused
 // to avoid creating duplicate TOML keys.
-func EnsureRemoteCodexNotifyConfig(session *SSHSession, port int) error {
+func EnsureRemoteCodexNotifyConfig(session RemoteExecutor, port int) error {
 	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
 	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
 	const configPath = "~/.codex/config.toml"
@@ -408,17 +418,24 @@ func EnsureRemoteCodexNotifyConfig(session *SSHSession, port int) error {
 	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd, port)
 
 	// Check if the managed block already exists.
-	out, _ := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", markerStart, configPath))
+	out, err := remoteOptionalGrep(session, "-F", markerStart, configPath)
+	if err != nil {
+		return fmt.Errorf("failed to check managed notify block in %s: %w", configPath, err)
+	}
 	if strings.Contains(out, markerStart) {
 		// Replace existing block using sed.
 		sedCmd := fmt.Sprintf(
-			`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
+			`sed -i.cc-clip-bak '/%s/,/%s/d' %s && rm -f %s.cc-clip-bak`,
 			sedEscape(markerStart), sedEscape(markerEnd), configPath, configPath)
-		session.Exec(sedCmd)
+		if _, err := session.Exec(sedCmd); err != nil {
+			return fmt.Errorf("failed to replace existing managed notify block in %s: %w", configPath, err)
+		}
 	} else {
 		// Check for a user-managed notify key (not ours) to avoid duplicate keys.
-		userNotify, _ := session.Exec(fmt.Sprintf(
-			"grep -E '^\\s*notify\\s*=' %s 2>/dev/null || true", configPath))
+		userNotify, err := remoteOptionalGrep(session, "-E", `^[[:space:]]*notify[[:space:]]*=`, configPath)
+		if err != nil {
+			return fmt.Errorf("failed to check existing notify setting in %s: %w", configPath, err)
+		}
 		if strings.TrimSpace(userNotify) != "" {
 			return fmt.Errorf("existing notify setting found in %s — refusing to inject duplicate. Remove or comment out the existing notify line first", configPath)
 		}
@@ -428,12 +445,21 @@ func EnsureRemoteCodexNotifyConfig(session *SSHSession, port int) error {
 	appendCmd := fmt.Sprintf(
 		"mkdir -p ~/.codex && cat >> %s << 'CC_CLIP_EOF'\n%s\nCC_CLIP_EOF",
 		configPath, managedBlock)
-	_, err := session.Exec(appendCmd)
+	_, err = session.Exec(appendCmd)
 	if err != nil {
 		return fmt.Errorf("failed to inject notify config into %s: %w", configPath, err)
 	}
 
 	return nil
+}
+
+func remoteOptionalGrep(session RemoteExecutor, flag, pattern, path string) (string, error) {
+	cmd := fmt.Sprintf(`if [ -e %s ]; then grep %s %q %s; status=$?; case "$status" in 0|1) exit 0;; *) exit "$status";; esac; fi`, path, flag, pattern, path)
+	out, err := session.Exec(cmd)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func codexNotifyManagedBlock(markerStart, markerEnd string, port int) string {
@@ -572,20 +598,20 @@ fi`
 // V070State classifies the v0.7.0 wrapper-install bug aftermath into three
 // outcomes that the CLI N0 gate must distinguish:
 //
-//   V070NotCorrupted   : safe to proceed with install; either there is no
-//                        symlink at ~/.local/bin/claude, the symlink target
-//                        is not a cc-clip wrapper, or the target file does
-//                        not exist (broken symlink) — i.e. C1 or C2 failed.
-//   V070Recoverable    : C1..C5 all hold; --auto-recover can migrate the
-//                        backup at ~/.local/bin/claude.cc-clip-bak back to
-//                        the symlink target.
-//   V070NonRecoverable : C1+C2 hold (~/.local/bin/claude IS a symlink whose
-//                        target is a cc-clip wrapper) but the backup file
-//                        is missing, too small, or is itself a wrapper.
-//                        Auto-recovery cannot fix this — the real Native
-//                        Installer binary is lost. Operator must reinstall
-//                        Claude Code via curl https://claude.ai/install.sh
-//                        before re-running cc-clip.
+//	V070NotCorrupted   : safe to proceed with install; either there is no
+//	                     symlink at ~/.local/bin/claude, the symlink target
+//	                     is not a cc-clip wrapper, or the target file does
+//	                     not exist (broken symlink) — i.e. C1 or C2 failed.
+//	V070Recoverable    : C1..C5 all hold; --auto-recover can migrate the
+//	                     backup at ~/.local/bin/claude.cc-clip-bak back to
+//	                     the symlink target.
+//	V070NonRecoverable : C1+C2 hold (~/.local/bin/claude IS a symlink whose
+//	                     target is a cc-clip wrapper) but the backup file
+//	                     is missing, too small, or is itself a wrapper.
+//	                     Auto-recovery cannot fix this — the real Native
+//	                     Installer binary is lost. Operator must reinstall
+//	                     Claude Code via curl https://claude.ai/install.sh
+//	                     before re-running cc-clip.
 //
 // The three-state split closes the fail-open gap that existed when the
 // detector only returned a boolean: previously, "target is wrapper but
@@ -620,13 +646,13 @@ func (s V070State) String() string {
 //
 // Diag tokens are stable identifiers (not human prose):
 //
-//   not_corrupted_C1_not_symlink     : ~/.local/bin/claude is not a symlink
-//   not_corrupted_C2_target_missing  : symlink target does not exist
-//   not_corrupted_C2_not_wrapper     : symlink target is not a cc-clip wrapper
-//   recoverable                       : all five conditions hold; auto-fix viable
-//   non_recoverable_C3_backup_missing : target IS wrapper but no backup
-//   non_recoverable_C4_backup_too_small : backup < 1 MiB (cannot be real binary)
-//   non_recoverable_C5_backup_is_wrapper : backup is itself a cc-clip wrapper
+//	not_corrupted_C1_not_symlink     : ~/.local/bin/claude is not a symlink
+//	not_corrupted_C2_target_missing  : symlink target does not exist
+//	not_corrupted_C2_not_wrapper     : symlink target is not a cc-clip wrapper
+//	recoverable                       : all five conditions hold; auto-fix viable
+//	non_recoverable_C3_backup_missing : target IS wrapper but no backup
+//	non_recoverable_C4_backup_too_small : backup < 1 MiB (cannot be real binary)
+//	non_recoverable_C5_backup_is_wrapper : backup is itself a cc-clip wrapper
 //
 // Decision boundary: C1 and C2 are "is the install path actually broken?"
 // gates. If either fails, we are NOT corrupted — proceed with install. Only

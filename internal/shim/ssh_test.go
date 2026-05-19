@@ -2,6 +2,8 @@ package shim
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,11 +29,11 @@ func TestParseUnameOutput(t *testing.T) {
 	// Test the arch detection parsing logic that DetectRemoteArchViaSession uses.
 	// We extract the parsing to verify it handles various uname outputs correctly.
 	tests := []struct {
-		name       string
-		output     string
-		wantOS     string
-		wantArch   string
-		wantErr    bool
+		name     string
+		output   string
+		wantOS   string
+		wantArch string
+		wantErr  bool
 	}{
 		{
 			name:     "linux amd64",
@@ -208,6 +210,99 @@ func TestCodexNotifyManagedBlockNonDefaultPort(t *testing.T) {
 	}
 }
 
+func TestRemoteHasCodex(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+
+	hasCodex, err := RemoteHasCodex(s)
+	if err != nil {
+		t.Fatalf("RemoteHasCodex returned error for missing ~/.codex: %v", err)
+	}
+	if hasCodex {
+		t.Fatal("RemoteHasCodex should return false when ~/.codex is missing")
+	}
+
+	if err := os.Mkdir(filepath.Join(s.home, ".codex"), 0755); err != nil {
+		t.Fatalf("failed to create .codex: %v", err)
+	}
+	hasCodex, err = RemoteHasCodex(s)
+	if err != nil {
+		t.Fatalf("RemoteHasCodex returned error: %v", err)
+	}
+	if !hasCodex {
+		t.Fatal("RemoteHasCodex should return true when ~/.codex exists")
+	}
+}
+
+func TestRemoteHasCodexReturnsExecError(t *testing.T) {
+	_, err := RemoteHasCodex(&errorExecutor{err: fmt.Errorf("ssh failed")})
+	if err == nil {
+		t.Fatal("RemoteHasCodex should surface executor errors")
+	}
+}
+
+func TestEnsureRemoteCodexNotifyConfigAppendsManagedBlock(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 9999); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "notify", "--from-codex-stdin"]`) {
+		t.Fatalf("config missing managed notify block: %q", config)
+	}
+}
+
+func TestEnsureRemoteCodexNotifyConfigRefusesUserNotify(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `notify = ["custom", "notify"]`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err == nil {
+		t.Fatal("EnsureRemoteCodexNotifyConfig should refuse an existing user notify setting")
+	}
+}
+
+func TestEnsureRemoteCodexNotifyConfigReplacesManagedBlock(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "# before\n"+
+		codexNotifyManagedBlock("# >>> cc-clip notify (do not edit) >>>", "# <<< cc-clip notify (do not edit) <<<", 18340)+
+		"\n# after\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 9999); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if strings.Count(config, "# >>> cc-clip notify (do not edit) >>>") != 1 {
+		t.Fatalf("expected exactly one managed block, got config: %q", config)
+	}
+	if strings.Contains(config, "CC_CLIP_PORT=18340") {
+		t.Fatalf("old managed block was not removed: %q", config)
+	}
+	if !strings.Contains(config, "CC_CLIP_PORT=9999") {
+		t.Fatalf("new managed block was not appended: %q", config)
+	}
+}
+
+func TestEnsureRemoteCodexNotifyConfigReturnsProbeError(t *testing.T) {
+	err := EnsureRemoteCodexNotifyConfig(&errorExecutor{err: fmt.Errorf("ssh failed")}, 18339)
+	if err == nil {
+		t.Fatal("EnsureRemoteCodexNotifyConfig should surface probe executor errors")
+	}
+}
+
+func TestEnsureRemoteCodexNotifyConfigStopsOnSedError(t *testing.T) {
+	exec := &codexNotifySedErrorExecutor{}
+
+	err := EnsureRemoteCodexNotifyConfig(exec, 18339)
+	if err == nil {
+		t.Fatal("EnsureRemoteCodexNotifyConfig should surface sed errors")
+	}
+	if exec.appended {
+		t.Fatal("EnsureRemoteCodexNotifyConfig appended after sed failure")
+	}
+}
+
 // parseUnameOutput is a testable extraction of the uname parsing logic.
 // Both DetectRemoteArch and DetectRemoteArchViaSession use equivalent logic.
 func parseUnameOutput(output string) (string, string, error) {
@@ -235,4 +330,43 @@ func parseUnameOutput(output string) (string, string, error) {
 func TestSessionExecutorInterface_StaticConformance(t *testing.T) {
 	// Compile-time assertion: *SSHSession implements SessionExecutor.
 	var _ SessionExecutor = (*SSHSession)(nil)
+}
+
+type codexNotifySedErrorExecutor struct {
+	appended bool
+}
+
+func (c *codexNotifySedErrorExecutor) Exec(cmd string) (string, error) {
+	if strings.Contains(cmd, "grep -F") {
+		return "# >>> cc-clip notify (do not edit) >>>", nil
+	}
+	if strings.Contains(cmd, "sed -i") {
+		return "", fmt.Errorf("sed failed")
+	}
+	if strings.Contains(cmd, "cat >>") {
+		c.appended = true
+	}
+	return "", nil
+}
+
+func writeTestCodexConfig(t *testing.T, home, content string) {
+	t.Helper()
+
+	configDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create .codex dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+}
+
+func readTestCodexConfig(t *testing.T, home string) string {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("failed to read test config: %v", err)
+	}
+	return string(data)
 }

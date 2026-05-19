@@ -458,7 +458,8 @@ func cmdUninstallCodexRemote(host string) {
 	}
 	defer session.Close()
 
-	var hasError bool
+	var teardownError bool
+	var stateError bool
 
 	// Step 1: Stop x11-bridge
 	fmt.Println("[1/5] Stopping x11-bridge...")
@@ -469,21 +470,25 @@ func cmdUninstallCodexRemote(host string) {
 	fmt.Println("[2/5] Stopping Xvfb...")
 	if err := xvfb.StopRemote(session, codexStateDir); err != nil {
 		fmt.Printf("      warning: %v\n", err)
-		hasError = true
+		teardownError = true
 	} else {
 		fmt.Println("      done")
 	}
 
 	// Step 3: Remove codex state directory
 	fmt.Println("[3/5] Removing codex state files...")
-	session.Exec(fmt.Sprintf("rm -rf %s", codexStateDir))
-	fmt.Println("      done")
+	if _, err := session.Exec(fmt.Sprintf("rm -rf %s", codexStateDir)); err != nil {
+		fmt.Printf("      warning: could not remove codex state files: %v\n", err)
+		teardownError = true
+	} else {
+		fmt.Println("      done")
+	}
 
 	// Step 4: Remove DISPLAY marker
 	fmt.Println("[4/5] Removing DISPLAY marker...")
 	if err := shim.RemoveDisplayMarkerSession(session); err != nil {
 		fmt.Printf("      warning: %v\n", err)
-		hasError = true
+		teardownError = true
 	} else {
 		fmt.Println("      done")
 	}
@@ -493,12 +498,12 @@ func cmdUninstallCodexRemote(host string) {
 	remoteState, err := shim.ReadRemoteState(session)
 	if err != nil {
 		fmt.Printf("      warning: could not read deploy state: %v\n", err)
-	}
-	if remoteState != nil {
+		stateError = true
+	} else if remoteState != nil {
 		remoteState.Codex = nil
 		if err := shim.WriteRemoteState(session, remoteState); err != nil {
 			fmt.Printf("      warning: could not update deploy state: %v\n", err)
-			hasError = true
+			stateError = true
 		} else {
 			fmt.Println("      codex block removed from deploy.json")
 		}
@@ -507,15 +512,18 @@ func cmdUninstallCodexRemote(host string) {
 	}
 
 	fmt.Println()
-	if hasError {
+	// Reflect a completed Codex teardown locally even when deploy.json cleanup
+	// only produced a warning; otherwise the sticky Codex flag can outlive a
+	// successful remote uninstall.
+	if !teardownError {
+		clearHostCodex(host)
+	}
+
+	if teardownError || stateError {
 		fmt.Println("Codex uninstall completed with warnings. Check issues above.")
 		os.Exit(1)
 	}
 	fmt.Println("Codex support removed successfully.")
-
-	// Reflect the Codex teardown in the local host registry. This is the
-	// only path that flips the sticky Codex flag back to false.
-	clearHostCodex(host)
 }
 
 // cmdUninstallCodexLocal cleans up Codex support on the local machine.
@@ -721,7 +729,12 @@ remote has a valid claude binary installed.
 	fmt.Printf("[3/7] Checking remote state...\n")
 	remoteState, err := shim.ReadRemoteState(session)
 	if err != nil {
-		log.Printf("      warning: could not read remote state: %v", err)
+		if force {
+			log.Printf("      warning: could not read remote state; ignoring because --force is set: %v", err)
+			remoteState = nil
+		} else {
+			log.Fatalf("      failed to read remote state: %v\n      Re-run with --force only if you intend to ignore deploy.json.", err)
+		}
 	}
 	if remoteState != nil && !force {
 		fmt.Printf("      remote state: binary=%s shim=%v\n", remoteState.BinaryVersion, remoteState.ShimInstalled)
@@ -759,7 +772,9 @@ remote has a valid claude binary installed.
 		// Stop bridge if running — it holds the binary open, preventing overwrite.
 		stopBridgeRemote(session)
 		// Ensure remote directory exists
-		session.Exec("mkdir -p ~/.local/bin")
+		if _, err := session.Exec("mkdir -p ~/.local/bin"); err != nil {
+			log.Fatalf("      failed to create remote binary directory: %v", err)
+		}
 		if err := shim.UploadBinaryViaSession(session, localBin, remoteBin); err != nil {
 			log.Fatalf("      failed: %v", err)
 		}
@@ -789,7 +804,9 @@ remote has a valid claude binary installed.
 		out, err := session.Exec(installCmd)
 		if err != nil {
 			// Shim might already exist, try uninstall then install
-			session.Exec(fmt.Sprintf("%s uninstall", remoteBin))
+			if uninstallOut, uninstallErr := session.Exec(fmt.Sprintf("%s uninstall", remoteBin)); uninstallErr != nil {
+				log.Printf("      warning: cleanup before install retry failed: %s: %v", uninstallOut, uninstallErr)
+			}
 			out, err = session.Exec(installCmd)
 			if err != nil {
 				log.Fatalf("      remote install failed: %s: %v", out, err)
@@ -836,8 +853,6 @@ remote has a valid claude binary installed.
 		}
 	}
 
-	// Update remote deploy state
-	localHash, _ := shim.LocalBinaryHash(localBin)
 	// Determine actual shim target from install output or prior state.
 	shimTarget := "xclip"
 	if needsShim {
@@ -848,16 +863,9 @@ remote has a valid claude binary installed.
 	} else if remoteState != nil && remoteState.ShimTarget != "" {
 		shimTarget = remoteState.ShimTarget
 	}
-	newState := &shim.DeployState{
-		BinaryHash:    localHash,
-		BinaryVersion: version,
-		ShimInstalled: true,
-		ShimTarget:    shimTarget,
-		PathFixed:     pathFixed,
-	}
-	// Preserve existing codex state when not using --codex.
-	if remoteState != nil && remoteState.Codex != nil && !opts.codex {
-		newState.Codex = remoteState.Codex
+	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.codex)
+	if err != nil {
+		log.Fatalf("      failed to prepare remote deploy state: %v", err)
 	}
 	if err := shim.WriteRemoteState(session, newState); err != nil {
 		log.Printf("      warning: could not write remote deploy state: %v", err)
@@ -894,6 +902,30 @@ remote has a valid claude binary installed.
 	// inside the registry, so a plain connect won't downgrade a previously
 	// recorded Codex=true.
 	recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
+}
+
+func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, codexRequested bool) (*shim.DeployState, error) {
+	localHash, err := shim.LocalBinaryHash(localBin)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &shim.DeployState{
+		BinaryHash:    localHash,
+		BinaryVersion: binaryVersion,
+		ShimInstalled: true,
+		ShimTarget:    shimTarget,
+		PathFixed:     pathFixed,
+	}
+	if remoteState != nil {
+		state.Notify = remoteState.Notify
+		state.ClaudeWrapper = remoteState.ClaudeWrapper
+		// Preserve existing codex state when not using --codex.
+		if remoteState.Codex != nil && !codexRequested {
+			state.Codex = remoteState.Codex
+		}
+	}
+	return state, nil
 }
 
 // connectNotifySetup performs notification bridge setup:
@@ -957,7 +989,10 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, 
 
 	// Step N5: Detect and configure Codex notify
 	codexInjected := false
-	if shim.RemoteHasCodex(session) {
+	hasCodex, err := shim.RemoteHasCodex(session)
+	if err != nil {
+		log.Printf("      warning: codex detection failed: %v", err)
+	} else if hasCodex {
 		fmt.Println("  [N5] Codex detected, injecting notify config...")
 		if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
 			log.Printf("      warning: codex config injection failed: %v", err)
@@ -1556,7 +1591,10 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 	} else {
 		fmt.Println("      Xvfb available")
 	}
-	session.Exec(fmt.Sprintf("mkdir -p %s", codexStateDir))
+	if _, err := session.Exec(fmt.Sprintf("mkdir -p %s", codexStateDir)); err != nil {
+		fmt.Printf("      failed to create Codex state dir: %v\n", err)
+		return false
+	}
 
 	// --force: tear down both bridge and Xvfb so they restart fresh.
 	// This handles port changes, display drift, and stale state.

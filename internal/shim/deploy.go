@@ -50,24 +50,28 @@ type DeployState struct {
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
+const remoteStateNotFound = "__CC_CLIP_DEPLOY_STATE_NOT_FOUND__"
 
 // ReadRemoteState reads the deploy state from the remote host via the SSH session.
 // Returns nil (not an error) when the state file does not exist.
-func ReadRemoteState(session *SSHSession) (*DeployState, error) {
-	out, err := session.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo '__NOTFOUND__'", remoteDeployPath))
+func ReadRemoteState(session RemoteExecutor) (*DeployState, error) {
+	readCmd := fmt.Sprintf("if [ ! -e %s ]; then printf '%s\\n'; else cat %s; fi", remoteDeployPath, remoteStateNotFound, remoteDeployPath)
+	out, err := session.Exec(readCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read remote deploy state: %w", err)
 	}
 
 	out = strings.TrimSpace(out)
-	if out == "__NOTFOUND__" || out == "" {
+	if out == remoteStateNotFound {
 		return nil, nil
+	}
+	if out == "" {
+		return nil, fmt.Errorf("remote deploy state is empty")
 	}
 
 	var state DeployState
 	if err := json.Unmarshal([]byte(out), &state); err != nil {
-		// Corrupted state file — treat as missing
-		return nil, nil
+		return nil, fmt.Errorf("remote deploy state is malformed: %w", err)
 	}
 
 	return &state, nil
