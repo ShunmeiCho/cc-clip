@@ -47,6 +47,33 @@ download() {
     fi
 }
 
+verify_checksum() {
+    local archive="$1" checksums="$2" archive_name="$3"
+    local expected actual
+
+    expected=$(awk -v name="$archive_name" '$2 == name {print $1; exit}' "$checksums")
+    if [ -z "$expected" ]; then
+        echo "Error: checksum for ${archive_name} not found in checksums.txt" >&2
+        exit 1
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$archive" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    else
+        echo "Error: sha256sum or shasum required for checksum verification" >&2
+        exit 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        echo "Error: checksum mismatch for ${archive_name}" >&2
+        echo "  expected: ${expected}" >&2
+        echo "  actual:   ${actual}" >&2
+        exit 1
+    fi
+}
+
 main() {
     PLATFORM=$(detect_platform)
     VERSION=$(get_latest_version)
@@ -60,12 +87,19 @@ main() {
 
     ARCHIVE_NAME="cc-clip_${VERSION#v}_${PLATFORM}.tar.gz"
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}"
+    CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
     TMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TMP_DIR"' EXIT
 
     echo "Downloading ${DOWNLOAD_URL}..."
     download "$DOWNLOAD_URL" "${TMP_DIR}/${ARCHIVE_NAME}"
+
+    echo "Downloading checksums.txt..."
+    download "$CHECKSUMS_URL" "${TMP_DIR}/checksums.txt"
+
+    echo "Verifying checksum..."
+    verify_checksum "${TMP_DIR}/${ARCHIVE_NAME}" "${TMP_DIR}/checksums.txt" "$ARCHIVE_NAME"
 
     echo "Extracting..."
     tar -xzf "${TMP_DIR}/${ARCHIVE_NAME}" -C "$TMP_DIR"

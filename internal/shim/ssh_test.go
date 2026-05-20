@@ -147,6 +147,22 @@ func TestConnArgsWithoutControlPath(t *testing.T) {
 	}
 }
 
+func TestSSHHostArgsInsertOptionSeparatorBeforeHost(t *testing.T) {
+	args := sshHostArgs([]string{"-o", "ClearAllForwardings=yes"}, "-oProxyCommand=evil", "uname -sm")
+	want := []string{"-o", "ClearAllForwardings=yes", "--", "-oProxyCommand=evil", "uname -sm"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("ssh args mismatch\n got: %q\nwant: %q", args, want)
+	}
+}
+
+func TestSCPHostArgsInsertOptionSeparatorBeforePaths(t *testing.T) {
+	args := scpUploadArgs([]string{"-o", "ClearAllForwardings=yes"}, "-local", "-oProxyCommand=evil", "/remote")
+	want := []string{"-o", "ClearAllForwardings=yes", "--", "-local", "-oProxyCommand=evil:/remote"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("scp args mismatch\n got: %q\nwant: %q", args, want)
+	}
+}
+
 func TestGenerateNotificationNonce(t *testing.T) {
 	nonce, err := GenerateNotificationNonce()
 	if err != nil {

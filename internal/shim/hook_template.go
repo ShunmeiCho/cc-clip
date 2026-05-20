@@ -27,10 +27,13 @@ d['_cc_clip_host'] = '${_CC_CLIP_HOST_ALIAS}'
 json.dump(d, sys.stdout)
 " 2>/dev/null || echo "$_payload")
 
-_http_code=$(curl -sf --connect-timeout 2 --max-time 5 -o /dev/null -w '%%{http_code}' -X POST \
-	-H "Authorization: Bearer $_nonce" \
-	-H "Content-Type: application/x-claude-hook" \
-	-H "User-Agent: cc-clip-hook/0.1" \
+_cc_clip_curl_config() {
+	printf 'header = "Authorization: Bearer %%s"\n' "$_nonce"
+	printf 'header = "Content-Type: application/x-claude-hook"\n'
+	printf 'header = "User-Agent: cc-clip-hook/0.1"\n'
+}
+
+_http_code=$(_cc_clip_curl_config | curl -sf --connect-timeout 2 --max-time 5 -K - -o /dev/null -w '%%{http_code}' -X POST \
 	-d "$_payload" \
 	"http://127.0.0.1:${_CC_CLIP_PORT}/notify" \
 	2>/dev/null) || _http_code="000"

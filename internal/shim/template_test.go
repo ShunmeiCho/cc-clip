@@ -88,6 +88,128 @@ func startMockDaemon(t *testing.T, tmpDir string) (int, string) {
 	return port, tokenFile
 }
 
+func writeFakeCurl(t *testing.T, dir string) (argvLog, stdinLog string) {
+	t.Helper()
+
+	argvLog = filepath.Join(dir, "curl-argv.log")
+	stdinLog = filepath.Join(dir, "curl-stdin.log")
+	curlPath := filepath.Join(dir, "curl")
+	script := "#!/bin/bash\n" +
+		"set -euo pipefail\n" +
+		"argv_log=" + strconv.Quote(argvLog) + "\n" +
+		"stdin_log=" + strconv.Quote(stdinLog) + "\n" +
+		"printf '%s\\n' \"$*\" > \"$argv_log\"\n" +
+		"for ((i=1; i<=$#; i++)); do\n" +
+		"  if [ \"${!i}\" = \"-K\" ]; then\n" +
+		"    next=$((i+1))\n" +
+		"    if [ \"${!next}\" = \"-\" ]; then\n" +
+		"      cat > \"$stdin_log\"\n" +
+		"      break\n" +
+		"    fi\n" +
+		"  fi\n" +
+		"done\n" +
+		"outfile=\"\"\n" +
+		"prev=\"\"\n" +
+		"for arg in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"-o\" ]; then outfile=\"$arg\"; fi\n" +
+		"  prev=\"$arg\"\n" +
+		"done\n" +
+		"url=\"${@: -1}\"\n" +
+		"case \"$url\" in\n" +
+		"  */clipboard/type) printf '{\"type\":\"image\",\"format\":\"png\"}\\n' ;;\n" +
+		"  */clipboard/image) if [ -n \"$outfile\" ]; then printf " + strconv.Quote(string(imagePayload)) + " > \"$outfile\"; else printf " + strconv.Quote(string(imagePayload)) + "; fi ;;\n" +
+		"  */notify) printf '204' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(curlPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake curl: %v", err)
+	}
+	return argvLog, stdinLog
+}
+
+func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	cases := []struct {
+		name   string
+		render func(port int, real string) string
+		args   []string
+	}{
+		{
+			name:   "xclip_json",
+			render: XclipShim,
+			args:   []string{"-selection", "clipboard", "-t", "TARGETS", "-o"},
+		},
+		{
+			name:   "xclip_binary",
+			render: XclipShim,
+			args:   []string{"-selection", "clipboard", "-t", "image/png", "-o"},
+		},
+		{
+			name:   "wlpaste_json",
+			render: WlPasteShim,
+			args:   []string{"--list-types"},
+		},
+		{
+			name:   "wlpaste_binary",
+			render: WlPasteShim,
+			args:   []string{"--type", "image/png"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			argvLog, stdinLog := writeFakeCurl(t, tmpDir)
+			port, tokenFile := startMockDaemon(t, tmpDir)
+
+			token := "secret-token-must-not-appear-in-argv"
+			if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0600); err != nil {
+				t.Fatalf("write token file: %v", err)
+			}
+
+			realBin := filepath.Join(tmpDir, "fake-real")
+			if err := os.WriteFile(realBin, []byte("#!/bin/bash\nexit 99\n"), 0755); err != nil {
+				t.Fatalf("write fake real: %v", err)
+			}
+
+			shimPath := filepath.Join(tmpDir, "shim.sh")
+			if err := os.WriteFile(shimPath, []byte(tc.render(port, realBin)), 0755); err != nil {
+				t.Fatalf("write shim: %v", err)
+			}
+
+			cmd := exec.Command("bash", append([]string{shimPath}, tc.args...)...)
+			cmd.Env = append(os.Environ(),
+				"PATH="+tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"CC_CLIP_PORT="+strconv.Itoa(port),
+				"CC_CLIP_TOKEN_FILE="+tokenFile,
+				"CC_CLIP_PROBE_TIMEOUT_MS=2000",
+				"CC_CLIP_FETCH_TIMEOUT_MS=5000",
+			)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("shim execution failed: %v output=%q", err, string(out))
+			}
+
+			argv, err := os.ReadFile(argvLog)
+			if err != nil {
+				t.Fatalf("read fake curl argv log: %v", err)
+			}
+			if strings.Contains(string(argv), token) {
+				t.Fatalf("token leaked through curl argv: %q", string(argv))
+			}
+
+			stdinConfig, err := os.ReadFile(stdinLog)
+			if err != nil {
+				t.Fatalf("read fake curl stdin config: %v", err)
+			}
+			if !strings.Contains(string(stdinConfig), token) {
+				t.Fatalf("expected token in curl stdin config, got %q", string(stdinConfig))
+			}
+		})
+	}
+}
+
 // TestShimInterceptsMatchingInvocations runs the generated bash shim against a
 // real mock HTTP daemon. For each case where the pattern *should* match, it
 // asserts that the shim's stdout contains the daemon's response (proving the

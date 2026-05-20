@@ -9,7 +9,7 @@ import (
 
 // DetectRemoteArch returns the remote system's GOARCH-compatible architecture string.
 func DetectRemoteArch(host string) (string, string, error) {
-	cmd := exec.Command("ssh", host, "uname -sm")
+	cmd := exec.Command("ssh", sshHostArgs(nil, host, "uname -sm")...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to detect remote arch: %w", err)
@@ -57,13 +57,13 @@ func LocalBinaryPath() (string, error) {
 
 // UploadBinary copies the cc-clip binary to the remote host.
 func UploadBinary(host, localBin, remoteBin string) error {
-	cmd := exec.Command("scp", localBin, fmt.Sprintf("%s:%s", host, remoteBin))
+	cmd := exec.Command("scp", scpUploadArgs(nil, localBin, host, remoteBin)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("scp failed: %s: %w", string(out), err)
 	}
 
 	// Make executable
-	cmd = exec.Command("ssh", host, fmt.Sprintf("chmod +x %s", remoteBin))
+	cmd = exec.Command("ssh", sshHostArgs(nil, host, fmt.Sprintf("chmod +x %s", remoteBin))...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("chmod failed: %s: %w", string(out), err)
 	}
@@ -74,7 +74,7 @@ func UploadBinary(host, localBin, remoteBin string) error {
 // RemoteExec runs a command on the remote host and returns output.
 func RemoteExec(host string, args ...string) (string, error) {
 	cmdStr := strings.Join(args, " ")
-	cmd := exec.Command("ssh", host, cmdStr)
+	cmd := exec.Command("ssh", sshHostArgs(nil, host, cmdStr)...)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
@@ -82,8 +82,8 @@ func RemoteExec(host string, args ...string) (string, error) {
 // WriteRemoteToken writes the session token to the remote host via stdin
 // to avoid exposing it in process arguments or shell history.
 func WriteRemoteToken(host, token string) error {
-	cmd := exec.Command("ssh", host,
-		"mkdir -p ~/.cache/cc-clip && cat > ~/.cache/cc-clip/session.token && chmod 600 ~/.cache/cc-clip/session.token")
+	cmd := exec.Command("ssh", sshHostArgs(nil, host,
+		"mkdir -p ~/.cache/cc-clip && cat > ~/.cache/cc-clip/session.token && chmod 600 ~/.cache/cc-clip/session.token")...)
 	cmd.Stdin = strings.NewReader(token + "\n")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to write remote token: %s: %w", string(out), err)

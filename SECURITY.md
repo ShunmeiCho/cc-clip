@@ -30,7 +30,6 @@ cc-clip is designed with the following security principles:
 - **Token authentication:** All clipboard API calls require a Bearer token with configurable TTL (default 30d, sliding renewal)
 - **CSPRNG tokens:** Clipboard tokens are 32 random bytes generated with `crypto/rand` and hex-encoded
 - **Constant-time validation:** Token comparison uses constant-time comparison to avoid token timing leaks
-- **User-Agent validation:** API requests must include a `cc-clip` User-Agent header
 - **Token file permissions:** Token files are written with `chmod 600`
 - **SSH tunnel:** All data between local and remote travels through the existing SSH connection
 - **Shim isolation:** The shim only intercepts specific `xclip` / `wl-paste` image invocation patterns; all other calls pass through to the real binary unchanged

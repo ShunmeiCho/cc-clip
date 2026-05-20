@@ -97,7 +97,7 @@ func RunRemote(host string, port int) []CheckResult {
 // Doctor checks should inspect the existing tunnel, not compete with it by opening a new one.
 func remoteExecNoForward(host string, args ...string) (string, error) {
 	cmdStr := strings.Join(args, " ")
-	cmd := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, cmdStr)
+	cmd := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, cmdStr)
 	hideConsoleWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
@@ -130,14 +130,7 @@ func tunnelOK(results []CheckResult) bool {
 func runImageProbe(host string, port int) []CheckResult {
 	// Run the probe FROM the remote host through the tunnel, not from local.
 	// This validates the full chain: remote -> tunnel -> daemon.
-	cmd := fmt.Sprintf(
-		`TOKEN=$(cat ~/.cache/cc-clip/session.token 2>/dev/null) && `+
-			`curl -sf --max-time 5 `+
-			`-H "Authorization: Bearer ${TOKEN}" `+
-			`-H "User-Agent: cc-clip/0.1" `+
-			`"http://127.0.0.1:%d/clipboard/type"`,
-		port)
-
+	cmd := imageProbeCommand(port)
 	out, err := remoteExecNoForward(host, cmd)
 	if err != nil {
 		return []CheckResult{{"image-probe", false, fmt.Sprintf("remote probe failed: %v (%s)", err, strings.TrimSpace(out))}}
@@ -151,6 +144,16 @@ func runImageProbe(host string, port int) []CheckResult {
 		return []CheckResult{{"image-probe", true, fmt.Sprintf("remote response: %s (copy an image to test)", out)}}
 	}
 	return []CheckResult{{"image-probe", false, fmt.Sprintf("unexpected response: %s", out)}}
+}
+
+func imageProbeCommand(port int) string {
+	return fmt.Sprintf(
+		`TOKEN=$(cat ~/.cache/cc-clip/session.token 2>/dev/null) && `+
+			`{ printf 'header = "Authorization: Bearer %%s"\n' "$TOKEN"; `+
+			`printf 'header = "User-Agent: cc-clip/0.1"\n'; } | `+
+			`curl -sf --max-time 5 -K - `+
+			`"http://127.0.0.1:%d/clipboard/type"`,
+		port)
 }
 
 // checkTokenMatch verifies the remote token matches the local daemon token.
