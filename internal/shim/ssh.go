@@ -448,11 +448,23 @@ func EnsureRemoteCodexNotifyConfig(session RemoteExecutor, port int) error {
 		}
 	}
 
-	// Append the managed block to the config file.
-	appendCmd := fmt.Sprintf(
-		"mkdir -p ~/.codex && cat >> %s << 'CC_CLIP_EOF'\n%s\nCC_CLIP_EOF",
+	// Insert the managed block at the TOML top level, before any [section].
+	// A naive `cat >>` appends to EOF which nests the block inside the last
+	// section header (e.g. [tui.model_availability_nux]), corrupting the file.
+	insertCmd := fmt.Sprintf(
+		"mkdir -p ~/.codex && touch %[1]s\n"+
+			"_CC_BLK=$(mktemp)\n"+
+			"cat > \"$_CC_BLK\" << 'CC_CLIP_EOF'\n"+
+			"\n%[2]s\nCC_CLIP_EOF\n"+
+			"if grep -qm1 '^\\[' %[1]s; then\n"+
+			"  _CC_LN=$(grep -nm1 '^\\[' %[1]s | cut -d: -f1)\n"+
+			"  { head -n$((_CC_LN - 1)) %[1]s; cat \"$_CC_BLK\"; echo; tail -n+\"$_CC_LN\" %[1]s; } > \"${_CC_BLK}.new\" && mv \"${_CC_BLK}.new\" %[1]s\n"+
+			"else\n"+
+			"  cat \"$_CC_BLK\" >> %[1]s\n"+
+			"fi\n"+
+			"rm -f \"$_CC_BLK\"",
 		configPath, managedBlock)
-	_, err = session.Exec(appendCmd)
+	_, err = session.Exec(insertCmd)
 	if err != nil {
 		return fmt.Errorf("failed to inject notify config into %s: %w", configPath, err)
 	}

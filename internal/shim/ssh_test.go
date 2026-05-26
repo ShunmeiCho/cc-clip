@@ -300,6 +300,29 @@ func TestEnsureRemoteCodexNotifyConfigReplacesManagedBlock(t *testing.T) {
 	}
 }
 
+func TestEnsureRemoteCodexNotifyConfigInsertsBeforeSections(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `model = "gpt-5"
+
+[tui.model_availability_nux]
+"gpt-5" = 4
+`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	notifyIdx := strings.Index(config, "notify =")
+	sectionIdx := strings.Index(config, "[tui.model_availability_nux]")
+	if notifyIdx < 0 || sectionIdx < 0 {
+		t.Fatalf("expected both notify and section in config: %q", config)
+	}
+	if notifyIdx > sectionIdx {
+		t.Fatalf("notify block must appear before [tui.model_availability_nux] to stay at TOML top level, got:\n%s", config)
+	}
+}
+
 func TestEnsureRemoteCodexNotifyConfigReturnsProbeError(t *testing.T) {
 	err := EnsureRemoteCodexNotifyConfig(&errorExecutor{err: fmt.Errorf("ssh failed")}, 18339)
 	if err == nil {
