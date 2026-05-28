@@ -349,7 +349,7 @@ func installWrapperWithSidecar(s SessionExecutor, port int) error {
 	// Pre-flight: refuse if sidecar already exists.
 	out, _ := s.Exec(`if test -e "$HOME/.local/bin/claude.cc-clip-real" || test -L "$HOME/.local/bin/claude.cc-clip-real"; then echo conflict; fi`)
 	if strings.TrimSpace(out) == "conflict" {
-		return fmt.Errorf("install: ~/.local/bin/claude.cc-clip-real already exists; remove it manually and re-run")
+		return fmt.Errorf("install: ~/.local/bin/claude.cc-clip-real already exists; inspect with `ls -la ~/.local/bin/claude*` (compare to ~/.local/bin/claude to decide if it is a stale backup safe to remove, or restore it as ~/.local/bin/claude before re-running)")
 	}
 
 	script := ClaudeWrapperScript(port)
@@ -449,8 +449,18 @@ touch "$config"
 
 stripped=$(sed '/^%[1]s$/,/^%[2]s$/d' "$config" | sed '/./,$!d')
 
-if printf '%%s\n' "$stripped" | grep -Eq '^[[:space:]]*notify[[:space:]]*='; then
-  echo "existing notify setting found in $config -- refusing to inject duplicate. Remove or comment out the existing notify line first" >&2
+# Section-aware top-level notify detection. Codex supports per-agent
+# notify overrides under [agents.X], which are NOT the same as the
+# top-level notify cc-clip injects. Only refuse when a notify line
+# appears in the file BEFORE any [section] header (i.e. in the TOML
+# top-level table). Lines after any [...] header belong to that
+# section's sub-table and must be ignored.
+if printf '%%s\n' "$stripped" | awk '
+  /^\[/ { in_section = 1; next }
+  in_section == 0 && /^[[:space:]]*notify[[:space:]]*=/ { found = 1 }
+  END { exit !found }
+'; then
+  echo "existing top-level notify setting found in $config -- refusing to inject duplicate. Remove or comment out the top-level notify line first ([agents.X].notify is fine)" >&2
   exit 7
 fi
 

@@ -278,6 +278,59 @@ func TestEnsureRemoteCodexNotifyConfigRefusesUserNotify(t *testing.T) {
 	}
 }
 
+// TestEnsureRemoteCodexNotifyConfigAllowsAgentSectionNotify asserts that a
+// notify key living inside a sub-table such as [agents.X] does NOT trigger
+// the top-level notify guard. Codex supports per-agent notify overrides;
+// cc-clip's top-level injection should not be blocked by them.
+//
+// Regression: prior to this test the injection script used
+// `grep -Eq '^[[:space:]]*notify[[:space:]]*='` which matched ANY notify
+// line regardless of section context, causing `cc-clip connect --codex` to
+// fail with exit status 7 whenever the user (or a previous tool) had set
+// an agent-level notify.
+func TestEnsureRemoteCodexNotifyConfigAllowsAgentSectionNotify(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `model = "gpt-5"
+
+[agents.docs_researcher]
+description = "Docs researcher"
+notify = ["other", "tool"]
+`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 9999); err != nil {
+		t.Fatalf("agent-level notify must not block top-level injection: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, "CC_CLIP_PORT=9999") {
+		t.Fatalf("managed block missing after agent-section notify present: %q", config)
+	}
+	if !strings.Contains(config, `[agents.docs_researcher]`) {
+		t.Fatalf("agent section must be preserved: %q", config)
+	}
+	if !strings.Contains(config, `notify = ["other", "tool"]`) {
+		t.Fatalf("agent-level notify line must be preserved verbatim: %q", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigStillRefusesTopLevelNotifyAboveSection
+// guards the other half of section-aware detection: a top-level notify
+// that appears BEFORE any section header must still trigger refusal. This
+// pins #67's original contract so it cannot be silently regressed.
+func TestEnsureRemoteCodexNotifyConfigStillRefusesTopLevelNotifyAboveSection(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `model = "gpt-5"
+notify = ["users", "thing"]
+
+[features]
+foo = true
+`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err == nil {
+		t.Fatal("top-level notify (above any section) must still be refused")
+	}
+}
+
 func TestEnsureRemoteCodexNotifyConfigReplacesManagedBlock(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
 	writeTestCodexConfig(t, s.home, "# before\n"+
