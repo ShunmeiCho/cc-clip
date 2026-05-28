@@ -124,6 +124,57 @@ func TestRegisterNotificationNonceCapsRegistry(t *testing.T) {
 	}
 }
 
+func TestRegisterNotificationNonceSameHostKeepsOrderBounded(t *testing.T) {
+	srv, _ := newTestServer(&mockClipboard{})
+
+	// Re-register N nonces for the SAME host. Each call must revoke the
+	// previous nonce in BOTH the map AND the order slice; otherwise the
+	// slice grows unbounded and the cap is defeated.
+	for i := 0; i < 200; i++ {
+		nonce := fmt.Sprintf("rotate-%04d", i)
+		if err := srv.RegisterNotificationNonceForHost(nonce, "host-shared"); err != nil {
+			t.Fatalf("register nonce %d: %v", i, err)
+		}
+	}
+
+	if got := len(srv.notifyNonces); got != 1 {
+		t.Fatalf("expected single live nonce after same-host re-registration, got %d", got)
+	}
+	if got := len(srv.notifyNoncesOrder); got != 1 {
+		t.Fatalf("notifyNoncesOrder must stay in sync with the map; got %d entries", got)
+	}
+}
+
+func TestCleanupExpiredNoncesShrinksOrderSlice(t *testing.T) {
+	srv, _ := newTestServer(&mockClipboard{})
+
+	// Register 50 nonces with unique hosts so revocation does not interfere.
+	for i := 0; i < 50; i++ {
+		nonce := fmt.Sprintf("nonce-%04d", i)
+		host := fmt.Sprintf("host-%04d", i)
+		if err := srv.RegisterNotificationNonceForHost(nonce, host); err != nil {
+			t.Fatalf("register nonce %d: %v", i, err)
+		}
+	}
+
+	// Manually expire every entry by rewriting ExpiresAt into the past.
+	srv.noncesMu.Lock()
+	for k, v := range srv.notifyNonces {
+		v.ExpiresAt = time.Now().Add(-time.Hour)
+		srv.notifyNonces[k] = v
+	}
+	srv.noncesMu.Unlock()
+
+	srv.CleanupExpiredNonces()
+
+	if got := len(srv.notifyNonces); got != 0 {
+		t.Fatalf("expected map empty after cleanup, got %d", got)
+	}
+	if got := len(srv.notifyNoncesOrder); got != 0 {
+		t.Fatalf("notifyNoncesOrder must be cleared by CleanupExpiredNonces; got %d entries", got)
+	}
+}
+
 func TestClipboardTypeRequiresAuth(t *testing.T) {
 	clip := &mockClipboard{clipType: ClipboardInfo{Type: ClipboardImage, Format: "png"}}
 	srv, _ := newTestServer(clip)

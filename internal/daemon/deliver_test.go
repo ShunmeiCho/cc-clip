@@ -138,6 +138,72 @@ func TestCmuxDelivererHonorsCanceledContext(t *testing.T) {
 	}
 }
 
+// fakeCtxCanceledDeliverer always returns context.Canceled, simulating
+// an adapter that observed cancellation mid-flight.
+type fakeCtxCanceledDeliverer struct {
+	name  string
+	calls int
+}
+
+func (f *fakeCtxCanceledDeliverer) Deliver(_ context.Context, _ NotifyEnvelope) error {
+	f.calls++
+	return context.Canceled
+}
+
+func (f *fakeCtxCanceledDeliverer) Name() string { return f.name }
+
+func TestDeliveryChainShortCircuitsOnContextCanceled(t *testing.T) {
+	// If the first adapter returns context.Canceled, the chain must
+	// surface it and NOT fall through to the next adapter. Falling
+	// through would silently override the caller's intent to abort.
+	first := &fakeCtxCanceledDeliverer{name: "cmux"}
+	second := &fakeDeliverer{name: "darwin"} // would succeed if called
+	chain := &DeliveryChain{adapters: []Deliverer{first, second}}
+
+	err := chain.Deliver(context.Background(), NotifyEnvelope{
+		Kind:   KindGenericMessage,
+		Source: "test",
+		GenericMessage: &GenericMessagePayload{
+			Title: "cancelled",
+			Body:  "should propagate",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected chain to propagate context.Canceled, got %v", err)
+	}
+	if first.calls != 1 {
+		t.Fatalf("expected first adapter to be called once, got %d", first.calls)
+	}
+	if second.calls != 0 {
+		t.Fatalf("expected fallback NOT to run after cancellation, got %d calls", second.calls)
+	}
+}
+
+func TestDeliveryChainBailsBeforeAdapterWhenContextDone(t *testing.T) {
+	// If ctx is already canceled before the loop starts, no adapter
+	// should be invoked at all — the chain returns the ctx error immediately.
+	first := &fakeDeliverer{name: "cmux"}
+	chain := &DeliveryChain{adapters: []Deliverer{first}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := chain.Deliver(ctx, NotifyEnvelope{
+		Kind:   KindGenericMessage,
+		Source: "test",
+		GenericMessage: &GenericMessagePayload{
+			Title: "pre-cancelled",
+			Body:  "should not run any adapter",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if first.calls != 0 {
+		t.Fatalf("expected zero adapter calls when ctx is pre-canceled, got %d", first.calls)
+	}
+}
+
 func TestFormatNotificationImageTransfer(t *testing.T) {
 	env := NotifyEnvelope{
 		Kind:   KindImageTransfer,

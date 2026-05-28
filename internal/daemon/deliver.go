@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 )
@@ -22,15 +23,28 @@ type DeliveryChain struct {
 // Deliver iterates through adapters in order. Returns nil on the first
 // success. If all adapters fail, returns the last error. If no adapters
 // are configured, returns an error.
+//
+// Context cancellation short-circuits the chain: if ctx is already done
+// before trying an adapter, or an adapter returns context.Canceled /
+// context.DeadlineExceeded, Deliver returns that error immediately
+// instead of falling through to the next adapter. Cancellation expresses
+// "caller has given up" — falling through to another adapter would
+// silently override that intent.
 func (c *DeliveryChain) Deliver(ctx context.Context, env NotifyEnvelope) error {
 	var lastErr error
 	for _, adapter := range c.adapters {
-		if err := adapter.Deliver(ctx, env); err != nil {
-			lastErr = err
-			log.Printf("delivery adapter %s failed: %v", adapter.Name(), err)
-			continue
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return nil
+		err := adapter.Deliver(ctx, env)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		lastErr = err
+		log.Printf("delivery adapter %s failed: %v", adapter.Name(), err)
 	}
 	if lastErr == nil {
 		return fmt.Errorf("no delivery adapters configured")

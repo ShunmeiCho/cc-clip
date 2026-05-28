@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // DarwinNotifier delivers macOS notifications with image thumbnails
@@ -21,6 +22,11 @@ type DarwinNotifier struct {
 // maxPreviewFiles limits the number of preview images retained on disk.
 const maxPreviewFiles = 50
 
+// previewCleanupInterval governs how often the background goroutine
+// re-runs cleanupPreviews. 5 minutes balances responsiveness against
+// wasted IO on idle daemons.
+const previewCleanupInterval = 5 * time.Minute
+
 func NewDarwinNotifier() *DarwinNotifier {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".cache", "cc-clip", "previews")
@@ -28,7 +34,29 @@ func NewDarwinNotifier() *DarwinNotifier {
 	cleanupPreviews(dir, maxPreviewFiles)
 
 	tn, _ := exec.LookPath("terminal-notifier")
-	return &DarwinNotifier{previewDir: dir, terminalNotifier: tn}
+	n := &DarwinNotifier{previewDir: dir, terminalNotifier: tn}
+
+	// Background cleanup loop. The goroutine outlives any individual
+	// Deliver call so cleanup never blocks the notification hot path,
+	// and it does not need to be torn down explicitly because the
+	// notifier is a process-singleton — the OS reaps the goroutine on
+	// daemon exit. Tests that construct DarwinNotifier via a struct
+	// literal (instead of NewDarwinNotifier) intentionally skip the
+	// goroutine, keeping their behaviour deterministic.
+	go n.runBackgroundCleanup(previewCleanupInterval)
+
+	return n
+}
+
+// runBackgroundCleanup periodically prunes the preview cache. Replaces
+// the per-Deliver synchronous cleanup that previously sat on the hot
+// path. Runs until the process exits.
+func (n *DarwinNotifier) runBackgroundCleanup(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		cleanupPreviews(n.previewDir, maxPreviewFiles)
+	}
 }
 
 // cleanupPreviews removes the oldest preview files when the count exceeds max.

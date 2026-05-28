@@ -113,11 +113,14 @@ func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 	now := time.Now()
 	s.noncesMu.Lock()
 	defer s.noncesMu.Unlock()
-	// Revoke previous nonce for the same host.
+	// Revoke previous nonce for the same host. We must update both the
+	// map AND the order slice so same-host re-registrations cannot grow
+	// notifyNoncesOrder unbounded (which would defeat the entire cap).
 	if host != "" {
 		for k, v := range s.notifyNonces {
 			if v.Host == host {
 				delete(s.notifyNonces, k)
+				s.removeFromNoncesOrder(k)
 			}
 		}
 	}
@@ -133,15 +136,24 @@ func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 		ExpiresAt: now.Add(nonceTTL),
 	}
 	// Cap registry size by evicting oldest entries beyond the limit.
-	// Stale order entries (already deleted via same-host revocation or
-	// CleanupExpiredNonces) are skipped naturally because their map
-	// lookup is a no-op delete.
 	for len(s.notifyNonces) > maxNonces && len(s.notifyNoncesOrder) > 0 {
 		oldest := s.notifyNoncesOrder[0]
 		s.notifyNoncesOrder = s.notifyNoncesOrder[1:]
 		delete(s.notifyNonces, oldest)
 	}
 	return nil
+}
+
+// removeFromNoncesOrder removes the first occurrence of nonce from
+// notifyNoncesOrder. Linear O(n), but n is bounded by maxNonces.
+// Caller must hold s.noncesMu.
+func (s *Server) removeFromNoncesOrder(nonce string) {
+	for i, n := range s.notifyNoncesOrder {
+		if n == nonce {
+			s.notifyNoncesOrder = append(s.notifyNoncesOrder[:i], s.notifyNoncesOrder[i+1:]...)
+			return
+		}
+	}
 }
 
 // validNotificationNonce checks whether the given nonce is registered and not expired.
@@ -156,6 +168,7 @@ func (s *Server) validNotificationNonce(nonce string) bool {
 }
 
 // CleanupExpiredNonces removes nonces that have passed their TTL.
+// Order slice is updated alongside so it does not grow unbounded.
 func (s *Server) CleanupExpiredNonces() {
 	now := time.Now()
 	s.noncesMu.Lock()
@@ -163,6 +176,7 @@ func (s *Server) CleanupExpiredNonces() {
 	for k, v := range s.notifyNonces {
 		if now.After(v.ExpiresAt) {
 			delete(s.notifyNonces, k)
+			s.removeFromNoncesOrder(k)
 		}
 	}
 }
