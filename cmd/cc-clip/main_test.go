@@ -307,13 +307,53 @@ func TestRegisterNonceWithDaemonIntegration(t *testing.T) {
 	port := extractPort(t, ts.URL)
 	testNonce := "test-nonce-0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
 
-	if err := registerNonceWithDaemon(port, sess.Token, testNonce); err != nil {
+	if err := registerNonceWithDaemon(port, sess.Token, testNonce, ""); err != nil {
 		t.Fatalf("registerNonceWithDaemon failed: %v", err)
 	}
 
 	// Verify the nonce works by sending a health probe
 	if err := runNotificationHealthProbe(port, testNonce); err != nil {
 		t.Fatalf("health probe failed after nonce registration: %v", err)
+	}
+}
+
+// TestRegisterNonceWithDaemonHostRevokesPrior asserts the client→daemon
+// wiring: a second registration for the same host invalidates the first
+// nonce immediately, instead of waiting on TTL or FIFO eviction. This
+// regression-guards the host parameter threading through main.go +
+// connectNotifySetup + registerNonceWithDaemon + handleRegisterNonce.
+func TestRegisterNonceWithDaemonHostRevokesPrior(t *testing.T) {
+	tm := token.NewManager(time.Hour)
+	sess, err := tm.Generate()
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+	store := session.NewStore(12 * time.Hour)
+	srv := daemon.NewServer("127.0.0.1:0", &testClipboard{}, tm, store)
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	port := extractPort(t, ts.URL)
+
+	oldNonce := "old-nonce-0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
+	newNonce := "new-nonce-fedcba9876543210fedcba9876543210fedcba9876543210fedcba98765432"
+	const host = "venus.example"
+
+	if err := registerNonceWithDaemon(port, sess.Token, oldNonce, host); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if err := runNotificationHealthProbe(port, oldNonce); err != nil {
+		t.Fatalf("old nonce should be valid right after registration: %v", err)
+	}
+
+	if err := registerNonceWithDaemon(port, sess.Token, newNonce, host); err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+	if err := runNotificationHealthProbe(port, newNonce); err != nil {
+		t.Fatalf("new nonce should be valid after reregistration: %v", err)
+	}
+	if err := runNotificationHealthProbe(port, oldNonce); err == nil {
+		t.Fatal("same-host reconnect must revoke the previous nonce, but old nonce still authenticates")
 	}
 }
 

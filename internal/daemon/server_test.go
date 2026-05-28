@@ -124,6 +124,38 @@ func TestRegisterNotificationNonceCapsRegistry(t *testing.T) {
 	}
 }
 
+func TestHandleRegisterNonceRevokesPreviousNonceForSameHost(t *testing.T) {
+	srv, tok := newTestServer(&mockClipboard{})
+
+	post := func(nonce, host string) int {
+		body := fmt.Sprintf(`{"nonce":%q,"host":%q}`, nonce, host)
+		req := httptest.NewRequest("POST", "/register-nonce", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("User-Agent", "cc-clip/connect")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := post("nonce-old", "host-venus"); code != http.StatusNoContent {
+		t.Fatalf("first register: expected 204, got %d", code)
+	}
+	if !srv.validNotificationNonce("nonce-old") {
+		t.Fatal("first registration should make nonce-old valid")
+	}
+
+	if code := post("nonce-new", "host-venus"); code != http.StatusNoContent {
+		t.Fatalf("second register: expected 204, got %d", code)
+	}
+	if !srv.validNotificationNonce("nonce-new") {
+		t.Fatal("second registration should make nonce-new valid")
+	}
+	if srv.validNotificationNonce("nonce-old") {
+		t.Fatal("second registration for the same host must revoke nonce-old; old nonce still valid")
+	}
+}
+
 func TestRegisterNotificationNonceSameHostKeepsOrderBounded(t *testing.T) {
 	srv, _ := newTestServer(&mockClipboard{})
 

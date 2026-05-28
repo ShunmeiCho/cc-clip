@@ -887,7 +887,7 @@ remote has a valid claude binary installed.
 
 	// Notification bridge setup (unless --no-notify)
 	if !opts.noNotify {
-		connectNotifySetup(session, port, daemonToken, newState)
+		connectNotifySetup(session, port, daemonToken, host, newState)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not write remote deploy state: %v", err)
 		}
@@ -946,7 +946,7 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 // 4. Print Claude Code hook config
 // 5. Detect and configure Codex notify (if ~/.codex exists)
 // 6. Run health probe
-func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, state *shim.DeployState) {
+func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host string, state *shim.DeployState) {
 	fmt.Println()
 	fmt.Println("Notification bridge setup:")
 
@@ -958,8 +958,10 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, 
 		return
 	}
 
-	// Register nonce with the local daemon via HTTP
-	if err := registerNonceWithDaemon(port, daemonToken, notifyNonce); err != nil {
+	// Register nonce with the local daemon via HTTP. host binds this
+	// nonce to the SSH target so a reconnect immediately revokes the
+	// previously issued nonce instead of waiting on TTL or FIFO cap.
+	if err := registerNonceWithDaemon(port, daemonToken, notifyNonce, host); err != nil {
 		log.Printf("      warning: failed to register nonce with daemon: %v", err)
 		return
 	}
@@ -1036,11 +1038,19 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken string, 
 
 // registerNonceWithDaemon sends the notification nonce to the local daemon
 // via POST /register-nonce, authenticated with the clipboard bearer token.
-func registerNonceWithDaemon(port int, bearerToken, nonce string) error {
-	payload := fmt.Sprintf(`{"nonce":%q}`, nonce)
+// host binds the nonce to the SSH target so the daemon can revoke any
+// previously issued nonce for the same host on reconnect.
+func registerNonceWithDaemon(port int, bearerToken, nonce, host string) error {
+	payloadBytes, err := json.Marshal(struct {
+		Nonce string `json:"nonce"`
+		Host  string `json:"host,omitempty"`
+	}{Nonce: nonce, Host: host})
+	if err != nil {
+		return fmt.Errorf("failed to encode register-nonce payload: %w", err)
+	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/register-nonce", port)
 
-	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(payloadBytes)))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

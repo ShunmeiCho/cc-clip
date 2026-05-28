@@ -376,17 +376,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRegisterNonce accepts a notification nonce from an authenticated
-// connect session. The request body is a JSON object with a "nonce" field.
+// connect session. The request body is a JSON object with "nonce" and
+// optional "host" fields. When host is non-empty, any previous nonce
+// bound to that host is revoked so a reconnect immediately invalidates
+// the prior credential instead of waiting for TTL or FIFO eviction.
 // Protected by authMiddleware (requires clipboard bearer token).
 func (s *Server) handleRegisterNonce(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Nonce string `json:"nonce"`
+		Host  string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if err := s.RegisterNotificationNonce(req.Nonce); err != nil {
+	if err := s.RegisterNotificationNonceForHost(req.Nonce, req.Host); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
