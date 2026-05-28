@@ -414,49 +414,107 @@ func RemoteHasCodex(session RemoteExecutor) (bool, error) {
 
 // EnsureRemoteCodexNotifyConfig injects the cc-clip notification hook
 // block into ~/.codex/config.toml using # cc-clip-managed guard markers.
-// Idempotent: if the managed block already exists, it is replaced.
-// If the user already has a non-managed `notify` key, injection is refused
-// to avoid creating duplicate TOML keys.
+//
+// The managed block is prepended above any [section] header so that
+// `notify` is parsed as a top-level TOML key. A naive append would land
+// the block inside whatever section happens to be last in the file
+// (e.g. [tui.model_availability_nux]), which TOML interprets as
+// tui.model_availability_nux.notify and Codex rejects with
+// "invalid type: sequence, expected u32".
+//
+// Crash-safety: the rewrite is staged into a mktemp file inside
+// ~/.codex/ (same filesystem) and then mv'd over config.toml so the
+// final swap is atomic via rename(2). mktemp's default $TMPDIR is
+// typically tmpfs on Linux, which would silently degrade mv to a
+// non-atomic copy+unlink — that path is avoided here.
+//
+// Idempotency: if a prior managed block exists, it is stripped before
+// rebuilding. The non-managed-notify guard is applied to the stripped
+// content so re-injection never false-fires on our own block.
+//
+// All work runs inside one bash script with `set -e` and a cleanup
+// trap, so any internal failure (mktemp, sed, mv) propagates to a
+// non-zero SSH exit code instead of being masked by the trailing
+// `rm -f` of the temp file.
 func EnsureRemoteCodexNotifyConfig(session RemoteExecutor, port int) error {
 	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
 	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
-	const configPath = "~/.codex/config.toml"
 
 	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd, port)
 
-	// Check if the managed block already exists.
-	out, err := remoteOptionalGrep(session, "-F", markerStart, configPath)
-	if err != nil {
-		return fmt.Errorf("failed to check managed notify block in %s: %w", configPath, err)
-	}
-	if strings.Contains(out, markerStart) {
-		// Replace existing block using sed.
-		sedCmd := fmt.Sprintf(
-			`sed -i.cc-clip-bak '/%s/,/%s/d' %s && rm -f %s.cc-clip-bak`,
-			sedEscape(markerStart), sedEscape(markerEnd), configPath, configPath)
-		if _, err := session.Exec(sedCmd); err != nil {
-			return fmt.Errorf("failed to replace existing managed notify block in %s: %w", configPath, err)
-		}
-	} else {
-		// Check for a user-managed notify key (not ours) to avoid duplicate keys.
-		userNotify, err := remoteOptionalGrep(session, "-E", `^[[:space:]]*notify[[:space:]]*=`, configPath)
-		if err != nil {
-			return fmt.Errorf("failed to check existing notify setting in %s: %w", configPath, err)
-		}
-		if strings.TrimSpace(userNotify) != "" {
-			return fmt.Errorf("existing notify setting found in %s — refusing to inject duplicate. Remove or comment out the existing notify line first", configPath)
-		}
+	script := fmt.Sprintf(`set -e
+mkdir -p ~/.codex
+config=~/.codex/config.toml
+touch "$config"
+
+stripped=$(sed '/^%[1]s$/,/^%[2]s$/d' "$config" | sed '/./,$!d')
+
+if printf '%%s\n' "$stripped" | grep -Eq '^[[:space:]]*notify[[:space:]]*='; then
+  echo "existing notify setting found in $config -- refusing to inject duplicate. Remove or comment out the existing notify line first" >&2
+  exit 7
+fi
+
+tmp=$(mktemp "$HOME/.codex/.config.toml.cc-clip.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+
+{
+  cat <<'CC_CLIP_MANAGED_BLOCK_EOF'
+%[3]s
+CC_CLIP_MANAGED_BLOCK_EOF
+  if [ -n "$stripped" ]; then
+    printf '\n%%s\n' "$stripped"
+  fi
+} > "$tmp"
+
+if [ -s "$config" ]; then
+  chmod --reference="$config" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+fi
+
+mv "$tmp" "$config"
+trap - EXIT
+`, sedEscape(markerStart), sedEscape(markerEnd), managedBlock)
+
+	if _, err := session.Exec(script); err != nil {
+		return fmt.Errorf("failed to inject notify config into ~/.codex/config.toml: %w", err)
 	}
 
-	// Append the managed block to the config file.
-	appendCmd := fmt.Sprintf(
-		"mkdir -p ~/.codex && cat >> %s << 'CC_CLIP_EOF'\n%s\nCC_CLIP_EOF",
-		configPath, managedBlock)
-	_, err = session.Exec(appendCmd)
-	if err != nil {
-		return fmt.Errorf("failed to inject notify config into %s: %w", configPath, err)
-	}
+	return nil
+}
 
+// StripRemoteCodexNotifyConfig removes the cc-clip managed notify block
+// from ~/.codex/config.toml during uninstall. It is a no-op if the file
+// or block does not exist. Uses the same atomic mktemp+mv pattern as
+// EnsureRemoteCodexNotifyConfig so a crash mid-write leaves either the
+// original file or the cleaned file — never a partial state.
+func StripRemoteCodexNotifyConfig(session RemoteExecutor) error {
+	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
+	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
+
+	script := fmt.Sprintf(`set -e
+config=~/.codex/config.toml
+if [ ! -f "$config" ]; then
+  exit 0
+fi
+if ! grep -qF '%[1]s' "$config"; then
+  exit 0
+fi
+
+tmp=$(mktemp "$HOME/.codex/.config.toml.cc-clip.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+
+sed '/^%[2]s$/,/^%[3]s$/d' "$config" > "$tmp"
+
+if [ -s "$config" ]; then
+  chmod --reference="$config" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+fi
+
+mv "$tmp" "$config"
+trap - EXIT
+`, markerStart, sedEscape(markerStart), sedEscape(markerEnd))
+
+	if _, err := session.Exec(script); err != nil {
+		return fmt.Errorf("failed to strip cc-clip notify block from ~/.codex/config.toml: %w", err)
+	}
 	return nil
 }
 

@@ -307,15 +307,165 @@ func TestEnsureRemoteCodexNotifyConfigReturnsProbeError(t *testing.T) {
 	}
 }
 
-func TestEnsureRemoteCodexNotifyConfigStopsOnSedError(t *testing.T) {
-	exec := &codexNotifySedErrorExecutor{}
+// TestEnsureRemoteCodexNotifyConfigPrependsBeforeSection is the primary
+// regression test for the F1 (section-scoping) bug.
+func TestEnsureRemoteCodexNotifyConfigPrependsBeforeSection(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `model = "gpt-5"
 
-	err := EnsureRemoteCodexNotifyConfig(exec, 18339)
-	if err == nil {
-		t.Fatal("EnsureRemoteCodexNotifyConfig should surface sed errors")
+[tui.model_availability_nux]
+"gpt-5" = 4
+`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
 	}
-	if exec.appended {
-		t.Fatal("EnsureRemoteCodexNotifyConfig appended after sed failure")
+
+	config := readTestCodexConfig(t, s.home)
+	notifyIdx := strings.Index(config, "notify =")
+	sectionIdx := strings.Index(config, "[tui.model_availability_nux]")
+	if notifyIdx < 0 || sectionIdx < 0 {
+		t.Fatalf("expected both notify and section in config: %q", config)
+	}
+	if notifyIdx > sectionIdx {
+		t.Fatalf("notify must appear before [tui.model_availability_nux] to stay at TOML top level, got:\n%s", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigFirstLineSection covers the corner case
+// where the very first line is a [section] header.
+func TestEnsureRemoteCodexNotifyConfigFirstLineSection(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "[tui.model_availability_nux]\n\"gpt-5\" = 4\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	notifyIdx := strings.Index(config, "notify =")
+	sectionIdx := strings.Index(config, "[tui.model_availability_nux]")
+	if notifyIdx < 0 || sectionIdx < 0 || notifyIdx > sectionIdx {
+		t.Fatalf("notify must precede the first-line section, got:\n%s", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigNoTrailingNewline ensures the rewrite
+// does not concatenate the managed block with the last line.
+func TestEnsureRemoteCodexNotifyConfigNoTrailingNewline(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, `model = "gpt-5"`)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if strings.Contains(config, `gpt-5"# >>>`) || strings.Contains(config, `gpt-5"#>>>`) {
+		t.Fatalf("managed block must not concatenate with trailing line, got:\n%s", config)
+	}
+	if !strings.HasSuffix(config, "\n") {
+		t.Fatalf("rewritten config must end with newline, got: %q", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigIdempotentReinjection asserts running
+// the injection twice yields a byte-identical result.
+func TestEnsureRemoteCodexNotifyConfigIdempotentReinjection(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "model = \"gpt-5\"\n\n[tui.foo]\n\"gpt-5\" = 4\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("first injection failed: %v", err)
+	}
+	first := readTestCodexConfig(t, s.home)
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("second injection failed: %v", err)
+	}
+	second := readTestCodexConfig(t, s.home)
+
+	if first != second {
+		t.Fatalf("re-injection must be byte-identical.\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if strings.Count(second, "# >>> cc-clip notify (do not edit) >>>") != 1 {
+		t.Fatalf("expected exactly one managed block, got:\n%s", second)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigEmptyFile covers an empty existing
+// config — no extra blank lines should pad the managed block.
+func TestEnsureRemoteCodexNotifyConfigEmptyFile(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, "# >>> cc-clip notify (do not edit) >>>") {
+		t.Fatalf("managed block missing: %q", config)
+	}
+	if strings.Contains(config, "\n\n\n") {
+		t.Fatalf("empty file should not produce triple newlines, got: %q", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigFileDoesNotExist covers the case
+// where ~/.codex/ itself does not exist yet.
+func TestEnsureRemoteCodexNotifyConfigFileDoesNotExist(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, "notify =") {
+		t.Fatalf("managed block missing after first-run write: %q", config)
+	}
+}
+
+// TestStripRemoteCodexNotifyConfigRemovesManagedBlock covers the
+// uninstall companion: managed block must be removed, user content
+// preserved.
+func TestStripRemoteCodexNotifyConfigRemovesManagedBlock(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "model = \"gpt-5\"\n"+
+		codexNotifyManagedBlock("# >>> cc-clip notify (do not edit) >>>", "# <<< cc-clip notify (do not edit) <<<", 18339)+
+		"\n[tui.foo]\n\"gpt-5\" = 4\n")
+
+	if err := StripRemoteCodexNotifyConfig(s); err != nil {
+		t.Fatalf("StripRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if strings.Contains(config, "cc-clip notify") {
+		t.Fatalf("managed block must be fully removed, got:\n%s", config)
+	}
+	if !strings.Contains(config, "[tui.foo]") || !strings.Contains(config, `model = "gpt-5"`) {
+		t.Fatalf("user content must be preserved, got:\n%s", config)
+	}
+}
+
+// TestStripRemoteCodexNotifyConfigNoOpWhenAbsent verifies that strip on
+// a config without a managed block (or missing file) is a no-op.
+func TestStripRemoteCodexNotifyConfigNoOpWhenAbsent(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+
+	original := `model = "gpt-5"` + "\n[tui.foo]\n\"gpt-5\" = 4\n"
+	writeTestCodexConfig(t, s.home, original)
+	if err := StripRemoteCodexNotifyConfig(s); err != nil {
+		t.Fatalf("strip on no-block file failed: %v", err)
+	}
+	if got := readTestCodexConfig(t, s.home); got != original {
+		t.Fatalf("strip must not modify file without managed block.\nwant: %q\ngot:  %q", original, got)
+	}
+
+	s2 := &localSession{home: t.TempDir()}
+	if err := StripRemoteCodexNotifyConfig(s2); err != nil {
+		t.Fatalf("strip on missing file must be no-op, got: %v", err)
 	}
 }
 
@@ -346,23 +496,6 @@ func parseUnameOutput(output string) (string, string, error) {
 func TestSessionExecutorInterface_StaticConformance(t *testing.T) {
 	// Compile-time assertion: *SSHSession implements SessionExecutor.
 	var _ SessionExecutor = (*SSHSession)(nil)
-}
-
-type codexNotifySedErrorExecutor struct {
-	appended bool
-}
-
-func (c *codexNotifySedErrorExecutor) Exec(cmd string) (string, error) {
-	if strings.Contains(cmd, "grep -F") {
-		return "# >>> cc-clip notify (do not edit) >>>", nil
-	}
-	if strings.Contains(cmd, "sed -i") {
-		return "", fmt.Errorf("sed failed")
-	}
-	if strings.Contains(cmd, "cat >>") {
-		c.appended = true
-	}
-	return "", nil
 }
 
 func writeTestCodexConfig(t *testing.T, home, content string) {

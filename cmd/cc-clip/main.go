@@ -462,12 +462,12 @@ func cmdUninstallCodexRemote(host string) {
 	var stateError bool
 
 	// Step 1: Stop x11-bridge
-	fmt.Println("[1/5] Stopping x11-bridge...")
+	fmt.Println("[1/6] Stopping x11-bridge...")
 	stopBridgeRemote(session)
 	fmt.Println("      done")
 
 	// Step 2: Stop Xvfb
-	fmt.Println("[2/5] Stopping Xvfb...")
+	fmt.Println("[2/6] Stopping Xvfb...")
 	if err := xvfb.StopRemote(session, codexStateDir); err != nil {
 		fmt.Printf("      warning: %v\n", err)
 		teardownError = true
@@ -476,7 +476,7 @@ func cmdUninstallCodexRemote(host string) {
 	}
 
 	// Step 3: Remove codex state directory
-	fmt.Println("[3/5] Removing codex state files...")
+	fmt.Println("[3/6] Removing codex state files...")
 	if _, err := session.Exec(fmt.Sprintf("rm -rf %s", codexStateDir)); err != nil {
 		fmt.Printf("      warning: could not remove codex state files: %v\n", err)
 		teardownError = true
@@ -484,8 +484,19 @@ func cmdUninstallCodexRemote(host string) {
 		fmt.Println("      done")
 	}
 
-	// Step 4: Remove DISPLAY marker
-	fmt.Println("[4/5] Removing DISPLAY marker...")
+	// Step 4: Strip cc-clip notify block from ~/.codex/config.toml.
+	// Without this, codex keeps trying to invoke a now-missing
+	// cc-clip binary on every hook event.
+	fmt.Println("[4/6] Stripping notify block from ~/.codex/config.toml...")
+	if err := shim.StripRemoteCodexNotifyConfig(session); err != nil {
+		fmt.Printf("      warning: %v\n", err)
+		teardownError = true
+	} else {
+		fmt.Println("      done")
+	}
+
+	// Step 5: Remove DISPLAY marker
+	fmt.Println("[5/6] Removing DISPLAY marker...")
 	if err := shim.RemoveDisplayMarkerSession(session); err != nil {
 		fmt.Printf("      warning: %v\n", err)
 		teardownError = true
@@ -493,8 +504,8 @@ func cmdUninstallCodexRemote(host string) {
 		fmt.Println("      done")
 	}
 
-	// Step 5: Update deploy state
-	fmt.Println("[5/5] Updating deploy state...")
+	// Step 6: Update deploy state
+	fmt.Println("[6/6] Updating deploy state...")
 	remoteState, err := shim.ReadRemoteState(session)
 	if err != nil {
 		fmt.Printf("      warning: could not read deploy state: %v\n", err)
