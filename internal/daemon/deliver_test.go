@@ -3,7 +3,11 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // fakeDeliverer is a test double for the Deliverer interface.
@@ -99,6 +103,38 @@ func TestDeliveryChainNoAdapters(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error with no adapters")
+	}
+}
+
+func TestCmuxDelivererHonorsCanceledContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell helper")
+	}
+	dir := t.TempDir()
+	cmux := filepath.Join(dir, "cmux")
+	if err := os.WriteFile(cmux, []byte("#!/bin/sh\nsleep 0.3\n"), 0755); err != nil {
+		t.Fatalf("write fake cmux: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := (&CmuxDeliverer{path: cmux}).Deliver(ctx, NotifyEnvelope{
+		Kind:   KindGenericMessage,
+		Source: "test",
+		GenericMessage: &GenericMessagePayload{
+			Title: "cancelled",
+			Body:  "should not run",
+		},
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("Deliver ignored canceled context; elapsed=%v", elapsed)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 

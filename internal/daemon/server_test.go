@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -101,6 +102,25 @@ func TestHealthEndpoint(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&body)
 	if body["status"] != "ok" {
 		t.Fatalf("expected status ok, got %s", body["status"])
+	}
+}
+
+func TestRegisterNotificationNonceCapsRegistry(t *testing.T) {
+	srv, _ := newTestServer(&mockClipboard{})
+
+	for i := 0; i < 1100; i++ {
+		nonce := fmt.Sprintf("nonce-%04d", i)
+		host := fmt.Sprintf("host-%04d", i)
+		if err := srv.RegisterNotificationNonceForHost(nonce, host); err != nil {
+			t.Fatalf("register nonce %d: %v", i, err)
+		}
+	}
+
+	if got := len(srv.notifyNonces); got > 1024 {
+		t.Fatalf("expected nonce registry to cap at 1024 entries, got %d", got)
+	}
+	if !srv.validNotificationNonce("nonce-1099") {
+		t.Fatal("most recently registered nonce should remain valid after eviction")
 	}
 }
 

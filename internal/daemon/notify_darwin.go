@@ -88,7 +88,12 @@ func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 			path := filepath.Join(n.previewDir, fmt.Sprintf("preview-%s-%d%s", sid, p.Seq, ext))
 			if err := os.WriteFile(path, p.ImageData, 0600); err == nil {
 				imagePath = path
-				cleanupPreviews(n.previewDir, maxPreviewFiles)
+				// Preview pruning intentionally runs in NewDarwinNotifier
+				// (startup) and in Notify (the legacy event path), not here.
+				// Doing it synchronously on the Deliver hot path adds
+				// O(n log n) sort + N filesystem unlinks to every
+				// notification, which hurts latency for long-running
+				// daemons that have accumulated many previews.
 			}
 		}
 	}

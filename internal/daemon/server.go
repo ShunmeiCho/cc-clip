@@ -40,29 +40,31 @@ const (
 const notifyChCap = 8
 
 type Server struct {
-	clipboard    ClipboardReader
-	tokens       *token.Manager
-	sessions     *session.Store
-	dedup        *Deduper
-	notifyCh     chan NotifyEnvelope
-	criticalCh   chan NotifyEnvelope
-	notifyNonces map[string]nonceEntry
-	noncesMu     sync.RWMutex
-	addr         string
-	mux          *http.ServeMux
+	clipboard         ClipboardReader
+	tokens            *token.Manager
+	sessions          *session.Store
+	dedup             *Deduper
+	notifyCh          chan NotifyEnvelope
+	criticalCh        chan NotifyEnvelope
+	notifyNonces      map[string]nonceEntry
+	notifyNoncesOrder []string // insertion order for FIFO eviction when cap is exceeded
+	noncesMu          sync.RWMutex
+	addr              string
+	mux               *http.ServeMux
 }
 
 func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, sessions *session.Store) *Server {
 	s := &Server{
-		clipboard:    clipboard,
-		tokens:       tokens,
-		sessions:     sessions,
-		dedup:        NewDeduper(12 * time.Second),
-		notifyCh:     make(chan NotifyEnvelope, notifyChCap),
-		criticalCh:   make(chan NotifyEnvelope, criticalChCap),
-		notifyNonces: make(map[string]nonceEntry),
-		addr:         addr,
-		mux:          http.NewServeMux(),
+		clipboard:         clipboard,
+		tokens:            tokens,
+		sessions:          sessions,
+		dedup:             NewDeduper(12 * time.Second),
+		notifyCh:          make(chan NotifyEnvelope, notifyChCap),
+		criticalCh:        make(chan NotifyEnvelope, criticalChCap),
+		notifyNonces:      make(map[string]nonceEntry),
+		notifyNoncesOrder: make([]string, 0, 32),
+		addr:              addr,
+		mux:               http.NewServeMux(),
 	}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /clipboard/type", s.authMiddleware(s.handleClipboardType))
@@ -82,6 +84,12 @@ type nonceEntry struct {
 // nonceTTL is the default lifetime for notification nonces.
 const nonceTTL = 7 * 24 * time.Hour // 7 days
 
+// maxNonces caps the in-memory notification nonce registry so a
+// long-running daemon receiving many cross-host re-registrations
+// cannot accumulate unbounded memory. Eviction is FIFO by insertion
+// order — the oldest registered nonce is dropped first.
+const maxNonces = 1024
+
 // RegisterNotificationNonce adds a nonce to the dedicated notification
 // auth registry. Notification nonces are separate from clipboard bearer
 // tokens to enforce distinct auth domains. When a new nonce is registered
@@ -92,7 +100,9 @@ func (s *Server) RegisterNotificationNonce(nonce string) error {
 }
 
 // RegisterNotificationNonceForHost registers a nonce bound to a specific host.
-// Any previous nonce for the same host is automatically revoked.
+// Any previous nonce for the same host is automatically revoked. The registry
+// is FIFO-capped at maxNonces; if adding this nonce would exceed the cap, the
+// oldest entries (by insertion order) are evicted first.
 func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 	if nonce == "" {
 		return fmt.Errorf("empty nonce is not allowed")
@@ -111,10 +121,25 @@ func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 			}
 		}
 	}
+	// Track insertion order for FIFO eviction. Only append if this is a
+	// brand-new key; same-key re-registration keeps the original order
+	// slot (so the entry doesn't artificially move to the back).
+	if _, existed := s.notifyNonces[nonce]; !existed {
+		s.notifyNoncesOrder = append(s.notifyNoncesOrder, nonce)
+	}
 	s.notifyNonces[nonce] = nonceEntry{
 		Host:      host,
 		IssuedAt:  now,
 		ExpiresAt: now.Add(nonceTTL),
+	}
+	// Cap registry size by evicting oldest entries beyond the limit.
+	// Stale order entries (already deleted via same-host revocation or
+	// CleanupExpiredNonces) are skipped naturally because their map
+	// lookup is a no-op delete.
+	for len(s.notifyNonces) > maxNonces && len(s.notifyNoncesOrder) > 0 {
+		oldest := s.notifyNoncesOrder[0]
+		s.notifyNoncesOrder = s.notifyNoncesOrder[1:]
+		delete(s.notifyNonces, oldest)
 	}
 	return nil
 }

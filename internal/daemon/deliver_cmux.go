@@ -25,10 +25,22 @@ func NewCmuxDeliverer() *CmuxDeliverer {
 func (d *CmuxDeliverer) Name() string { return "cmux" }
 
 // Deliver formats the envelope and shells out to `cmux notify`.
-func (d *CmuxDeliverer) Deliver(_ context.Context, env NotifyEnvelope) error {
+// Honors ctx cancellation by checking early (avoids fork+exec when the
+// caller already gave up) and by binding the child process to ctx via
+// exec.CommandContext so a kill propagates if ctx is canceled mid-run.
+func (d *CmuxDeliverer) Deliver(ctx context.Context, env NotifyEnvelope) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	title, body := formatNotification(env)
-	cmd := exec.Command(d.path, "notify", "--title", title, "--body", body)
+	cmd := exec.CommandContext(ctx, d.path, "notify", "--title", title, "--body", body)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		// If ctx was canceled mid-run, CommandContext kills the child
+		// and returns "signal: killed" rather than context.Canceled.
+		// Surface the real reason so callers can errors.Is(err, context.Canceled).
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		return fmt.Errorf("cmux notify failed: %s: %w", string(out), err)
 	}
 	return nil

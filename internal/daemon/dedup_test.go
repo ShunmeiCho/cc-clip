@@ -92,6 +92,37 @@ func TestDeduperAllowsAfterWindowExpires(t *testing.T) {
 	}
 }
 
+func TestDeduperEvictsExpiredEntriesDuringAllowAt(t *testing.T) {
+	d := NewDeduper(10 * time.Second)
+	now := time.Unix(1000, 0)
+
+	for i := 0; i < 3; i++ {
+		d.AllowAt(NotifyEnvelope{
+			Kind:   KindGenericMessage,
+			Source: "claude_hook",
+			GenericMessage: &GenericMessagePayload{
+				Title:   "stale",
+				Body:    string(rune('A' + i)),
+				Urgency: 0,
+			},
+		}, now.Add(-25*time.Second))
+	}
+
+	d.AllowAt(NotifyEnvelope{
+		Kind:   KindGenericMessage,
+		Source: "claude_hook",
+		GenericMessage: &GenericMessagePayload{
+			Title:   "fresh",
+			Body:    "current",
+			Urgency: 0,
+		},
+	}, now)
+
+	if got := len(d.items); got != 1 {
+		t.Fatalf("expected expired dedup entries to be evicted, got %d entries", got)
+	}
+}
+
 func TestDeduperDifferentMessagesNotMerged(t *testing.T) {
 	d := NewDeduper(15 * time.Second)
 	now := time.Unix(1000, 0)

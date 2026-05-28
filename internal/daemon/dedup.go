@@ -58,6 +58,17 @@ func (d *Deduper) AllowAt(env NotifyEnvelope, now time.Time) (bool, *NotifyEnvel
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// Sweep expired entries on every AllowAt call. Without this the
+	// dedup map grows unbounded for long-running daemons that see a
+	// steady stream of unique notification fingerprints — each entry
+	// stays around forever even though the suppression window has
+	// long since passed.
+	for k, e := range d.items {
+		if now.Sub(e.SeenAt) > d.window {
+			delete(d.items, k)
+		}
+	}
+
 	entry, ok := d.items[key]
 	if !ok || now.Sub(entry.SeenAt) > d.window {
 		d.items[key] = DedupEntry{SeenAt: now, Count: 1}
