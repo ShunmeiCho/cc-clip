@@ -455,8 +455,13 @@ stripped=$(sed '/^%[1]s$/,/^%[2]s$/d' "$config" | sed '/./,$!d')
 # appears in the file BEFORE any [section] header (i.e. in the TOML
 # top-level table). Lines after any [...] header belong to that
 # section's sub-table and must be ignored.
+#
+# TOML 1.0.0 treats leading whitespace on a section header line as
+# whitespace and ignores it, so "  [agents.X]" is still a valid
+# header. Match it symmetrically with [[:space:]]* to avoid
+# misclassifying indented sub-tables.
 if printf '%%s\n' "$stripped" | awk '
-  /^\[/ { in_section = 1; next }
+  /^[[:space:]]*\[/ { in_section = 1; next }
   in_section == 0 && /^[[:space:]]*notify[[:space:]]*=/ { found = 1 }
   END { exit !found }
 '; then

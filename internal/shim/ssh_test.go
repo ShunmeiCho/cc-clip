@@ -313,6 +313,34 @@ notify = ["other", "tool"]
 	}
 }
 
+// TestEnsureRemoteCodexNotifyConfigAllowsIndentedAgentSectionNotify
+// covers the TOML 1.0.0 corner where a section header has leading
+// whitespace. Per the spec, indentation is whitespace and ignored, so
+// "  [agents.X]" remains a valid section header and any "  notify ="
+// inside it must NOT be treated as a top-level notify.
+//
+// Regression: prior to v0.7.7 the awk used /^\[/ which only matched
+// section headers at column 0, so indented headers were silently
+// skipped and the notify line below them was mis-classified as
+// top-level — falsely tripping exit 7.
+func TestEnsureRemoteCodexNotifyConfigAllowsIndentedAgentSectionNotify(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "model = \"gpt-5\"\n"+
+		"\n"+
+		"  [agents.docs_researcher]\n"+
+		"  description = \"Docs researcher\"\n"+
+		"  notify = [\"other\", \"tool\"]\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 9999); err != nil {
+		t.Fatalf("indented agent-level notify must not block top-level injection: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, "CC_CLIP_PORT=9999") {
+		t.Fatalf("managed block missing after indented agent-section notify present: %q", config)
+	}
+}
+
 // TestEnsureRemoteCodexNotifyConfigStillRefusesTopLevelNotifyAboveSection
 // guards the other half of section-aware detection: a top-level notify
 // that appears BEFORE any section header must still trigger refusal. This
