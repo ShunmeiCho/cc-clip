@@ -52,10 +52,10 @@ func TestNormalizeVersion(t *testing.T) {
 		{"v0.6.1+build.7", "v0.6.1+build.7"},
 		{"dev", ""},
 		{"", ""},
-		{"abc123", ""},      // git-describe SHA-like
-		{"v0.6", ""},        // only two components
-		{"v0.x.1", ""},      // non-numeric
-		{"v0.6.abc", ""},    // non-numeric patch with no suffix sep
+		{"abc123", ""},   // git-describe SHA-like
+		{"v0.6", ""},     // only two components
+		{"v0.x.1", ""},   // non-numeric
+		{"v0.6.abc", ""}, // non-numeric patch with no suffix sep
 
 		// git-describe output between tags (real dev-build ldflags value)
 		// must not be treated as a release version; otherwise the updater
@@ -73,6 +73,44 @@ func TestNormalizeVersion(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("normalizeVersion(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestNormalizeReleaseTag pins the normalization applied to a tag returned by
+// the GitHub "latest release" API. Both the --to path and the latest path must
+// run the raw tag through the same normalizer so the sameVer equality check is
+// not prefix-sensitive (e.g. baked-in "v0.6.1" vs a GitHub "0.6.1" tag).
+func TestNormalizeReleaseTag(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"v-prefixed", "v0.6.1", "v0.6.1", false},
+		{"no v prefix normalizes to v form", "0.6.1", "v0.6.1", false},
+		{"whitespace trimmed", "  v0.6.2 ", "v0.6.2", false},
+		{"prerelease kept", "v0.6.1-rc1", "v0.6.1-rc1", false},
+		{"non-semver tag is an error", "nightly", "", true},
+		{"empty tag is an error", "", "", true},
+		{"two-component tag is an error", "v0.6", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeReleaseTag(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeReleaseTag(%q) = %q, want error", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeReleaseTag(%q) unexpected error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("normalizeReleaseTag(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 

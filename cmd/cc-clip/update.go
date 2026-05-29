@@ -66,7 +66,15 @@ func cmdUpdate() {
 		if err != nil {
 			log.Fatalf("failed to query latest release: %v", err)
 		}
-		target = latest
+		// Normalize the GitHub tag the same way the --to path does, so the
+		// sameVer equality check below is not prefix-sensitive (a baked-in
+		// "v0.6.1" must compare equal to a GitHub "0.6.1" tag, and vice
+		// versa). A tag GitHub returns that is not a clean semver is a
+		// release-pipeline bug we surface loudly rather than silently skip.
+		target, err = normalizeReleaseTag(latest)
+		if err != nil {
+			log.Fatalf("latest release tag %q is not a usable version: %v", latest, err)
+		}
 	}
 	if target == "" {
 		log.Fatal("could not determine a target version to install.")
@@ -383,6 +391,20 @@ func normalizeVersion(v string) string {
 		return ""
 	}
 	return "v" + v
+}
+
+// normalizeReleaseTag canonicalizes a release tag (e.g. from the GitHub API or
+// the --to flag) into "vX.Y.Z" form, returning an error when the tag is not a
+// clean release version. Unlike normalizeVersion (which returns "" for dev/git
+// -describe builds of the LOCAL binary), a non-semver value here means the
+// remote published a tag we cannot install, so we want a hard, explicit error
+// rather than a silent "".
+func normalizeReleaseTag(tag string) (string, error) {
+	normalized := normalizeVersion(tag)
+	if normalized == "" {
+		return "", fmt.Errorf("%q is not a clean semver release tag (expected vMAJOR.MINOR.PATCH)", strings.TrimSpace(tag))
+	}
+	return normalized, nil
 }
 
 // gitDescribeMarker matches the "-<commits>-g<sha>" suffix that
