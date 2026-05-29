@@ -63,7 +63,13 @@ type Bridge struct {
 	activeIncr   *IncrTransfer
 	incrTimeout  time.Duration
 	incrDeadline time.Time
-	httpClient   *http.Client
+	// incrRequestor records the window we subscribed to PropertyChange events
+	// on for the active INCR transfer, so we can unsubscribe even after
+	// activeIncr has been nilled out. hasIncrRequestor distinguishes a real
+	// window 0 from "no subscription".
+	incrRequestor    xproto.Window
+	hasIncrRequestor bool
+	httpClient       *http.Client
 }
 
 // clipboardTypeResponse mirrors daemon.ClipboardInfo.
@@ -375,11 +381,40 @@ func (b *Bridge) handleIncrChunk() {
 func (b *Bridge) startActiveIncr(transfer *IncrTransfer) {
 	b.activeIncr = transfer
 	b.incrDeadline = time.Now().Add(b.incrTimeout)
+	b.incrRequestor = transfer.Requestor
+	b.hasIncrRequestor = true
 }
 
 func (b *Bridge) clearActiveIncr() {
 	b.activeIncr = nil
 	b.incrDeadline = time.Time{}
+	b.unsubscribeIncrRequestor()
+}
+
+// unsubscribeIncrRequestor resets the event mask on the requestor window we
+// subscribed to during an INCR transfer. Leaving CwEventMask set leaks the
+// PropertyChange subscription on that window for the lifetime of the bridge.
+// A BadWindow error (the requestor may already be gone) is tolerated.
+func (b *Bridge) unsubscribeIncrRequestor() {
+	if !b.hasIncrRequestor {
+		return
+	}
+	requestor := b.incrRequestor
+	b.hasIncrRequestor = false
+	b.incrRequestor = 0
+	if b.conn == nil {
+		return
+	}
+	err := xproto.ChangeWindowAttributesChecked(b.conn, requestor,
+		xproto.CwEventMask,
+		[]uint32{0},
+	).Check()
+	if err != nil {
+		if _, ok := err.(xproto.WindowError); ok {
+			return
+		}
+		log.Printf("x11-bridge: failed to clear event mask on requestor 0x%x: %v", requestor, err)
+	}
 }
 
 func (b *Bridge) clearExpiredIncr(now time.Time) {

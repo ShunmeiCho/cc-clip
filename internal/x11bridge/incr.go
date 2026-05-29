@@ -63,10 +63,15 @@ func startIncr(
 
 	// Subscribe to PropertyNotify on the requestor's window so we can
 	// detect when the requestor deletes the property (ready for next chunk).
-	xproto.ChangeWindowAttributes(conn, event.Requestor,
+	// If the subscription fails we would never observe PropertyDelete and the
+	// transfer would stall until the inactivity timeout, so fail loudly and let
+	// the caller refuse the request instead of registering a dead transfer.
+	if err := xproto.ChangeWindowAttributesChecked(conn, event.Requestor,
 		xproto.CwEventMask,
 		[]uint32{xproto.EventMaskPropertyChange},
-	)
+	).Check(); err != nil {
+		return nil, err
+	}
 
 	if err := sendSelectionNotify(conn, event, event.Property); err != nil {
 		return nil, err

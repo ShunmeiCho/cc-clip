@@ -181,6 +181,55 @@ func TestClearExpiredIncr(t *testing.T) {
 	}
 }
 
+func TestStartActiveIncrTracksRequestorForUnsubscribe(t *testing.T) {
+	b := &Bridge{incrTimeout: 50 * time.Millisecond}
+
+	b.startActiveIncr(&IncrTransfer{Requestor: 0x1234})
+
+	if !b.hasIncrRequestor {
+		t.Fatal("startActiveIncr should record that a requestor was subscribed")
+	}
+	if b.incrRequestor != 0x1234 {
+		t.Fatalf("incrRequestor = 0x%x, want 0x1234", b.incrRequestor)
+	}
+}
+
+func TestClearActiveIncrUnsubscribesRequestor(t *testing.T) {
+	// conn is nil: clearActiveIncr must still reset the tracking state without
+	// panicking, proving the unsubscribe path does not depend on activeIncr
+	// remaining non-nil and tolerates the absence of a live connection.
+	b := &Bridge{
+		activeIncr:       &IncrTransfer{Requestor: 0x1234},
+		incrRequestor:    0x1234,
+		hasIncrRequestor: true,
+		incrDeadline:     time.Unix(10, 0),
+	}
+
+	b.clearActiveIncr()
+
+	if b.activeIncr != nil {
+		t.Fatal("clearActiveIncr should clear activeIncr")
+	}
+	if b.hasIncrRequestor {
+		t.Fatal("clearActiveIncr should clear the requestor subscription flag")
+	}
+	if b.incrRequestor != 0 {
+		t.Fatalf("clearActiveIncr should reset incrRequestor, got 0x%x", b.incrRequestor)
+	}
+	if !b.incrDeadline.IsZero() {
+		t.Fatal("clearActiveIncr should clear deadline")
+	}
+}
+
+func TestUnsubscribeIncrRequestorNoOpWhenNotSubscribed(t *testing.T) {
+	b := &Bridge{}
+	// Must not panic or attempt an X call when nothing was subscribed.
+	b.unsubscribeIncrRequestor()
+	if b.hasIncrRequestor {
+		t.Fatal("unsubscribeIncrRequestor should remain unsubscribed")
+	}
+}
+
 func TestPublishXEventStopsWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
