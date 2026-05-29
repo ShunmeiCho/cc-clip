@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // RemoteExecutor is the interface for running commands on a remote host.
@@ -242,7 +243,8 @@ cat %s/display`,
 		if socketErr == nil {
 			break
 		}
-		session.Exec("sleep 0.2")
+		// Wait locally rather than paying for a remote SSH round-trip just to sleep.
+		time.Sleep(200 * time.Millisecond)
 	}
 	if socketErr != nil {
 		return nil, fmt.Errorf("Xvfb socket %s not found after startup", socketPath)

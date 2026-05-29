@@ -236,6 +236,67 @@ func TestCleanStale(t *testing.T) {
 	}
 }
 
+// retryExecutor lets a command return failure for the first N calls, then
+// succeed. Used to drive the socket-wait retry loop in StartRemote.
+type retryExecutor struct {
+	*mockExecutor
+	failPrefix string
+	failTimes  int
+	failCount  int
+}
+
+func (r *retryExecutor) Exec(cmd string) (string, error) {
+	if r.failPrefix != "" && strings.HasPrefix(cmd, r.failPrefix) {
+		if r.failCount < r.failTimes {
+			r.failCount++
+			r.execLog = append(r.execLog, cmd)
+			return "", fmt.Errorf("not ready yet")
+		}
+	}
+	return r.mockExecutor.Exec(cmd)
+}
+
+func TestStartRemote_SocketWaitDoesNotSleepViaExecutor(t *testing.T) {
+	stateDir := "/tmp/test-xvfb"
+	socketPath := SocketPath("42")
+
+	base := newMockExecutor()
+	base.on("which Xvfb", "/usr/bin/Xvfb", nil)
+	// Force IsHealthy to report not-healthy so StartRemote takes the start path.
+	base.on("cat "+stateDir+"/xvfb.pid 2>/dev/null", "", fmt.Errorf("no pid"))
+	base.on("rm -f", "", nil)
+	// The start script returns the chosen display number.
+	base.on("mkdir -p", "42", nil)
+	// PID read (non-2>/dev/null variant used after start).
+	base.on("cat "+stateDir+"/xvfb.pid", "12345", nil)
+	// Socket check eventually succeeds (after the retry loop iterates).
+	base.on("test -S "+socketPath, "", nil)
+
+	m := &retryExecutor{
+		mockExecutor: base,
+		failPrefix:   "test -S " + socketPath,
+		failTimes:    2, // fail twice, forcing the wait loop to spin
+	}
+
+	state, err := StartRemote(m, stateDir)
+	if err != nil {
+		t.Fatalf("StartRemote failed: %v", err)
+	}
+	if state.Display != "42" || state.PID != 12345 {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+
+	// The wait between socket-check retries must be a local time.Sleep,
+	// NOT a remote SSH round-trip. A standalone "sleep ..." command issued via
+	// the executor is the regression we guard against. (The "sleep 0.2" inside
+	// the embedded start-script shell loop is legitimate and not standalone.)
+	for _, cmd := range m.execLog {
+		if strings.HasPrefix(strings.TrimSpace(cmd), "sleep ") && !strings.Contains(cmd, "\n") {
+			t.Fatalf("StartRemote sent a standalone remote sleep command to the executor: %q", cmd)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests (require Xvfb)
 // ---------------------------------------------------------------------------
