@@ -62,19 +62,11 @@ func RunRemote(host string, port int) []CheckResult {
 	// Check tunnel from remote side
 	out, err = remoteExecNoForward(host, fmt.Sprintf(
 		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>&1 && echo 'tunnel ok' || echo 'tunnel fail'", port))
-	if strings.Contains(out, "tunnel ok") {
-		results = append(results, CheckResult{"tunnel", true, fmt.Sprintf("port %d forwarded", port)})
-	} else {
-		results = append(results, CheckResult{"tunnel", false, fmt.Sprintf("port %d not reachable from remote", port)})
-	}
+	results = append(results, classifyTunnelCheck(out, err, port))
 
 	// Check token on remote
 	out, err = remoteExecNoForward(host, "test -f ~/.cache/cc-clip/session.token && echo 'present' || echo 'missing'")
-	if strings.Contains(out, "present") {
-		results = append(results, CheckResult{"remote-token", true, "token file present"})
-	} else {
-		results = append(results, CheckResult{"remote-token", false, "token file missing"})
-	}
+	results = append(results, classifyRemoteTokenCheck(out, err))
 
 	// Check remote token matches local token
 	results = append(results, checkTokenMatch(host)...)
@@ -91,6 +83,34 @@ func RunRemote(host string, port int) []CheckResult {
 	}
 
 	return results
+}
+
+// classifyTunnelCheck turns the result of the remote tunnel probe into a
+// CheckResult. An SSH transport failure (err != nil) is reported as a distinct
+// "check did not run" result so it is not confused with the legitimate
+// "check ran and the port is not reachable" outcome.
+func classifyTunnelCheck(out string, err error, port int) CheckResult {
+	if err != nil {
+		return CheckResult{"tunnel", false, fmt.Sprintf("remote check could not run over SSH: %v (%s)", err, strings.TrimSpace(out))}
+	}
+	if strings.Contains(out, "tunnel ok") {
+		return CheckResult{"tunnel", true, fmt.Sprintf("port %d forwarded", port)}
+	}
+	return CheckResult{"tunnel", false, fmt.Sprintf("port %d not reachable from remote", port)}
+}
+
+// classifyRemoteTokenCheck turns the result of the remote token-presence probe
+// into a CheckResult. An SSH transport failure (err != nil) is reported as a
+// distinct "check did not run" result rather than the misleading
+// "token file missing", which means the check ran and found the file absent.
+func classifyRemoteTokenCheck(out string, err error) CheckResult {
+	if err != nil {
+		return CheckResult{"remote-token", false, fmt.Sprintf("remote check could not run over SSH: %v (%s)", err, strings.TrimSpace(out))}
+	}
+	if strings.Contains(out, "present") {
+		return CheckResult{"remote-token", true, "token file present"}
+	}
+	return CheckResult{"remote-token", false, "token file missing"}
 }
 
 // remoteExecNoForward runs an SSH command without applying RemoteForward from ssh config.
