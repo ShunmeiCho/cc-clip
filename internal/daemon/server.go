@@ -158,13 +158,27 @@ func (s *Server) removeFromNoncesOrder(nonce string) {
 
 // validNotificationNonce checks whether the given nonce is registered and not expired.
 func (s *Server) validNotificationNonce(nonce string) bool {
+	_, ok := s.lookupValidNonce(nonce)
+	return ok
+}
+
+// lookupValidNonce returns the host bound to the nonce and whether the nonce
+// is registered and unexpired. The returned host is authoritative: it is the
+// SSH host that minted the nonce (set at registration), not anything supplied
+// in the request body. Callers use it to attribute notifications by auth
+// context instead of trusting spoofable body fields. The host is "" for
+// nonces registered without a host binding.
+func (s *Server) lookupValidNonce(nonce string) (host string, ok bool) {
 	s.noncesMu.RLock()
 	defer s.noncesMu.RUnlock()
-	entry, ok := s.notifyNonces[nonce]
-	if !ok {
-		return false
+	entry, found := s.notifyNonces[nonce]
+	if !found {
+		return "", false
 	}
-	return time.Now().Before(entry.ExpiresAt)
+	if !time.Now().Before(entry.ExpiresAt) {
+		return "", false
+	}
+	return entry.Host, true
 }
 
 // CleanupExpiredNonces removes nonces that have passed their TTL.
@@ -191,9 +205,14 @@ func (s *Server) enqueueEnvelope(env NotifyEnvelope) {
 		return
 	}
 	if isAlwaysCritical(env) {
+		// Use an explicit timer so the success path can Stop() it instead of
+		// leaving a parked timer to fire later (time.After leaks the timer
+		// until it expires; staticcheck SA1015).
+		t := time.NewTimer(500 * time.Millisecond)
 		select {
 		case s.criticalCh <- env:
-		case <-time.After(500 * time.Millisecond):
+			t.Stop()
+		case <-t.C:
 			log.Printf("WARN: criticalCh full, dropping critical envelope kind=%s", env.Kind)
 		}
 		return
@@ -477,7 +496,11 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 // clipboard bearer token).
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	nonce := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if nonce == "" || !s.validNotificationNonce(nonce) {
+	boundHost, ok := "", false
+	if nonce != "" {
+		boundHost, ok = s.lookupValidNonce(nonce)
+	}
+	if !ok {
 		http.Error(w, "invalid notification nonce", http.StatusUnauthorized)
 		return
 	}
@@ -486,6 +509,15 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Host attribution comes from the auth context, never the request body.
+	// The host bound to the nonce at registration is authoritative; a body
+	// that claims a different host (env.Host from _cc_clip_host or the JSON
+	// "host" field) is overridden so attribution cannot be spoofed. When the
+	// nonce was registered without a host binding, the body host is kept.
+	if boundHost != "" {
+		env.Host = boundHost
 	}
 
 	s.enqueueEnvelope(env)
@@ -541,6 +573,9 @@ func (s *Server) parseGenericJSON(body []byte) (NotifyEnvelope, error) {
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return NotifyEnvelope{}, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if payload.Title == "" && payload.Body == "" {
+		return NotifyEnvelope{}, fmt.Errorf("notification requires a non-empty title or body")
 	}
 
 	return NotifyEnvelope{

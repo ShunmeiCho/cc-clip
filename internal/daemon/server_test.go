@@ -477,6 +477,153 @@ func TestNotifyEndpointRejectsEmptyBody(t *testing.T) {
 	}
 }
 
+func TestNotifyOverridesBodyHostWithNonceBoundHost(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	// Nonce is bound to host A. Identity must come from this auth context.
+	if err := srv.RegisterNotificationNonceForHost("nonce-hostA", "host-A"); err != nil {
+		t.Fatalf("register nonce: %v", err)
+	}
+
+	// Body claims host B (spoof attempt).
+	body := strings.NewReader(`{"title":"hi","body":"there","host":"host-B"}`)
+	req := httptest.NewRequest("POST", "/notify", body)
+	req.Header.Set("Authorization", "Bearer nonce-hostA")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case env := <-srv.notifyCh:
+		if env.Host != "host-A" {
+			t.Fatalf("expected host to be authoritative nonce host %q, got %q", "host-A", env.Host)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an envelope to be enqueued")
+	}
+}
+
+func TestNotifyOverridesClaudeHookHostWithNonceBoundHost(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	if err := srv.RegisterNotificationNonceForHost("nonce-claudeA", "host-A"); err != nil {
+		t.Fatalf("register nonce: %v", err)
+	}
+
+	// Claude hook body injects a spoofed _cc_clip_host. urgency 0 (stop) routes to notifyCh.
+	body := strings.NewReader(`{"hook_event_name":"Stop","stop_hook_reason":"stop_at_end_of_turn","last_assistant_message":"done","_cc_clip_host":"host-B"}`)
+	req := httptest.NewRequest("POST", "/notify", body)
+	req.Header.Set("Authorization", "Bearer nonce-claudeA")
+	req.Header.Set("Content-Type", "application/x-claude-hook")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case env := <-srv.notifyCh:
+		if env.Host != "host-A" {
+			t.Fatalf("expected host to be authoritative nonce host %q, got %q", "host-A", env.Host)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an envelope to be enqueued")
+	}
+}
+
+func TestNotifyKeepsBodyHostWhenNonceUnbound(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	// Nonce registered with no host binding.
+	if err := srv.RegisterNotificationNonce("nonce-unbound"); err != nil {
+		t.Fatalf("register nonce: %v", err)
+	}
+
+	body := strings.NewReader(`{"title":"hi","body":"there","host":"host-from-body"}`)
+	req := httptest.NewRequest("POST", "/notify", body)
+	req.Header.Set("Authorization", "Bearer nonce-unbound")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case env := <-srv.notifyCh:
+		if env.Host != "host-from-body" {
+			t.Fatalf("expected body host preserved for unbound nonce, got %q", env.Host)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an envelope to be enqueued")
+	}
+}
+
+func TestNotifyRejectsGenericPayloadWithEmptyTitleAndBody(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	srv.RegisterNotificationNonce("nonce-blank")
+
+	body := strings.NewReader(`{"urgency":1}`)
+	req := httptest.NewRequest("POST", "/notify", body)
+	req.Header.Set("Authorization", "Bearer nonce-blank")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty title and body, got %d", w.Code)
+	}
+}
+
+func TestParseGenericJSONRequiresTitleOrBody(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{"both empty", `{"urgency":1}`, true},
+		{"title only", `{"title":"hi"}`, false},
+		{"body only", `{"body":"there"}`, false},
+		{"both present", `{"title":"hi","body":"there"}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := srv.parseGenericJSON([]byte(tt.body))
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error for body %q, got nil", tt.body)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error for body %q: %v", tt.body, err)
+			}
+		})
+	}
+}
+
 // --- /register-nonce endpoint tests ---
 
 func TestRegisterNonceEndpointRegistersNonce(t *testing.T) {
