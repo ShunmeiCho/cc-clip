@@ -92,12 +92,18 @@ func ensureSSHConfigAt(configPath string, host string, port int) ([]SSHConfigCha
 	}
 
 	if modified {
+		// Write the backup BEFORE mutating the live config, and abort on
+		// failure. Overwriting ~/.ssh/config without a verified backup would
+		// break the safe-to-revert contract: a corrupted write with no backup
+		// could leave the user locked out of every host in the file.
 		if len(content) > 0 {
 			backupPath := configPath + ".cc-clip-backup"
-			_ = os.WriteFile(backupPath, content, 0644)
+			if err := os.WriteFile(backupPath, content, 0600); err != nil {
+				return nil, fmt.Errorf("cannot write backup %s (refusing to modify live config): %w", backupPath, err)
+			}
 		}
 		newContent := strings.Join(lines, "\n")
-		if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte(newContent), 0600); err != nil {
 			return nil, fmt.Errorf("cannot write %s: %w", configPath, err)
 		}
 	}

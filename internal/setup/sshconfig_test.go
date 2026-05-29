@@ -144,6 +144,68 @@ func TestEnsureSSHConfig_CreatesBackup(t *testing.T) {
 	}
 }
 
+func TestEnsureSSHConfig_BackupFailureAbortsBeforeMutation(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+
+	initial := "Host myserver\n    HostName 10.0.0.1\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the directory read+execute but not writable, so creating the
+	// backup file inside it fails. The live config already exists, but
+	// os.WriteFile to overwrite it would also be blocked — the point of the
+	// fix is that we abort on the backup error BEFORE attempting the live
+	// overwrite, so the original content survives intact.
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0700) // restore so t.TempDir cleanup can remove it
+
+	_, err := ensureSSHConfigAt(configPath, "myserver", 18339)
+	if err == nil {
+		t.Fatal("expected error when backup cannot be written, got nil")
+	}
+
+	// Restore writability to read the live config back.
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	content, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatalf("cannot read config after failed backup: %v", readErr)
+	}
+	if string(content) != initial {
+		t.Fatalf("live config was mutated despite backup failure:\ngot  %q\nwant %q", string(content), initial)
+	}
+}
+
+func TestEnsureSSHConfig_BackupModeIs0600(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+
+	initial := "Host myserver\n    HostName 10.0.0.1\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ensureSSHConfigAt(configPath, "myserver", 18339); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	info, err := os.Stat(configPath + ".cc-clip-backup")
+	if err != nil {
+		t.Fatalf("backup not created: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("backup mode = %o, want 0600", perm)
+	}
+}
+
 func TestEnsureSSHConfig_PreservesExistingDirectives(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config")
