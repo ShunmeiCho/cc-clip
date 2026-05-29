@@ -105,15 +105,28 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 	filename := fmt.Sprintf("%s-%s.%s", time.Now().Format("20060102-150405"), suffix, ext)
 	outPath := filepath.Join(outDir, filename)
 
-	f, err := os.Create(outPath)
+	f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return "", fmt.Errorf("failed to create image file: %w", err)
 	}
-	defer f.Close()
 
 	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
 		os.Remove(outPath)
 		return "", fmt.Errorf("failed to write image file: %w", err)
+	}
+
+	// Flush to disk and surface any deferred write errors (e.g. ENOSPC) that
+	// only become visible on Sync/Close. Returning the error lets the shim fall
+	// back instead of emitting a truncated image.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(outPath)
+		return "", fmt.Errorf("failed to sync image file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(outPath)
+		return "", fmt.Errorf("failed to close image file: %w", err)
 	}
 
 	return outPath, nil

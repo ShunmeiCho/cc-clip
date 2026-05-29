@@ -92,6 +92,36 @@ func TestFetchImageRoundTrip(t *testing.T) {
 	t.Logf("Image saved to: %s (%d bytes)", path, len(data))
 }
 
+func TestFetchImageWritesPrivateFileMode(t *testing.T) {
+	fakeImage := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	testToken := "test-token-123"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(fakeImage)
+	})
+
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	client := NewClient(ts.URL, testToken, 5*time.Second)
+	outDir := t.TempDir()
+
+	path, err := client.FetchImage(outDir)
+	if err != nil {
+		t.Fatalf("FetchImage failed: %v", err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat saved image: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0600 {
+		t.Fatalf("expected file mode 0600, got %o", perm)
+	}
+}
+
 func TestFetchImageUnauthorized(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
@@ -181,5 +211,63 @@ func TestProbeFailure(t *testing.T) {
 	err := Probe(fmt.Sprintf("127.0.0.1:%d", 59999), 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("probe should fail for closed port")
+	}
+}
+
+func TestProbeHealthSuccess(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	addr := ts.Listener.Addr().String()
+	if err := ProbeHealth(addr, 500*time.Millisecond); err != nil {
+		t.Fatalf("ProbeHealth should succeed: %v", err)
+	}
+}
+
+func TestProbeHealthFailsWhenTCPUnreachable(t *testing.T) {
+	err := ProbeHealth(fmt.Sprintf("127.0.0.1:%d", 59998), 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("ProbeHealth should fail for closed port")
+	}
+	if errors.Is(err, ErrDaemonNotAnswering) {
+		t.Fatalf("closed port should not report ErrDaemonNotAnswering, got: %v", err)
+	}
+}
+
+func TestProbeHealthFailsWhenTCPUpButDaemonDead(t *testing.T) {
+	// A listener that accepts the TCP handshake but never speaks HTTP — this
+	// mimics an SSH RemoteForward listener whose local daemon is down.
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot bind 127.0.0.1: %v (restricted environment?)", err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			// Hold the connection open without responding so the HTTP
+			// client times out waiting for headers.
+			go func(c net.Conn) {
+				time.Sleep(2 * time.Second)
+				c.Close()
+			}(conn)
+		}
+	}()
+
+	err = ProbeHealth(l.Addr().String(), 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("ProbeHealth should fail when daemon does not answer HTTP")
+	}
+	if !errors.Is(err, ErrDaemonNotAnswering) {
+		t.Fatalf("expected ErrDaemonNotAnswering, got: %v", err)
 	}
 }
