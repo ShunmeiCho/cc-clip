@@ -40,6 +40,16 @@ func ClassifyHookPayload(hookType string, raw map[string]any) *NotifyEnvelope {
 			env.GenericMessage.Urgency = 1
 		default:
 			env.GenericMessage.Title = title
+			if env.GenericMessage.Title == "" {
+				// Neither a recognized subtype nor a title was supplied;
+				// fall back to a diagnostic title so the notification is
+				// not delivered near-blank.
+				if notifType != "" {
+					env.GenericMessage.Title = fmt.Sprintf("Claude notification: %s", notifType)
+				} else {
+					env.GenericMessage.Title = "Claude notification"
+				}
+			}
 			env.GenericMessage.Urgency = 1
 		}
 	case "stop":
@@ -67,26 +77,53 @@ func ClassifyHookPayload(hookType string, raw map[string]any) *NotifyEnvelope {
 	return env
 }
 
-// truncate trims whitespace and limits s to at most limit bytes,
-// appending an ellipsis if truncation occurs.
+// ellipsis is the single-character truncation marker. As UTF-8 it is 3 bytes.
+const ellipsis = "\u2026"
+
+// truncate trims whitespace and, if the result exceeds limit bytes, cuts it
+// at a UTF-8 rune boundary and appends an ellipsis so the final string never
+// exceeds limit bytes and never splits a multi-byte rune. The byte budget for
+// content is limit minus len(ellipsis); ranging over a string yields rune
+// start offsets, so the last offset that still fits the budget is the cut
+// point.
 func truncate(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit-1] + "\u2026"
+	budget := limit - len(ellipsis)
+	if budget <= 0 {
+		return ellipsis
+	}
+	cut := 0
+	for i := range s {
+		if i > budget {
+			break
+		}
+		cut = i
+	}
+	return s[:cut] + ellipsis
 }
 
+// internalKeyPrefix marks map keys that cc-clip injects for internal use
+// (e.g. "_cc_clip_host"). These must never surface in user-facing display text.
+const internalKeyPrefix = "_cc_clip_"
+
 // stringifyMap produces a deterministic "key=value, key=value" string from
-// a map, sorted by key. Used for the default classifier case.
+// a map, sorted by key. Used for the default classifier case. Keys prefixed
+// with internalKeyPrefix are skipped so cc-clip's internal metadata does not
+// leak into the displayed notification body.
 func stringifyMap(m map[string]any) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
+		if strings.HasPrefix(k, internalKeyPrefix) {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	parts := make([]string, 0, len(m))
+	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, m[k]))
 	}
