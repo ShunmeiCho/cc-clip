@@ -356,19 +356,22 @@ func installWrapperWithSidecar(s SessionExecutor, port int) error {
 	cmd := `set -e
 mkdir -p "$HOME/.local/bin"
 tmp=$(mktemp "$HOME/.local/bin/.claude.cc-clip-tmp.XXXXXX")
-trap 'rm -f "$tmp"' EXIT
+committed=""
+# The EXIT trap restores the sidecar back to claude whenever the install
+# did not commit. This covers in-script failures AND external aborts (SSH
+# disconnect / SIGKILL) that land between the staging mv and the commit mv,
+# which would otherwise leave ~/.local/bin/claude missing. The restore is
+# a no-op before staging (sidecar absent) and after commit (committed set).
+trap '[ -z "$committed" ] && { [ -e "$HOME/.local/bin/claude.cc-clip-real" ] || [ -L "$HOME/.local/bin/claude.cc-clip-real" ]; } && mv "$HOME/.local/bin/claude.cc-clip-real" "$HOME/.local/bin/claude" 2>/dev/null; rm -f "$tmp"' EXIT
 cat > "$tmp"
 chmod +x "$tmp"
 # Stage origin to sidecar (mv on a symlink renames the link itself,
 # never reads/writes through it).
 mv "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.cc-clip-real"
 # Commit wrapper.
-if ! mv "$tmp" "$HOME/.local/bin/claude"; then
-    # Best-effort rollback: restore origin so user's claude keeps working.
-    mv "$HOME/.local/bin/claude.cc-clip-real" "$HOME/.local/bin/claude" 2>/dev/null || true
-    exit 1
-fi
-trap - EXIT  # tmp now consumed by the mv`
+mv "$tmp" "$HOME/.local/bin/claude"
+committed=1
+trap 'rm -f "$tmp"' EXIT  # tmp now consumed by the mv; nothing left to roll back`
 	outErr, err := s.ExecWithStdin(cmd, strings.NewReader(script))
 	if err != nil {
 		return fmt.Errorf("install (with-sidecar): %s: %w", strings.TrimSpace(outErr), err)
@@ -462,7 +465,7 @@ stripped=$(sed '/^%[1]s$/,/^%[2]s$/d' "$config" | sed '/./,$!d')
 # misclassifying indented sub-tables.
 if printf '%%s\n' "$stripped" | awk '
   /^[[:space:]]*\[/ { in_section = 1; next }
-  in_section == 0 && /^[[:space:]]*notify[[:space:]]*=/ { found = 1 }
+  in_section == 0 && /^[[:space:]]*(notify|"notify"|'"'"'notify'"'"')[[:space:]]*=/ { found = 1 }
   END { exit !found }
 '; then
   echo "existing top-level notify setting found in $config -- refusing to inject duplicate. Remove or comment out the top-level notify line first ([agents.X].notify is fine)" >&2

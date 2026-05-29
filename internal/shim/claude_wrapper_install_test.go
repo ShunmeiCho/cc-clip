@@ -3,6 +3,7 @@ package shim
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -374,6 +375,113 @@ func TestInstall_SymlinkOrigin_NativeInstallerLayout(t *testing.T) {
 	}
 }
 
+// capturingSession records the install command(s) so we can assert on the
+// generated bash without executing it. Exec runs normally (pre-flight probe);
+// ExecWithStdin captures the script body and then delegates.
+type capturingSession struct {
+	*localSession
+	lastStdinCmd string
+}
+
+func (c *capturingSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
+	c.lastStdinCmd = cmd
+	return c.localSession.ExecWithStdin(cmd, stdin)
+}
+
+// TestInstall_SidecarTrapRestoresOnAbort asserts the with-sidecar install
+// command tracks a `committed` flag and that its EXIT trap restores the
+// sidecar back to ~/.local/bin/claude when the install was NOT committed.
+//
+// Regression: the trap previously only did `rm -f "$tmp"`. An external abort
+// (SSH disconnect / SIGKILL) AFTER the staging mv (claude -> claude.cc-clip-real)
+// but BEFORE the commit mv (tmp -> claude) left ~/.local/bin/claude missing,
+// breaking the user's claude even though the docstring promised rollback.
+func TestInstall_SidecarTrapRestoresOnAbort(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based install path is Linux-only")
+	}
+	home, binDir := setupFakeHome(t)
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("ORIGINAL"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cap := &capturingSession{localSession: &localSession{home: home}}
+	if err := InstallRemoteClaudeWrapper(cap, 18339); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	cmd := cap.lastStdinCmd
+	// The script must introduce a committed marker and set it after the
+	// commit mv succeeds.
+	if !strings.Contains(cmd, "committed") {
+		t.Fatal("with-sidecar install script must track a `committed` flag for trap-based rollback")
+	}
+	// The EXIT trap must restore the sidecar when not committed (not merely rm the tmp).
+	if !strings.Contains(cmd, "claude.cc-clip-real") || !strings.Contains(cmd, "trap") {
+		t.Fatal("with-sidecar install script must restore the sidecar from the EXIT trap")
+	}
+	// Specifically, the trap body must reference the sidecar restore mv so an
+	// abort between the two mvs cannot leave claude missing.
+	if !strings.Contains(cmd, `mv "$HOME/.local/bin/claude.cc-clip-real" "$HOME/.local/bin/claude"`) {
+		t.Fatal("EXIT trap must restore claude from the sidecar on abort")
+	}
+}
+
+// TestInstall_SidecarAbortBeforeCommitRestoresClaude simulates an abort that
+// happens AFTER the staging mv but BEFORE the commit mv, by truncating the
+// generated script at the staging point and running the EXIT trap. After the
+// truncated run, ~/.local/bin/claude must be restored (not missing).
+func TestInstall_SidecarAbortBeforeCommitRestoresClaude(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash-based install path is Linux-only")
+	}
+	home, binDir := setupFakeHome(t)
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("ORIGINAL-CLAUDE"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cap := &capturingSession{localSession: &localSession{home: home}}
+	if err := InstallRemoteClaudeWrapper(cap, 18339); err != nil {
+		t.Fatalf("install (to capture script): %v", err)
+	}
+
+	// Reset filesystem to the pre-install state for the abort simulation.
+	if err := os.RemoveAll(binDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("ORIGINAL-CLAUDE"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Truncate the captured script right after the staging mv so the commit
+	// mv never runs, then `exit 1` to fire the EXIT trap — modeling an abort
+	// between the two mvs.
+	full := cap.lastStdinCmd
+	marker := `mv "$HOME/.local/bin/claude" "$HOME/.local/bin/claude.cc-clip-real"`
+	idx := strings.Index(full, marker)
+	if idx < 0 {
+		t.Fatalf("staging mv not found in generated script:\n%s", full)
+	}
+	truncated := full[:idx+len(marker)] + "\nexit 1\n"
+
+	c := exec.Command("bash", "-c", truncated)
+	c.Env = append(os.Environ(), "HOME="+home, "PATH=/usr/bin:/bin")
+	c.Stdin = strings.NewReader("WRAPPER-CONTENT")
+	_ = c.Run() // exit 1 expected
+
+	// CRITICAL: claude must be restored by the trap, not left missing.
+	data, err := os.ReadFile(filepath.Join(binDir, "claude"))
+	if err != nil {
+		t.Fatalf("claude missing after abort between mvs — trap did not restore: %v", err)
+	}
+	if string(data) != "ORIGINAL-CLAUDE" {
+		t.Fatalf("claude content not restored on abort, got %q", string(data))
+	}
+}
+
 // rollbackInjectingSession wraps localSession and rewrites the install
 // command to force the final mv to fail, simulating a filesystem error
 // after the staging mv has already moved origin to the sidecar.
@@ -386,11 +494,13 @@ type rollbackInjectingSession struct {
 func (r *rollbackInjectingSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
 	if !r.injected && strings.Contains(cmd, "claude.cc-clip-real") {
 		r.injected = true
-		// Replace the final mv guard with a forced failure so the rollback
-		// branch (mv sidecar back to claude) is exercised.
+		// Force the commit mv to fail so the EXIT trap's rollback branch
+		// (restore sidecar -> claude) is exercised. Under `set -e` the
+		// failing command aborts the script and fires the trap, exactly
+		// like an external abort between the staging and commit mvs.
 		cmd = strings.Replace(cmd,
-			`if ! mv "$tmp" "$HOME/.local/bin/claude"; then`,
-			`if ! false; then`, 1)
+			`mv "$tmp" "$HOME/.local/bin/claude"`,
+			`false`, 1)
 	}
 	return r.localSession.ExecWithStdin(cmd, stdin)
 }

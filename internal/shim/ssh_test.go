@@ -359,6 +359,72 @@ foo = true
 	}
 }
 
+// TestEnsureRemoteCodexNotifyConfigRefusesQuotedTopLevelNotify guards the
+// TOML key-equivalence corner: TOML treats notify, "notify", and 'notify'
+// as the SAME bare key. A quoted top-level notify must therefore still
+// trip the duplicate-key guard; otherwise cc-clip injects a second top-level
+// notify and Codex rejects the config as a duplicate key.
+//
+// Regression: prior to this fix the awk guard matched only the bare key
+// (/^[[:space:]]*notify[[:space:]]*=/), so `"notify" = [...]` slipped past
+// and a duplicate was injected.
+func TestEnsureRemoteCodexNotifyConfigRefusesQuotedTopLevelNotify(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "double_quoted",
+			content: "\"notify\" = [\"custom\", \"notify\"]\n\n[other]\nfoo = true\n",
+		},
+		{
+			name:    "single_quoted",
+			content: "'notify' = [\"custom\", \"notify\"]\n\n[other]\nfoo = true\n",
+		},
+		{
+			name:    "double_quoted_with_leading_space",
+			content: "  \"notify\" = [\"custom\"]\n\n[other]\nfoo = true\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &localSession{home: t.TempDir()}
+			writeTestCodexConfig(t, s.home, tc.content)
+
+			if err := EnsureRemoteCodexNotifyConfig(s, 18339); err == nil {
+				t.Fatalf("quoted top-level notify (%s) must be refused to avoid a duplicate key", tc.name)
+			}
+
+			// The original config must be left untouched (no managed block injected).
+			config := readTestCodexConfig(t, s.home)
+			if strings.Contains(config, "# >>> cc-clip notify (do not edit) >>>") {
+				t.Fatalf("managed block must NOT be injected when a quoted top-level notify already exists, got:\n%s", config)
+			}
+		})
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigAllowsQuotedAgentSectionNotify verifies
+// the section-aware half still holds for quoted keys: a quoted notify inside
+// a sub-table must NOT block top-level injection.
+func TestEnsureRemoteCodexNotifyConfigAllowsQuotedAgentSectionNotify(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeTestCodexConfig(t, s.home, "model = \"gpt-5\"\n"+
+		"\n"+
+		"[agents.docs_researcher]\n"+
+		"\"notify\" = [\"other\", \"tool\"]\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 9999); err != nil {
+		t.Fatalf("quoted agent-level notify must not block top-level injection: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if !strings.Contains(config, "CC_CLIP_PORT=9999") {
+		t.Fatalf("managed block missing after quoted agent-section notify present: %q", config)
+	}
+}
+
 func TestEnsureRemoteCodexNotifyConfigReplacesManagedBlock(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
 	writeTestCodexConfig(t, s.home, "# before\n"+
