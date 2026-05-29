@@ -536,15 +536,6 @@ trap - EXIT
 	return nil
 }
 
-func remoteOptionalGrep(session RemoteExecutor, flag, pattern, path string) (string, error) {
-	cmd := fmt.Sprintf(`if [ -e %s ]; then grep %s %q %s; status=$?; case "$status" in 0|1) exit 0;; *) exit "$status";; esac; fi`, path, flag, pattern, path)
-	out, err := session.Exec(cmd)
-	if err != nil {
-		return "", err
-	}
-	return out, nil
-}
-
 func codexNotifyManagedBlock(markerStart, markerEnd string, port int) string {
 	// Include port in CC_CLIP_PORT env so non-default ports work.
 	if port == 18339 {

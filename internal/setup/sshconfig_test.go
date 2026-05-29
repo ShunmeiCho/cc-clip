@@ -104,6 +104,77 @@ func TestEnsureSSHConfig_AlreadyConfigured(t *testing.T) {
 	}
 }
 
+func TestEnsureSSHConfig_RemoteForwardRequiresExactValue(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+
+	initial := "Host myserver\n    RemoteForward 118339 127.0.0.1:118339\n    ControlMaster no\n    ControlPath none\n"
+	if err := os.WriteFile(configPath, []byte(initial), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := ensureSSHConfigAt(configPath, "myserver", 18339)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	content, _ := os.ReadFile(configPath)
+	s := string(content)
+	if !strings.Contains(s, "RemoteForward 18339 127.0.0.1:18339") {
+		t.Fatalf("exact RemoteForward was not added:\n%s", s)
+	}
+	if strings.Count(s, "RemoteForward") != 2 {
+		t.Fatalf("expected original and exact RemoteForward lines, got:\n%s", s)
+	}
+	foundAdded := false
+	for _, c := range changes {
+		if c.Action == "added" && c.Detail == "RemoteForward 18339 127.0.0.1:18339" {
+			foundAdded = true
+		}
+	}
+	if !foundAdded {
+		t.Fatalf("expected added RemoteForward change, got %v", changes)
+	}
+}
+
+func TestEnsureSSHConfig_RemoteForwardAcceptsLoopbackHostForms(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"ipv4", "18339 127.0.0.1:18339"},
+		{"localhost", "18339 localhost:18339"},
+		{"bracketed_ipv4", "18339 [127.0.0.1]:18339"},
+		{"bracketed_ipv6", "18339 [::1]:18339"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config")
+			initial := "Host myserver\n    RemoteForward " + tt.value + "\n    ControlMaster no\n    ControlPath none\n"
+			if err := os.WriteFile(configPath, []byte(initial), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			changes, err := ensureSSHConfigAt(configPath, "myserver", 18339)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			content, _ := os.ReadFile(configPath)
+			if strings.Count(string(content), "RemoteForward") != 1 {
+				t.Fatalf("equivalent RemoteForward should not be duplicated:\n%s", string(content))
+			}
+			for _, c := range changes {
+				if c.Detail == "RemoteForward 18339 127.0.0.1:18339" && c.Action != "ok" {
+					t.Fatalf("expected RemoteForward to be ok for %q, got %v", tt.value, changes)
+				}
+			}
+		})
+	}
+}
+
 func TestEnsureSSHConfig_NoFile(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config")

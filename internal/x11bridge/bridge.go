@@ -88,7 +88,7 @@ func New(display string, port int, tokenFile string, opts ...Option) (*Bridge, e
 	setup := xproto.Setup(conn)
 	if len(setup.Roots) == 0 {
 		conn.Close()
-		return nil, fmt.Errorf("X display %s has no screens", display)
+		return nil, fmt.Errorf("x display %s has no screens", display)
 	}
 	screen := setup.Roots[0]
 

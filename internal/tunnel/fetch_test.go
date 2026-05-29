@@ -218,7 +218,7 @@ func TestProbeHealthSuccess(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		w.Write([]byte(`{"status":"ok","service":"cc-clip"}`))
 	})
 
 	ts := newIPv4TestServer(t, mux)
@@ -227,6 +227,25 @@ func TestProbeHealthSuccess(t *testing.T) {
 	addr := ts.Listener.Addr().String()
 	if err := ProbeHealth(addr, 500*time.Millisecond); err != nil {
 		t.Fatalf("ProbeHealth should succeed: %v", err)
+	}
+}
+
+func TestProbeHealthRejectsNonCcClipHealthBody(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok","service":"not-cc-clip"}`))
+	})
+
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	err := ProbeHealth(ts.Listener.Addr().String(), 500*time.Millisecond)
+	if err == nil {
+		t.Fatal("ProbeHealth should reject a generic HTTP 200 health endpoint")
+	}
+	if !errors.Is(err, ErrDaemonNotAnswering) {
+		t.Fatalf("expected ErrDaemonNotAnswering, got: %v", err)
 	}
 }
 

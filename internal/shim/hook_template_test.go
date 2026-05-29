@@ -89,6 +89,56 @@ func TestHookScriptKeepsNonceOutOfCurlArgv(t *testing.T) {
 	}
 }
 
+func TestHookScriptKeepsPayloadOutOfCurlArgv(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	tmpDir := t.TempDir()
+	argvLog, _ := writeFakeCurl(t, tmpDir)
+	dataLog := filepath.Join(tmpDir, "curl-data.log")
+	home := filepath.Join(tmpDir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".cache", "cc-clip"), 0700); err != nil {
+		t.Fatalf("mkdir home cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".cache", "cc-clip", "notify.nonce"), []byte("nonce\n"), 0600); err != nil {
+		t.Fatalf("write nonce: %v", err)
+	}
+
+	hookPath := filepath.Join(tmpDir, "cc-clip-hook")
+	if err := os.WriteFile(hookPath, []byte(HookScript(18339)), 0755); err != nil {
+		t.Fatalf("write hook script: %v", err)
+	}
+
+	secretPayload := `{"hook_event_name":"Stop","last_assistant_message":"secret-hook-payload-must-not-appear-in-argv"}`
+	cmd := exec.Command("bash", hookPath)
+	cmd.Stdin = strings.NewReader(secretPayload)
+	cmd.Env = append(os.Environ(),
+		"PATH="+tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+home,
+		"CC_CLIP_HOST_ALIAS=testhost",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook execution failed: %v output=%q", err, string(out))
+	}
+
+	argv, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatalf("read fake curl argv log: %v", err)
+	}
+	if strings.Contains(string(argv), "secret-hook-payload-must-not-appear-in-argv") {
+		t.Fatalf("hook payload leaked through curl argv: %q", string(argv))
+	}
+
+	data, err := os.ReadFile(dataLog)
+	if err != nil {
+		t.Fatalf("read fake curl data log: %v", err)
+	}
+	if !strings.Contains(string(data), "secret-hook-payload-must-not-appear-in-argv") {
+		t.Fatalf("expected hook payload to be sent as curl data, got %q", string(data))
+	}
+}
+
 func TestHookScriptDoesNotInterpolateHostIntoPythonSource(t *testing.T) {
 	got := HookScript(18339)
 	// The host alias must be passed to python3 via the environment, never
@@ -115,6 +165,7 @@ func TestHookScriptHandlesHostAliasWithSingleQuoteSafely(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	argvLog, _ := writeFakeCurl(t, tmpDir)
+	dataLog := filepath.Join(tmpDir, "curl-data.log")
 	home := filepath.Join(tmpDir, "home")
 	if err := os.MkdirAll(filepath.Join(home, ".cache", "cc-clip"), 0700); err != nil {
 		t.Fatalf("mkdir home cache: %v", err)
@@ -153,11 +204,19 @@ func TestHookScriptHandlesHostAliasWithSingleQuoteSafely(t *testing.T) {
 		t.Fatal("python injection executed: marker file was created")
 	}
 
-	// The payload forwarded to curl (via -d in argv) must carry the host
-	// alias verbatim as JSON, proving the value was treated as data, not code.
-	body, err := os.ReadFile(argvLog)
+	argv, err := os.ReadFile(argvLog)
 	if err != nil {
 		t.Fatalf("read fake curl argv: %v", err)
+	}
+	if strings.Contains(string(argv), "import os") {
+		t.Fatalf("host alias leaked through curl argv: %q", string(argv))
+	}
+
+	// The payload forwarded to curl must carry the host alias verbatim as JSON,
+	// proving the value was treated as data, not code.
+	body, err := os.ReadFile(dataLog)
+	if err != nil {
+		t.Fatalf("read fake curl data: %v", err)
 	}
 	if !strings.Contains(string(body), `_cc_clip_host`) {
 		t.Fatalf("expected _cc_clip_host key in forwarded payload, got %q", string(body))

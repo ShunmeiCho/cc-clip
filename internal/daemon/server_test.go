@@ -103,6 +103,9 @@ func TestHealthEndpoint(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Fatalf("expected status ok, got %s", body["status"])
 	}
+	if body["service"] != "cc-clip" {
+		t.Fatalf("expected service cc-clip, got %s", body["service"])
+	}
 }
 
 func TestRegisterNotificationNonceCapsRegistry(t *testing.T) {

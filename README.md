@@ -326,7 +326,7 @@ Full setup, manual configuration for Claude Code, nonce registration, and troubl
 | Network | Local daemon binds loopback only (`127.0.0.1`); SSH exposes only a remote loopback tunnel |
 | Clipboard auth | Bearer token with 30-day sliding expiration (auto-renews on use) |
 | Notification auth | Dedicated nonce per-connect session (separate from clipboard token) |
-| Token delivery | Via stdin, never in command-line args |
+| Args hygiene | Neither the auth token nor the hook payload appears in command-line args (token via stdin, payload via a temp file) |
 | Notification trust | Hook notifications marked `verified`; generic JSON shows `[unverified]` prefix |
 | Transparency | Non-image calls pass through to real `xclip` unchanged |
 
@@ -495,11 +495,11 @@ Replace `~/.zshrc` with `~/.bashrc` if you use bash.
 ```bash
 # 1. Local: Is the daemon running?
 curl -s http://127.0.0.1:18339/health
-# Expected: {"status":"ok"}
+# Expected: {"service":"cc-clip","status":"ok"}
 
 # 2. Remote: Is the tunnel forwarding?
 ssh myserver "curl -s http://127.0.0.1:18339/health"
-# Expected: {"status":"ok"}
+# Expected: {"service":"cc-clip","status":"ok"}
 
 # 3. Remote: Is the shim taking priority?
 ssh myserver "which xclip"
@@ -552,7 +552,7 @@ echo $DISPLAY
 
 # 2. Is the SSH tunnel working?
 curl -s http://127.0.0.1:18339/health
-# Expected: {"status":"ok"}
+# Expected: {"service":"cc-clip","status":"ok"}
 # If fails → open a NEW SSH connection (tunnel activates on connect)
 
 # 3. Is Xvfb running?
@@ -615,7 +615,7 @@ See [Troubleshooting Guide](docs/troubleshooting.md) for detailed diagnostics, o
 
 Contributions welcome! For bug reports and feature requests, [open an issue](https://github.com/ShunmeiCho/cc-clip/issues).
 
-For code contributions:
+For code contributions (building from source requires Go 1.25.10+, per `go.mod`):
 
 ```bash
 git clone https://github.com/ShunmeiCho/cc-clip.git

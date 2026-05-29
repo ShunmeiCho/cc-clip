@@ -1,8 +1,10 @@
 package tunnel
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -46,6 +48,19 @@ func ProbeHealth(addr string, timeout time.Duration) error {
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%w at %s: GET /health -> %d", ErrDaemonNotAnswering, addr, resp.StatusCode)
+	}
+	var health struct {
+		Service string `json:"service"`
+		Status  string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&health); err != nil {
+		return fmt.Errorf("%w at %s: invalid /health body: %v", ErrDaemonNotAnswering, addr, err)
+	}
+	if health.Service != "cc-clip" {
+		return fmt.Errorf("%w at %s: /health service %q", ErrDaemonNotAnswering, addr, health.Service)
+	}
+	if health.Status != "ok" {
+		return fmt.Errorf("%w at %s: /health status %q", ErrDaemonNotAnswering, addr, health.Status)
 	}
 	return nil
 }

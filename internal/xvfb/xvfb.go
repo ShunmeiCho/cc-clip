@@ -121,7 +121,7 @@ func CheckAvailable(session RemoteExecutor) error {
 	_, err := session.Exec("which Xvfb")
 	if err != nil {
 		return fmt.Errorf(
-			"Xvfb not found. Install it:\n" +
+			"xvfb not found. Install it:\n" +
 				"  Debian/Ubuntu: sudo apt install xvfb\n" +
 				"  RHEL/Fedora: sudo dnf install xorg-x11-server-Xvfb",
 		)
@@ -247,7 +247,7 @@ cat %s/display`,
 		time.Sleep(200 * time.Millisecond)
 	}
 	if socketErr != nil {
-		return nil, fmt.Errorf("Xvfb socket %s not found after startup", socketPath)
+		return nil, fmt.Errorf("xvfb socket %s not found after startup", socketPath)
 	}
 
 	return &State{Display: display, PID: pid}, nil

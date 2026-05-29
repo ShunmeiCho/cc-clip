@@ -93,11 +93,13 @@ func writeFakeCurl(t *testing.T, dir string) (argvLog, stdinLog string) {
 
 	argvLog = filepath.Join(dir, "curl-argv.log")
 	stdinLog = filepath.Join(dir, "curl-stdin.log")
+	dataLog := filepath.Join(dir, "curl-data.log")
 	curlPath := filepath.Join(dir, "curl")
 	script := "#!/bin/bash\n" +
 		"set -euo pipefail\n" +
 		"argv_log=" + strconv.Quote(argvLog) + "\n" +
 		"stdin_log=" + strconv.Quote(stdinLog) + "\n" +
+		"data_log=" + strconv.Quote(dataLog) + "\n" +
 		"printf '%s\\n' \"$*\" > \"$argv_log\"\n" +
 		"for ((i=1; i<=$#; i++)); do\n" +
 		"  if [ \"${!i}\" = \"-K\" ]; then\n" +
@@ -112,6 +114,11 @@ func writeFakeCurl(t *testing.T, dir string) (argvLog, stdinLog string) {
 		"prev=\"\"\n" +
 		"for arg in \"$@\"; do\n" +
 		"  if [ \"$prev\" = \"-o\" ]; then outfile=\"$arg\"; fi\n" +
+		"  case \"$prev\" in\n" +
+		"    -d|--data|--data-raw|--data-binary)\n" +
+		"      case \"$arg\" in @*) cat \"${arg#@}\" > \"$data_log\" ;; *) printf '%s' \"$arg\" > \"$data_log\" ;; esac\n" +
+		"      ;;\n" +
+		"  esac\n" +
 		"  prev=\"$arg\"\n" +
 		"done\n" +
 		"url=\"${@: -1}\"\n" +

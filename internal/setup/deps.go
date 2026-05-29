@@ -8,7 +8,7 @@ import (
 
 var pngpasteFallbackPaths = []string{
 	"/opt/homebrew/bin/pngpaste", // Apple Silicon Homebrew
-	"/usr/local/bin/pngpaste",   // Intel Homebrew
+	"/usr/local/bin/pngpaste",    // Intel Homebrew
 }
 
 // CheckPngpaste checks if pngpaste is available.
@@ -28,7 +28,7 @@ func CheckPngpaste() string {
 // InstallPngpaste installs pngpaste via Homebrew.
 func InstallPngpaste() error {
 	if _, err := exec.LookPath("brew"); err != nil {
-		return fmt.Errorf("Homebrew not found; install pngpaste manually: brew install pngpaste")
+		return fmt.Errorf("homebrew not found; install pngpaste manually: brew install pngpaste")
 	}
 	cmd := exec.Command("brew", "install", "pngpaste")
 	cmd.Stdout = os.Stdout

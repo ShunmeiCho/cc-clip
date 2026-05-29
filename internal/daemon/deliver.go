@@ -56,16 +56,7 @@ func (c *DeliveryChain) Deliver(ctx context.Context, env NotifyEnvelope) error {
 // NotifyEnvelope via newImageTransferEnvelope, then delegating to Deliver.
 // This allows DeliveryChain to be used as a drop-in Notifier replacement.
 func (c *DeliveryChain) Notify(ctx context.Context, evt NotifyEvent) error {
-	env := newImageTransferEnvelope("clipboard", ImageTransferPayload{
-		SessionID:   evt.SessionID,
-		Seq:         evt.Seq,
-		Fingerprint: evt.Fingerprint,
-		ImageData:   evt.ImageData,
-		Format:      evt.Format,
-		Width:       evt.Width,
-		Height:      evt.Height,
-		DuplicateOf: evt.DuplicateOf,
-	})
+	env := newImageTransferEnvelope("clipboard", ImageTransferPayload(evt))
 	return c.Deliver(ctx, env)
 }
 

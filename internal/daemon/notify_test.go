@@ -198,16 +198,7 @@ type recordingDeliverer struct {
 }
 
 func (d *recordingDeliverer) Notify(_ context.Context, evt NotifyEvent) error {
-	env := newImageTransferEnvelope("clipboard", ImageTransferPayload{
-		SessionID:   evt.SessionID,
-		Seq:         evt.Seq,
-		Fingerprint: evt.Fingerprint,
-		ImageData:   evt.ImageData,
-		Format:      evt.Format,
-		Width:       evt.Width,
-		Height:      evt.Height,
-		DuplicateOf: evt.DuplicateOf,
-	})
+	env := newImageTransferEnvelope("clipboard", ImageTransferPayload(evt))
 	d.count.Add(1)
 	d.last.Store(env)
 	return nil

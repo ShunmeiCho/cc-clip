@@ -2,8 +2,10 @@ package setup
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -69,17 +71,21 @@ func ensureSSHConfigAt(configPath string, host string, port int) ([]SSHConfigCha
 		modified = true
 	} else {
 		type required struct {
-			key      string
-			value    string
-			contains string
+			key   string
+			value string
 		}
 		directives := []required{
-			{"RemoteForward", rfValue, fmt.Sprintf("%d", port)},
-			{"ControlMaster", "no", "no"},
-			{"ControlPath", "none", "none"},
+			{"RemoteForward", rfValue},
+			{"ControlMaster", "no"},
+			{"ControlPath", "none"},
 		}
 		for _, d := range directives {
-			if block.hasDirective(strings.ToLower(d.key), d.contains) {
+			key := strings.ToLower(d.key)
+			hasDirective := block.hasDirective(key, d.value)
+			if key == "remoteforward" {
+				hasDirective = block.hasRemoteForward(port)
+			}
+			if hasDirective {
 				changes = append(changes, SSHConfigChange{"ok", fmt.Sprintf("%s %s", d.key, d.value)})
 			} else {
 				line := fmt.Sprintf("    %s %s", d.key, d.value)
@@ -122,13 +128,48 @@ type sshDirective struct {
 	value string
 }
 
-func (b *sshBlock) hasDirective(key, valueSubstr string) bool {
+func (b *sshBlock) hasDirective(key, value string) bool {
+	want := normalizeSSHDirectiveValue(value)
 	for _, d := range b.directives {
-		if d.key == key && strings.Contains(strings.ToLower(d.value), strings.ToLower(valueSubstr)) {
+		if d.key == key && normalizeSSHDirectiveValue(d.value) == want {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeSSHDirectiveValue(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func (b *sshBlock) hasRemoteForward(port int) bool {
+	for _, d := range b.directives {
+		if d.key == "remoteforward" && remoteForwardMatches(d.value, port) {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteForwardMatches(value string, port int) bool {
+	fields := strings.Fields(value)
+	if len(fields) < 2 || fields[0] != strconv.Itoa(port) {
+		return false
+	}
+	host, hostPort, err := net.SplitHostPort(fields[1])
+	if err != nil || hostPort != strconv.Itoa(port) {
+		return false
+	}
+	return isLoopbackForwardHost(host)
+}
+
+func isLoopbackForwardHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func findHostBlock(lines []string, host string) *sshBlock {

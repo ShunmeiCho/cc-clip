@@ -9,9 +9,12 @@ const hookTemplate = `#!/usr/bin/env bash
 set -euo pipefail
 
 _CC_CLIP_PORT="${CC_CLIP_PORT:-%d}"
-_CC_CLIP_NONCE_FILE="${HOME}/.cache/cc-clip/notify.nonce"
+_CC_CLIP_CACHE_DIR="${HOME}/.cache/cc-clip"
+_CC_CLIP_NONCE_FILE="${_CC_CLIP_CACHE_DIR}/notify.nonce"
 _CC_CLIP_HOST_ALIAS="${CC_CLIP_HOST_ALIAS:-$(hostname -s)}"
-_CC_CLIP_HEALTH_FILE="${HOME}/.cache/cc-clip/notify-health.log"
+_CC_CLIP_HEALTH_FILE="${_CC_CLIP_CACHE_DIR}/notify-health.log"
+
+mkdir -p "$_CC_CLIP_CACHE_DIR" 2>/dev/null || true
 
 _nonce=""
 if [ -f "$_CC_CLIP_NONCE_FILE" ]; then
@@ -25,7 +28,19 @@ import sys, json, os
 d = json.load(sys.stdin)
 d["_cc_clip_host"] = os.environ["CC_CLIP_HOST"]
 json.dump(d, sys.stdout)
-' 2>/dev/null || echo "$_payload")
+	' 2>/dev/null || echo "$_payload")
+
+_payload_file=$(mktemp "${_CC_CLIP_CACHE_DIR}/notify-payload.XXXXXX" 2>/dev/null || mktemp 2>/dev/null || true)
+if [ -z "$_payload_file" ]; then
+	echo "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) FAIL payload_tmp" >> "$_CC_CLIP_HEALTH_FILE" 2>/dev/null || true
+	exit 0
+fi
+trap 'rm -f "$_payload_file"' EXIT
+chmod 600 "$_payload_file" 2>/dev/null || true
+if ! printf '%%s' "$_payload" > "$_payload_file"; then
+	echo "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) FAIL payload_write" >> "$_CC_CLIP_HEALTH_FILE" 2>/dev/null || true
+	exit 0
+fi
 
 _cc_clip_curl_config() {
 	printf 'header = "Authorization: Bearer %%s"\n' "$_nonce"
@@ -34,7 +49,7 @@ _cc_clip_curl_config() {
 }
 
 _http_code=$(_cc_clip_curl_config | curl -sf --connect-timeout 2 --max-time 5 -K - -o /dev/null -w '%%{http_code}' -X POST \
-	-d "$_payload" \
+	--data-binary "@$_payload_file" \
 	"http://127.0.0.1:${_CC_CLIP_PORT}/notify" \
 	2>/dev/null) || _http_code="000"
 

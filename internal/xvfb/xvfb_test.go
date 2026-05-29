@@ -131,10 +131,10 @@ func TestCheckAvailable_NotFound(t *testing.T) {
 
 	err := CheckAvailable(m)
 	if err == nil {
-		t.Fatal("expected error when Xvfb not found")
+		t.Fatal("expected error when xvfb not found")
 	}
-	if !strings.Contains(err.Error(), "Xvfb not found") {
-		t.Fatalf("error should mention Xvfb not found, got: %v", err)
+	if !strings.Contains(err.Error(), "xvfb not found") {
+		t.Fatalf("error should mention xvfb not found, got: %v", err)
 	}
 	if !strings.Contains(err.Error(), "sudo apt install xvfb") {
 		t.Fatalf("error should contain Debian install hint, got: %v", err)
