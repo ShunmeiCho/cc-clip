@@ -720,10 +720,12 @@ remote has a valid claude binary installed.
 		}
 		fmt.Println("      token synced from local daemon")
 
-		if sid, genErr := shim.GenerateSessionID(); genErr == nil {
-			if writeErr := shim.WriteRemoteSessionID(session, sid); writeErr == nil {
-				fmt.Printf("      session ID: %s\n", sid[:16])
-			}
+		if sid, genErr := shim.GenerateSessionID(); genErr != nil {
+			log.Printf("      warning: failed to generate session ID: %v", genErr)
+		} else if writeErr := shim.WriteRemoteSessionID(session, sid); writeErr != nil {
+			log.Printf("      warning: failed to write session ID: %v", writeErr)
+		} else {
+			fmt.Printf("      session ID: %s\n", sid[:16])
 		}
 
 		connectVerifyTunnel(session, port, host)
@@ -1213,9 +1215,16 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 	probeCmd := fmt.Sprintf(
 		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>/dev/null && echo 'tunnel:ok' || echo 'tunnel:fail'",
 		port)
-	probeOut, _ := session.Exec(probeCmd)
+	probeOut, probeErr := session.Exec(probeCmd)
 
-	if probeOut == "tunnel:ok" {
+	if probeErr != nil {
+		// The probe itself could not run — the SSH master is dead, not the
+		// tunnel. Surfacing the generic "tunnel not detected" guidance here
+		// would send the user chasing a RemoteForward problem that does not
+		// exist; name the real failure instead.
+		fmt.Printf("      tunnel probe could not be executed over SSH: %v\n", probeErr)
+		fmt.Println("      The SSH session appears to be down; re-run 'cc-clip connect' once SSH is reachable.")
+	} else if probeOut == "tunnel:ok" {
 		fmt.Println("      tunnel verified (via existing SSH session)")
 	} else {
 		fmt.Println("      tunnel not detected (this is normal if no interactive SSH session is open)")
@@ -1622,7 +1631,9 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 	if opts.force {
 		fmt.Println("      --force: stopping existing Codex runtime")
 		stopBridgeRemote(session)
-		xvfb.StopRemote(session, codexStateDir)
+		if err := xvfb.StopRemote(session, codexStateDir); err != nil {
+			fmt.Printf("      warning: could not stop existing Xvfb: %v\n", err)
+		}
 	}
 
 	// Step 9: Start or reuse Xvfb
@@ -1711,7 +1722,12 @@ kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null; \
 rm -f %s/bridge.pid; true`,
 		codexStateDir, codexStateDir,
 	)
-	session.Exec(stopScript)
+	// The script ends in `true`, so a non-nil error here means the SSH
+	// transport itself failed (not the kill). Log it non-fatally so a dead
+	// session does not silently leave a stale bridge running.
+	if _, err := session.Exec(stopScript); err != nil {
+		log.Printf("      warning: could not stop x11-bridge over SSH: %v", err)
+	}
 }
 
 // isBridgeHealthy checks if x11-bridge is running on the remote.
