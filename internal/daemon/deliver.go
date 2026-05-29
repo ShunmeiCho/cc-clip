@@ -81,7 +81,18 @@ func BuildDeliveryChain() *DeliveryChain {
 	if d := platformDeliverer(); d != nil {
 		adapters = append(adapters, d)
 	}
+	warnIfNoAdapters(adapters)
 	return &DeliveryChain{adapters: adapters}
+}
+
+// warnIfNoAdapters emits a one-shot startup warning when the delivery chain
+// has no usable adapters. Without this, every Deliver call silently returns
+// "no delivery adapters configured" with no indication at startup that
+// notifications can never be delivered.
+func warnIfNoAdapters(adapters []Deliverer) {
+	if len(adapters) == 0 {
+		log.Printf("WARN: no notification delivery adapters available; notifications will not be delivered")
+	}
 }
 
 // formatNotification extracts display-ready title and body text from any

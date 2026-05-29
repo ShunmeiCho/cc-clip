@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -104,6 +107,35 @@ func TestDeliveryChainNoAdapters(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error with no adapters")
 	}
+}
+
+func TestWarnIfNoAdaptersLogsWhenEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	t.Run("empty chain logs a warning", func(t *testing.T) {
+		buf.Reset()
+		warnIfNoAdapters(nil)
+		out := buf.String()
+		if !strings.Contains(out, "WARN") {
+			t.Fatalf("expected a WARNING when no adapters are available, got %q", out)
+		}
+	})
+
+	t.Run("non-empty chain logs nothing", func(t *testing.T) {
+		buf.Reset()
+		warnIfNoAdapters([]Deliverer{&fakeDeliverer{name: "x"}})
+		if out := buf.String(); out != "" {
+			t.Fatalf("expected no log output when adapters exist, got %q", out)
+		}
+	})
 }
 
 func TestCmuxDelivererHonorsCanceledContext(t *testing.T) {
