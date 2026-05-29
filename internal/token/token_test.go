@@ -347,6 +347,159 @@ func TestValidateNoSlidingWhenFresh(t *testing.T) {
 	}
 }
 
+func TestLoadOrGenerate_LogsWarningOnReadError(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	// Capture warnings emitted during fallthrough-to-Generate.
+	var warnings []string
+	prev := warnf
+	warnf = func(format string, args ...any) {
+		warnings = append(warnings, format)
+	}
+	defer func() { warnf = prev }()
+
+	// Write a corrupt/old-format token file: a real READ ERROR (not a missing file).
+	dir, err := TokenDir()
+	if err != nil {
+		t.Fatalf("TokenDir failed: %v", err)
+	}
+	path := filepath.Join(dir, "session.token")
+	if err := os.WriteFile(path, []byte("only-one-line-no-expiry\n"), 0600); err != nil {
+		t.Fatalf("write corrupt token file failed: %v", err)
+	}
+
+	ttl := 1 * time.Hour
+	m := NewManager(ttl)
+	_, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if reused {
+		t.Fatal("expected fresh token (file is corrupt), but token was reused")
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected a warning to be logged when rotating due to a read error, got none")
+	}
+}
+
+func TestLoadOrGenerate_NoWarningOnMissingFile(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	var warnings []string
+	prev := warnf
+	warnf = func(format string, args ...any) {
+		warnings = append(warnings, format)
+	}
+	defer func() { warnf = prev }()
+
+	// No token file exists: this is the normal first-run path, not a defect.
+	ttl := 1 * time.Hour
+	m := NewManager(ttl)
+	_, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if reused {
+		t.Fatal("expected fresh token on missing file, but token was reused")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warning on missing file, got: %v", warnings)
+	}
+}
+
+func TestWriteTokenFile_AtomicNoLingeringTempAndMode0600(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	expiry := time.Now().Add(1 * time.Hour).Truncate(time.Second)
+	path, err := WriteTokenFile("atomic-token", expiry)
+	if err != nil {
+		t.Fatalf("WriteTokenFile failed: %v", err)
+	}
+
+	// Content must be the two-line format.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	want := "atomic-token\n" + expiry.Format(time.RFC3339) + "\n"
+	if string(data) != want {
+		t.Fatalf("content mismatch: wrote %q, got %q", want, string(data))
+	}
+
+	// Mode must be 0600.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("expected mode 0600, got %o", perm)
+	}
+
+	// No temp file should linger in the directory.
+	dir, err := TokenDir()
+	if err != nil {
+		t.Fatalf("TokenDir failed: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "session.token" {
+			t.Fatalf("unexpected leftover file in token dir: %q", e.Name())
+		}
+	}
+}
+
+func TestWriteTokenFile_OverwriteIsAtomicAndComplete(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	expiry1 := time.Now().Add(1 * time.Hour).Truncate(time.Second)
+	if _, err := WriteTokenFile("first-token", expiry1); err != nil {
+		t.Fatalf("first WriteTokenFile failed: %v", err)
+	}
+
+	// Overwrite with a new token; the replacement must be complete (rename, not truncate-then-write).
+	expiry2 := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	if _, err := WriteTokenFile("second-token", expiry2); err != nil {
+		t.Fatalf("second WriteTokenFile failed: %v", err)
+	}
+
+	tok, gotExpiry, err := ReadTokenFileWithExpiry()
+	if err != nil {
+		t.Fatalf("ReadTokenFileWithExpiry failed: %v", err)
+	}
+	if tok != "second-token" {
+		t.Fatalf("expected overwritten token %q, got %q", "second-token", tok)
+	}
+	if !gotExpiry.Equal(expiry2) {
+		t.Fatalf("expected expiry %v, got %v", expiry2, gotExpiry)
+	}
+
+	// Still no lingering temp files after overwrite.
+	dir, err := TokenDir()
+	if err != nil {
+		t.Fatalf("TokenDir failed: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "session.token" {
+			t.Fatalf("unexpected leftover file in token dir after overwrite: %q", e.Name())
+		}
+	}
+}
+
 func TestRotateToken_ForcesNewGeneration(t *testing.T) {
 	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
 	TokenDirOverride = tmpDir

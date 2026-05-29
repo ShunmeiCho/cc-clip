@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,13 @@ var (
 	ErrTokenExpired = errors.New("token expired")
 	ErrTokenInvalid = errors.New("token invalid")
 )
+
+// warnf logs a non-fatal warning. It is a package-level indirection so tests
+// can capture warnings (e.g. silent token rotation) without depending on the
+// standard logger's output destination.
+var warnf = func(format string, args ...any) {
+	log.Printf(format, args...)
+}
 
 type Session struct {
 	Token     string
@@ -66,6 +74,14 @@ func (m *Manager) LoadOrGenerate(ttl time.Duration) (Session, bool, error) {
 		m.ttl = ttl
 		m.mu.Unlock()
 		return s, true, nil
+	}
+
+	// A missing token file is the normal first-run path; staying silent is
+	// correct there. But any other read error (corrupt/old-format/unreadable
+	// file) means an existing token is being silently rotated, which
+	// invalidates every deployed remote shim. Surface that so it is observable.
+	if err != nil && !os.IsNotExist(err) {
+		warnf("token: existing token file unreadable (%v); rotating token — all remote shims must be re-synced", err)
 	}
 
 	// Expired, missing, or unreadable — generate fresh token with the given TTL.
@@ -139,6 +155,11 @@ func TokenDir() (string, error) {
 }
 
 // WriteTokenFile writes a two-line token file: line 1 = token, line 2 = ISO8601 expiry.
+//
+// The write is atomic: content is written to a temp file in the same directory,
+// fsync'd, then renamed onto session.token. A crash mid-write therefore leaves
+// the previous (valid) token file intact rather than a truncated file that
+// ReadTokenFileWithExpiry would mis-classify as old-format and silently rotate.
 func WriteTokenFile(tok string, expiresAt time.Time) (string, error) {
 	dir, err := TokenDir()
 	if err != nil {
@@ -146,8 +167,33 @@ func WriteTokenFile(tok string, expiresAt time.Time) (string, error) {
 	}
 	path := filepath.Join(dir, "session.token")
 	content := tok + "\n" + expiresAt.Format(time.RFC3339) + "\n"
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		return "", err
+
+	// Temp file in the same directory so os.Rename is atomic (same filesystem).
+	tmp, err := os.CreateTemp(dir, "session.token.tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp token file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	// Best-effort cleanup if we fail before the rename succeeds.
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("failed to chmod temp token file: %w", err)
+	}
+	if _, err := tmp.Write([]byte(content)); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("failed to write temp token file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("failed to fsync temp token file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("failed to close temp token file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return "", fmt.Errorf("failed to rename token file into place: %w", err)
 	}
 	return path, nil
 }
