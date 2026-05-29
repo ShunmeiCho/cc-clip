@@ -20,12 +20,12 @@ fi
 
 _payload=$(cat)
 
-_payload=$(echo "$_payload" | python3 -c "
-import sys, json
+_payload=$(echo "$_payload" | CC_CLIP_HOST="$_CC_CLIP_HOST_ALIAS" python3 -c '
+import sys, json, os
 d = json.load(sys.stdin)
-d['_cc_clip_host'] = '${_CC_CLIP_HOST_ALIAS}'
+d["_cc_clip_host"] = os.environ["CC_CLIP_HOST"]
 json.dump(d, sys.stdout)
-" 2>/dev/null || echo "$_payload")
+' 2>/dev/null || echo "$_payload")
 
 _cc_clip_curl_config() {
 	printf 'header = "Authorization: Bearer %%s"\n' "$_nonce"
