@@ -15,8 +15,8 @@ import (
 // DarwinNotifier delivers macOS notifications with image thumbnails
 // via terminal-notifier, falling back to osascript (text-only) if unavailable.
 type DarwinNotifier struct {
-	previewDir         string
-	terminalNotifier   string // path to terminal-notifier binary, empty if not found
+	previewDir       string
+	terminalNotifier string // path to terminal-notifier binary, empty if not found
 }
 
 // maxPreviewFiles limits the number of preview images retained on disk.
@@ -96,6 +96,7 @@ func (n *DarwinNotifier) Name() string { return "darwin" }
 // via terminal-notifier (with image preview for image_transfer) or osascript.
 func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 	title, body := formatNotification(env)
+	sound := notificationSound(env)
 	subtitle := ""
 	imagePath := ""
 
@@ -132,9 +133,9 @@ func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 	}
 
 	if n.terminalNotifier != "" {
-		return n.sendViaTerminalNotifier(title, subtitle, body, imagePath)
+		return n.sendViaTerminalNotifier(title, subtitle, body, imagePath, sound)
 	}
-	return n.sendViaOsascript(title, subtitle, body)
+	return n.sendViaOsascript(title, subtitle, body, sound)
 }
 
 func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
@@ -166,17 +167,20 @@ func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
 	}
 
 	if n.terminalNotifier != "" {
-		return n.sendViaTerminalNotifier(title, subtitle, body, previewPath)
+		return n.sendViaTerminalNotifier(title, subtitle, body, previewPath, "")
 	}
-	return n.sendViaOsascript(title, subtitle, body)
+	return n.sendViaOsascript(title, subtitle, body, "")
 }
 
-func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePath string) error {
+func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePath, sound string) error {
 	args := []string{
 		"-title", title,
 		"-subtitle", subtitle,
 		"-message", body,
 		"-group", "cc-clip",
+	}
+	if sound != "" {
+		args = append(args, "-sound", sound)
 	}
 	if imagePath != "" {
 		args = append(args, "-contentImage", imagePath)
@@ -185,10 +189,10 @@ func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePat
 	return exec.Command(n.terminalNotifier, args...).Run()
 }
 
-func (n *DarwinNotifier) sendViaOsascript(title, subtitle, body string) error {
-	script := fmt.Sprintf(
-		`display notification %q with title %q subtitle %q`,
-		body, title, subtitle,
-	)
+func (n *DarwinNotifier) sendViaOsascript(title, subtitle, body, sound string) error {
+	script := fmt.Sprintf(`display notification %q with title %q subtitle %q`, body, title, subtitle)
+	if sound != "" {
+		script += fmt.Sprintf(` sound name %q`, sound)
+	}
 	return exec.Command("osascript", "-e", script).Run()
 }

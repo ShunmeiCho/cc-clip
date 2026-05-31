@@ -211,6 +211,33 @@ func TestClassifyNotificationFallsBackWhenTypeAndTitleEmpty(t *testing.T) {
 	}
 }
 
+func TestClassifyNotificationUsesMessageFallbackBody(t *testing.T) {
+	env := ClassifyHookPayload("notification", map[string]any{
+		"hook_event_name": "Notification",
+		"type":            "progress_update",
+		"message":         "Script Editor text",
+	})
+	if env == nil || env.GenericMessage == nil {
+		t.Fatalf("expected generic message envelope, got %#v", env)
+	}
+	if env.GenericMessage.Body != "Script Editor text" {
+		t.Fatalf("expected message fallback body, got %q", env.GenericMessage.Body)
+	}
+}
+
+func TestClassifyPermissionPromptGetsDefaultSound(t *testing.T) {
+	env := ClassifyHookPayload("notification", map[string]any{
+		"type": "permission_prompt",
+		"body": "Approve tool",
+	})
+	if env == nil || env.GenericMessage == nil {
+		t.Fatalf("expected generic message envelope, got %#v", env)
+	}
+	if env.GenericMessage.Sound != defaultCriticalSound {
+		t.Fatalf("expected sound %q, got %q", defaultCriticalSound, env.GenericMessage.Sound)
+	}
+}
+
 // TestStringifyMapSkipsInternalKeys verifies that internal cc-clip keys
 // (prefixed "_cc_clip_") are not leaked into the displayed notification body
 // via the default classifier branch.

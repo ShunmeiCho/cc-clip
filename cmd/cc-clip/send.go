@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -380,11 +381,22 @@ func sshUploadNoForward(host, localPath, remotePath string) error {
 	}
 	defer f.Close()
 
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat local file %s: %w", localPath, err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("local file is empty: %s", localPath)
+	}
+
 	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, sshUploadRemoteCmd(remotePath))
 	c.Stdin = f
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("ssh upload failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	if err := verifyRemoteUploadSize(host, remotePath, info.Size()); err != nil {
+		return err
 	}
 	return nil
 }
@@ -399,6 +411,48 @@ func sshUploadNoForward(host, localPath, remotePath string) error {
 // must not be readable by other users on the remote host.
 func sshUploadRemoteCmd(remotePath string) string {
 	return "umask 077; cat > " + shQuote(remotePath)
+}
+
+func verifyRemoteUploadSize(host, remotePath string, wantBytes int64) error {
+	out, err := remoteExecNoForward(host, remoteUploadSizeCmd(remotePath))
+	if err != nil {
+		return fmt.Errorf("remote upload verification failed for %s: %w", remotePath, err)
+	}
+	gotBytes, err := parseRemoteUploadSize(out)
+	if err != nil {
+		return fmt.Errorf("remote upload verification returned invalid size for %s: %q: %w", remotePath, out, err)
+	}
+	if gotBytes != wantBytes {
+		return fmt.Errorf("remote upload size mismatch for %s: local=%d remote=%d", remotePath, wantBytes, gotBytes)
+	}
+	return nil
+}
+
+func remoteUploadSizeCmd(remotePath string) string {
+	q := shQuote(remotePath)
+	return "sh -lc " + shQuote("test -s "+q+" && wc -c < "+q)
+}
+
+func parseRemoteUploadSize(out string) (int64, error) {
+	fields := strings.Fields(out)
+	for i := len(fields) - 1; i >= 0; i-- {
+		if isDecimalDigits(fields[i]) {
+			return strconv.ParseInt(fields[i], 10, 64)
+		}
+	}
+	return 0, fmt.Errorf("no decimal byte count found")
+}
+
+func isDecimalDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func shQuote(s string) string {

@@ -209,9 +209,31 @@ func TestGenerateNotificationNonceDistinctFromSessionID(t *testing.T) {
 	}
 }
 
+func TestSetRemoteClaudeHooksEnabledTogglesMarker(t *testing.T) {
+	home := t.TempDir()
+	s := &localSession{home: home}
+	marker := filepath.Join(home, ".cache", "cc-clip", "no-hooks")
+
+	if err := SetRemoteClaudeHooksEnabled(s, false); err != nil {
+		t.Fatalf("disable hooks failed: %v", err)
+	}
+	if info, err := os.Stat(marker); err != nil {
+		t.Fatalf("expected no-hooks marker: %v", err)
+	} else if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("marker mode = %o, want 0600", got)
+	}
+
+	if err := SetRemoteClaudeHooksEnabled(s, true); err != nil {
+		t.Fatalf("enable hooks failed: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("expected marker removed, got err=%v", err)
+	}
+}
+
 func TestCodexNotifyManagedBlockUsesConfigArray(t *testing.T) {
 	block := codexNotifyManagedBlock("start", "end", 18339)
-	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--from-codex-stdin"]`) {
+	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]`) {
 		t.Fatalf("expected notify array config, got %q", block)
 	}
 	if strings.Contains(block, "[notify]") {
@@ -264,7 +286,7 @@ func TestEnsureRemoteCodexNotifyConfigAppendsManagedBlock(t *testing.T) {
 	}
 
 	config := readTestCodexConfig(t, s.home)
-	if !strings.Contains(config, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "notify", "--from-codex-stdin"]`) {
+	if !strings.Contains(config, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "notify", "--trusted", "--from-codex-stdin"]`) {
 		t.Fatalf("config missing managed notify block: %q", config)
 	}
 }

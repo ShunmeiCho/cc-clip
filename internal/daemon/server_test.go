@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,17 @@ func newTestServer(clip ClipboardReader) (*Server, string) {
 	store := session.NewStore(12 * time.Hour)
 	srv := NewServer("127.0.0.1:0", clip, tm, store)
 	return srv, s.Token
+}
+
+func withTokenDirOverride(t *testing.T) string {
+	t.Helper()
+	old := token.TokenDirOverride
+	dir := t.TempDir()
+	token.TokenDirOverride = dir
+	t.Cleanup(func() {
+		token.TokenDirOverride = old
+	})
+	return dir
 }
 
 type staticAddrListener struct {
@@ -207,6 +219,84 @@ func TestCleanupExpiredNoncesShrinksOrderSlice(t *testing.T) {
 	}
 	if got := len(srv.notifyNoncesOrder); got != 0 {
 		t.Fatalf("notifyNoncesOrder must be cleared by CleanupExpiredNonces; got %d entries", got)
+	}
+}
+
+func TestNotificationNoncesPersistAndReload(t *testing.T) {
+	withTokenDirOverride(t)
+	srv, _ := newTestServer(&mockClipboard{})
+	srv.EnableNoncePersistence()
+
+	if err := srv.RegisterNotificationNonceForHost("nonce-persist", "venus"); err != nil {
+		t.Fatalf("RegisterNotificationNonceForHost failed: %v", err)
+	}
+
+	path, err := nonceStorePath()
+	if err != nil {
+		t.Fatalf("nonceStorePath failed: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("expected nonce store to exist: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("nonce store mode = %o, want 0600", got)
+	}
+
+	reloaded, _ := newTestServer(&mockClipboard{})
+	reloaded.EnableNoncePersistence()
+	loaded, err := reloaded.LoadPersistedNonces()
+	if err != nil {
+		t.Fatalf("LoadPersistedNonces failed: %v", err)
+	}
+	if loaded != 1 {
+		t.Fatalf("loaded %d nonces, want 1", loaded)
+	}
+	host, ok := reloaded.lookupValidNonce("nonce-persist")
+	if !ok {
+		t.Fatal("persisted nonce should authenticate after reload")
+	}
+	if host != "venus" {
+		t.Fatalf("reloaded host = %q, want venus", host)
+	}
+}
+
+func TestLoadPersistedNoncesSkipsExpiredEntries(t *testing.T) {
+	withTokenDirOverride(t)
+	path, err := nonceStorePath()
+	if err != nil {
+		t.Fatalf("nonceStorePath failed: %v", err)
+	}
+	now := time.Now()
+	store := persistedNonceStore{
+		Version: 1,
+		Nonces: []persistedNonce{
+			{Nonce: "expired", Host: "old", IssuedAt: now.Add(-8 * 24 * time.Hour), ExpiresAt: now.Add(-time.Hour)},
+			{Nonce: "live", Host: "new", IssuedAt: now, ExpiresAt: now.Add(time.Hour)},
+		},
+	}
+	data, err := json.Marshal(store)
+	if err != nil {
+		t.Fatalf("marshal store: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write store: %v", err)
+	}
+
+	srv, _ := newTestServer(&mockClipboard{})
+	srv.EnableNoncePersistence()
+	loaded, err := srv.LoadPersistedNonces()
+	if err != nil {
+		t.Fatalf("LoadPersistedNonces failed: %v", err)
+	}
+	if loaded != 1 {
+		t.Fatalf("loaded %d nonces, want 1", loaded)
+	}
+	if srv.validNotificationNonce("expired") {
+		t.Fatal("expired nonce should not be restored")
+	}
+	if !srv.validNotificationNonce("live") {
+		t.Fatal("live nonce should be restored")
 	}
 }
 
@@ -571,6 +661,43 @@ func TestNotifyKeepsBodyHostWhenNonceUnbound(t *testing.T) {
 	case env := <-srv.notifyCh:
 		if env.Host != "host-from-body" {
 			t.Fatalf("expected body host preserved for unbound nonce, got %q", env.Host)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an envelope to be enqueued")
+	}
+}
+
+func TestNotifyParsesTrustedAndSoundFromGenericPayload(t *testing.T) {
+	clip := &mockClipboard{}
+	tm := token.NewManager(time.Hour)
+	_, _ = tm.Generate()
+	store := session.NewStore(12 * time.Hour)
+	srv := NewServer("127.0.0.1:0", clip, tm, store)
+	if err := srv.RegisterNotificationNonce("nonce-trusted"); err != nil {
+		t.Fatalf("register nonce: %v", err)
+	}
+
+	body := strings.NewReader(`{"title":"hi","body":"there","trusted":true,"sound":"Ping"}`)
+	req := httptest.NewRequest("POST", "/notify", body)
+	req.Header.Set("Authorization", "Bearer nonce-trusted")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case env := <-srv.notifyCh:
+		if env.GenericMessage == nil {
+			t.Fatal("expected generic message")
+		}
+		if !env.GenericMessage.Verified {
+			t.Fatal("trusted=true should mark message verified")
+		}
+		if env.GenericMessage.Sound != "Ping" {
+			t.Fatalf("sound = %q, want Ping", env.GenericMessage.Sound)
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("expected an envelope to be enqueued")

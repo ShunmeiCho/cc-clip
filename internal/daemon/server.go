@@ -49,6 +49,7 @@ type Server struct {
 	notifyNonces      map[string]nonceEntry
 	notifyNoncesOrder []string // insertion order for FIFO eviction when cap is exceeded
 	noncesMu          sync.RWMutex
+	persistNonces     bool
 	addr              string
 	mux               *http.ServeMux
 }
@@ -72,6 +73,15 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 	s.mux.HandleFunc("POST /notify", s.handleNotify)
 	s.mux.HandleFunc("POST /register-nonce", s.authMiddleware(s.handleRegisterNonce))
 	return s
+}
+
+// EnableNoncePersistence makes notification nonce mutations durable across
+// daemon restarts. Tests leave this disabled unless they are exercising the
+// persistence contract directly.
+func (s *Server) EnableNoncePersistence() {
+	s.noncesMu.Lock()
+	s.persistNonces = true
+	s.noncesMu.Unlock()
 }
 
 // nonceEntry tracks metadata for a registered notification nonce.
@@ -113,6 +123,8 @@ func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 	now := time.Now()
 	s.noncesMu.Lock()
 	defer s.noncesMu.Unlock()
+	prevNonces := cloneNonceMap(s.notifyNonces)
+	prevOrder := append([]string(nil), s.notifyNoncesOrder...)
 	// Revoke previous nonce for the same host. We must update both the
 	// map AND the order slice so same-host re-registrations cannot grow
 	// notifyNoncesOrder unbounded (which would defeat the entire cap).
@@ -140,6 +152,13 @@ func (s *Server) RegisterNotificationNonceForHost(nonce, host string) error {
 		oldest := s.notifyNoncesOrder[0]
 		s.notifyNoncesOrder = s.notifyNoncesOrder[1:]
 		delete(s.notifyNonces, oldest)
+	}
+	if s.persistNonces {
+		if err := s.persistNoncesLocked(); err != nil {
+			s.notifyNonces = prevNonces
+			s.notifyNoncesOrder = prevOrder
+			return fmt.Errorf("persist notification nonce registry: %w", err)
+		}
 	}
 	return nil
 }
@@ -191,6 +210,11 @@ func (s *Server) CleanupExpiredNonces() {
 		if now.After(v.ExpiresAt) {
 			delete(s.notifyNonces, k)
 			s.removeFromNoncesOrder(k)
+		}
+	}
+	if s.persistNonces {
+		if err := s.persistNoncesLocked(); err != nil {
+			log.Printf("WARN: failed to persist notification nonce cleanup: %v", err)
 		}
 	}
 }
@@ -570,6 +594,8 @@ func (s *Server) parseGenericJSON(body []byte) (NotifyEnvelope, error) {
 		Body    string `json:"body"`
 		Urgency int    `json:"urgency"`
 		Host    string `json:"host"`
+		Sound   string `json:"sound"`
+		Trusted bool   `json:"trusted"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return NotifyEnvelope{}, fmt.Errorf("invalid JSON: %w", err)
@@ -587,7 +613,8 @@ func (s *Server) parseGenericJSON(body []byte) (NotifyEnvelope, error) {
 			Title:    payload.Title,
 			Body:     payload.Body,
 			Urgency:  payload.Urgency,
-			Verified: false,
+			Verified: payload.Trusted,
+			Sound:    payload.Sound,
 		},
 	}, nil
 }

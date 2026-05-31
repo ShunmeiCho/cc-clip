@@ -145,6 +145,8 @@ Deploy (local -> remote):
     --local-bin      Path to pre-downloaded remote binary
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
+    --no-hooks       Persistently disable Claude wrapper hook injection
+    --hooks          Re-enable Claude wrapper hook injection
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
 Codex support (extends connect/setup/uninstall):
@@ -164,6 +166,8 @@ Notifications:
     --title              Notification title
     --body               Notification body
     --urgency            Urgency level (default: 1)
+    --sound              macOS notification sound (allowlisted)
+    --trusted            Suppress [unverified] prefix for trusted local config
     --from-codex         Parse Codex JSON payload (extracts last-assistant-message)
     --from-codex-stdin   Read Codex JSON payload from stdin (mutually exclusive with --from-codex)
     --port               Daemon port (default: 18339, env: CC_CLIP_PORT)
@@ -275,6 +279,12 @@ func cmdServe() {
 	clipboard := daemon.NewClipboardReader()
 	store := session.NewStore(12 * time.Hour)
 	srv := daemon.NewServer(addr, clipboard, tm, store)
+	srv.EnableNoncePersistence()
+	if loaded, err := srv.LoadPersistedNonces(); err != nil {
+		log.Printf("WARN: failed to load notification nonces: %v", err)
+	} else if loaded > 0 {
+		log.Printf("Notification nonces restored: %d", loaded)
+	}
 
 	log.Printf("Token written to: %s", tokenPath)
 	log.Printf("Token expires at: %s", sess.ExpiresAt.Format(time.RFC3339))
@@ -566,6 +576,8 @@ type connectOpts struct {
 	tokenOnly   bool
 	codex       bool
 	noNotify    bool
+	noHooks     bool
+	hooks       bool
 	autoRecover bool
 }
 
@@ -592,13 +604,32 @@ func rejectAutoRecoverWithTokenOnly(cmdName string, autoRecover, tokenOnly bool)
 	os.Exit(2)
 }
 
+func rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly bool) {
+	if tokenOnly && (noHooks || hooks) {
+		fmt.Fprintln(os.Stderr, `error: --no-hooks/--hooks cannot be combined with --token-only
+       --token-only only syncs remote credentials and does not reinstall or
+       update the Claude wrapper hook marker.
+       Re-run without --token-only:
+           cc-clip connect <host> --no-hooks
+       Or re-enable hook injection with:
+           cc-clip connect <host> --hooks`)
+		os.Exit(2)
+	}
+}
+
 func cmdConnect() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify]")
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
 	}
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
+	noHooks := hasFlag("no-hooks")
+	hooks := hasFlag("hooks")
+	if noHooks && hooks {
+		log.Fatal("usage: --no-hooks and --hooks are mutually exclusive")
+	}
 	rejectAutoRecoverWithTokenOnly("connect", autoRecover, tokenOnly)
+	rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly)
 	runConnect(connectOpts{
 		host:        os.Args[2],
 		port:        getPort(),
@@ -606,6 +637,8 @@ func cmdConnect() {
 		tokenOnly:   tokenOnly,
 		codex:       hasFlag("codex"),
 		noNotify:    hasFlag("no-notify"),
+		noHooks:     noHooks,
+		hooks:       hooks,
 		autoRecover: autoRecover,
 	})
 }
@@ -726,6 +759,18 @@ remote has a valid claude binary installed.
 			log.Printf("      warning: failed to write session ID: %v", writeErr)
 		} else {
 			fmt.Printf("      session ID: %s\n", sid[:16])
+		}
+
+		if !opts.noNotify {
+			fmt.Println("      syncing notification nonce")
+			notifyNonce, err := syncNotificationNonce(session, port, daemonToken, host)
+			if err != nil {
+				log.Printf("      warning: failed to sync notification nonce: %v", err)
+			} else if err := runNotificationHealthProbe(port, notifyNonce); err != nil {
+				log.Printf("      warning: notification health probe failed: %v", err)
+			} else {
+				fmt.Println("      notification nonce synced")
+			}
 		}
 
 		connectVerifyTunnel(session, port, host)
@@ -889,7 +934,7 @@ remote has a valid claude binary installed.
 
 	// Notification bridge setup (unless --no-notify)
 	if !opts.noNotify {
-		connectNotifySetup(session, port, daemonToken, host, newState)
+		connectNotifySetup(session, port, daemonToken, host, newState, opts)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not write remote deploy state: %v", err)
 		}
@@ -948,31 +993,15 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 // 4. Print Claude Code hook config
 // 5. Detect and configure Codex notify (if ~/.codex exists)
 // 6. Run health probe
-func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host string, state *shim.DeployState) {
+func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host string, state *shim.DeployState, opts connectOpts) {
 	fmt.Println()
 	fmt.Println("Notification bridge setup:")
 
 	// Step N1: Generate nonce
 	fmt.Println("  [N1] Generating notification nonce...")
-	notifyNonce, err := shim.GenerateNotificationNonce()
+	notifyNonce, err := syncNotificationNonce(session, port, daemonToken, host)
 	if err != nil {
-		log.Printf("      warning: failed to generate notification nonce: %v", err)
-		return
-	}
-
-	// Register nonce with the local daemon via HTTP. host binds this
-	// nonce to the SSH target so a reconnect immediately revokes the
-	// previously issued nonce instead of waiting on TTL or FIFO cap.
-	if err := registerNonceWithDaemon(port, daemonToken, notifyNonce, host); err != nil {
-		log.Printf("      warning: failed to register nonce with daemon: %v", err)
-		return
-	}
-	fmt.Printf("      nonce: %s...\n", notifyNonce[:16])
-
-	// Step N2: Write nonce to remote
-	fmt.Println("  [N2] Writing nonce to remote...")
-	if err := shim.WriteRemoteNotificationNonce(session, notifyNonce); err != nil {
-		log.Printf("      warning: failed to write remote nonce: %v", err)
+		log.Printf("      warning: failed to sync notification nonce: %v", err)
 		return
 	}
 	fmt.Println("      nonce synced")
@@ -987,8 +1016,22 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 
 	hookInstalled := true
 
-	// Step N4: Install claude wrapper (auto-injects hooks via --settings)
+	// Step N4: Install claude wrapper (auto-injects hooks via --settings
+	// unless the persistent no-hooks marker is present).
 	fmt.Println("  [N4] Installing claude wrapper...")
+	if opts.noHooks {
+		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
+			log.Printf("      warning: failed to disable claude wrapper hooks: %v", err)
+		} else {
+			fmt.Println("      claude wrapper hook injection disabled by ~/.cache/cc-clip/no-hooks")
+		}
+	} else {
+		if opts.hooks {
+			if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
+				log.Printf("      warning: failed to re-enable claude wrapper hooks: %v", err)
+			}
+		}
+	}
 	if err := shim.InstallRemoteClaudeWrapper(session, port); err != nil {
 		log.Printf("      warning: failed to install claude wrapper: %v", err)
 		fmt.Println("      Falling back to manual hook config:")
@@ -999,7 +1042,7 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println()
 	} else {
 		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
-		fmt.Println("      Hooks will be auto-injected when tunnel is alive")
+		fmt.Println("      Hooks will be auto-injected unless disabled by ~/.cache/cc-clip/no-hooks")
 	}
 
 	// Step N5: Detect and configure Codex notify
@@ -1036,6 +1079,20 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		CodexInjected:  codexInjected,
 		HealthVerified: healthVerified,
 	}
+}
+
+func syncNotificationNonce(session *shim.SSHSession, port int, daemonToken, host string) (string, error) {
+	notifyNonce, err := shim.GenerateNotificationNonce()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate notification nonce: %w", err)
+	}
+	if err := registerNonceWithDaemon(port, daemonToken, notifyNonce, host); err != nil {
+		return "", fmt.Errorf("failed to register nonce with daemon: %w", err)
+	}
+	if err := shim.WriteRemoteNotificationNonce(session, notifyNonce); err != nil {
+		return "", fmt.Errorf("failed to write remote nonce: %w", err)
+	}
+	return notifyNonce, nil
 }
 
 // registerNonceWithDaemon sends the notification nonce to the local daemon
@@ -1766,14 +1823,18 @@ func cmdNotify() {
 	title := fs.String("title", "", "notification title")
 	body := fs.String("body", "", "notification body")
 	urgency := fs.Int("urgency", 1, "notification urgency (0=low, 1=normal, 2=critical)")
+	sound := fs.String("sound", "", "macOS notification sound")
+	trusted := fs.Bool("trusted", false, "mark this notification as trusted")
 	fromCodex := fs.String("from-codex", "", "Codex notify JSON payload")
 	fromCodexStdin := fs.Bool("from-codex-stdin", false, "read Codex notify JSON payload from stdin")
 	_ = fs.Parse(os.Args[2:])
 
 	msg := daemon.GenericMessagePayload{
-		Title:   *title,
-		Body:    *body,
-		Urgency: *urgency,
+		Title:    *title,
+		Body:     *body,
+		Urgency:  *urgency,
+		Sound:    *sound,
+		Verified: *trusted,
 	}
 
 	switch {
@@ -1797,6 +1858,13 @@ func cmdNotify() {
 		msg = parsed
 	}
 
+	if *sound != "" {
+		msg.Sound = *sound
+	}
+	if *trusted {
+		msg.Verified = true
+	}
+
 	port := getPort()
 	if err := postGenericNotification(port, msg); err != nil {
 		log.Fatalf("notify failed: %v", err)
@@ -1815,9 +1883,10 @@ func parseCodexNotifyPayload(payload string) (daemon.GenericMessagePayload, erro
 	lastMsg, _ := raw["last-assistant-message"].(string)
 
 	return daemon.GenericMessagePayload{
-		Title:   "Codex",
-		Body:    lastMsg,
-		Urgency: 1,
+		Title:    "Codex",
+		Body:     lastMsg,
+		Urgency:  1,
+		Verified: true,
 	}, nil
 }
 
@@ -1840,10 +1909,14 @@ func postGenericNotification(port int, msg daemon.GenericMessagePayload) error {
 		Title   string `json:"title"`
 		Body    string `json:"body"`
 		Urgency int    `json:"urgency"`
+		Sound   string `json:"sound,omitempty"`
+		Trusted bool   `json:"trusted,omitempty"`
 	}{
 		Title:   msg.Title,
 		Body:    msg.Body,
 		Urgency: msg.Urgency,
+		Sound:   msg.Sound,
+		Trusted: msg.Verified,
 	}
 
 	body, err := json.Marshal(payload)

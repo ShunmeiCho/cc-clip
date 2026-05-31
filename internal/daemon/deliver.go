@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Deliverer sends a notification envelope through a specific transport.
@@ -117,4 +118,59 @@ func formatNotification(env NotifyEnvelope) (title, body string) {
 		body = string(env.Kind)
 	}
 	return title, body
+}
+
+const defaultCriticalSound = "Glass"
+
+func notificationSound(env NotifyEnvelope) string {
+	if env.GenericMessage == nil {
+		return ""
+	}
+	if sound := normalizeNotificationSound(env.GenericMessage.Sound); sound != "" {
+		return sound
+	}
+	if strings.TrimSpace(env.GenericMessage.Sound) != "" {
+		return ""
+	}
+	if env.GenericMessage.Urgency == 2 {
+		return defaultCriticalSound
+	}
+	return ""
+}
+
+func normalizeNotificationSound(sound string) string {
+	switch strings.ToLower(strings.TrimSpace(sound)) {
+	case "", "none", "off", "silent":
+		return ""
+	case "basso":
+		return "Basso"
+	case "blow":
+		return "Blow"
+	case "bottle":
+		return "Bottle"
+	case "frog":
+		return "Frog"
+	case "funk":
+		return "Funk"
+	case "glass":
+		return "Glass"
+	case "hero":
+		return "Hero"
+	case "morse":
+		return "Morse"
+	case "ping":
+		return "Ping"
+	case "pop":
+		return "Pop"
+	case "purr":
+		return "Purr"
+	case "sosumi":
+		return "Sosumi"
+	case "submarine":
+		return "Submarine"
+	case "tink":
+		return "Tink"
+	default:
+		return ""
+	}
 }
