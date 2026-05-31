@@ -130,10 +130,11 @@ func TestInstall_RegularFileOrigin(t *testing.T) {
 	if !strings.Contains(string(data), "# cc-clip claude wrapper") {
 		t.Fatal("claude is not the cc-clip wrapper after install")
 	}
-	// Port-substitution assertion (per T6 review note): wrapper must reference
-	// the port we passed to InstallRemoteClaudeWrapper.
-	if !strings.Contains(string(data), "18339") {
-		t.Fatal("installed wrapper does not contain expected port 18339")
+	if strings.Contains(string(data), "%!(EXTRA") {
+		t.Fatal("installed wrapper contains fmt extra-argument artifact")
+	}
+	if !strings.Contains(string(data), "--settings") || !strings.Contains(string(data), "cc-clip-hook") {
+		t.Fatal("installed wrapper does not contain hook injection")
 	}
 
 	// claude must be a regular file (not a symlink).
@@ -205,16 +206,17 @@ func TestInstall_ReinstallOverCcWrapper(t *testing.T) {
 		t.Fatalf("re-install: %v", err)
 	}
 
-	// Wrapper must be updated (port baked in is 19999 now).
+	// Wrapper must be updated while remaining independent from the legacy
+	// port argument. The hook script, not the wrapper, owns the daemon port.
 	data, err := os.ReadFile(filepath.Join(binDir, "claude"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "19999") {
-		t.Fatal("wrapper port was not updated")
+	if strings.Contains(string(data), "19999") || strings.Contains(string(data), "18339") {
+		t.Fatal("wrapper should not contain daemon port after startup health gate removal")
 	}
-	if strings.Contains(string(data), "18339") {
-		t.Fatal("wrapper still contains old port")
+	if !strings.Contains(string(data), "--settings") || !strings.Contains(string(data), "cc-clip-hook") {
+		t.Fatal("reinstalled wrapper does not contain hook injection")
 	}
 
 	// Sidecar must be untouched (we don't displace re-install over our own wrapper).

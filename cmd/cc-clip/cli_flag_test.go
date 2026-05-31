@@ -13,16 +13,29 @@ import (
 // message rather than an SSH connection failure for the fake host.
 func TestCLIMutex(t *testing.T) {
 	cases := []struct {
-		name string
-		args []string
+		name    string
+		args    []string
+		wantErr string
 	}{
 		{
-			name: "connect_auto_recover_with_token_only",
-			args: []string{"connect", "fakehost.invalid", "--auto-recover", "--token-only"},
+			name:    "connect_auto_recover_with_token_only",
+			args:    []string{"connect", "fakehost.invalid", "--auto-recover", "--token-only"},
+			wantErr: "--auto-recover cannot be combined with --token-only",
 		},
 		{
-			name: "setup_auto_recover_with_token_only",
-			args: []string{"setup", "fakehost.invalid", "--auto-recover", "--token-only"},
+			name:    "setup_auto_recover_with_token_only",
+			args:    []string{"setup", "fakehost.invalid", "--auto-recover", "--token-only"},
+			wantErr: "--auto-recover cannot be combined with --token-only",
+		},
+		{
+			name:    "connect_no_hooks_with_token_only",
+			args:    []string{"connect", "fakehost.invalid", "--token-only", "--no-hooks"},
+			wantErr: "--no-hooks/--hooks cannot be combined with --token-only",
+		},
+		{
+			name:    "connect_hooks_with_token_only",
+			args:    []string{"connect", "fakehost.invalid", "--token-only", "--hooks"},
+			wantErr: "--no-hooks/--hooks cannot be combined with --token-only",
 		},
 	}
 	for _, tc := range cases {
@@ -35,7 +48,7 @@ func TestCLIMutex(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected non-zero exit on flag conflict")
 			}
-			if !strings.Contains(stderr.String(), "--auto-recover cannot be combined with --token-only") {
+			if !strings.Contains(stderr.String(), tc.wantErr) {
 				t.Fatalf("missing mutex error in stderr: %s", stderr.String())
 			}
 		})

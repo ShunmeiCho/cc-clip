@@ -277,6 +277,21 @@ func WriteRemoteNotificationNonce(session *SSHSession, nonce string) error {
 	return nil
 }
 
+// SetRemoteClaudeHooksEnabled toggles the persistent wrapper opt-out marker.
+// The wrapper checks this file at runtime before injecting --settings hooks, so
+// the choice survives future wrapper reinstalls and --force connects.
+func SetRemoteClaudeHooksEnabled(session SessionExecutor, enabled bool) error {
+	cmd := `mkdir -p ~/.cache/cc-clip && rm -f ~/.cache/cc-clip/no-hooks`
+	if !enabled {
+		cmd = `mkdir -p ~/.cache/cc-clip && : > ~/.cache/cc-clip/no-hooks && chmod 600 ~/.cache/cc-clip/no-hooks`
+	}
+	out, err := session.Exec(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to update remote claude hook marker: %s: %w", strings.TrimSpace(out), err)
+	}
+	return nil
+}
+
 // InstallRemoteHookScript writes the cc-clip-hook bash script to
 // ~/.local/bin/cc-clip-hook on the remote with chmod +x.
 func InstallRemoteHookScript(session *SSHSession, port int) error {
@@ -540,11 +555,11 @@ func codexNotifyManagedBlock(markerStart, markerEnd string, port int) string {
 	// Include port in CC_CLIP_PORT env so non-default ports work.
 	if port == 18339 {
 		return markerStart + "\n" +
-			`notify = ["cc-clip", "notify", "--from-codex-stdin"]` + "\n" +
+			`notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]` + "\n" +
 			markerEnd
 	}
 	return markerStart + "\n" +
-		fmt.Sprintf(`notify = ["env", "CC_CLIP_PORT=%d", "cc-clip", "notify", "--from-codex-stdin"]`, port) + "\n" +
+		fmt.Sprintf(`notify = ["env", "CC_CLIP_PORT=%d", "cc-clip", "notify", "--trusted", "--from-codex-stdin"]`, port) + "\n" +
 		markerEnd
 }
 

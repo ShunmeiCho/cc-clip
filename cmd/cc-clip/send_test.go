@@ -197,3 +197,34 @@ func TestSSHUploadRemoteCmdQuotesPath(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteUploadSizeCmdQuotesPathAndRejectsEmpty(t *testing.T) {
+	remotePath := "/tmp/a; rm -rf /.png"
+	got := remoteUploadSizeCmd(remotePath)
+	want := "sh -lc 'test -s '\\''/tmp/a; rm -rf /.png'\\'' && wc -c < '\\''/tmp/a; rm -rf /.png'\\'''"
+	if got != want {
+		t.Fatalf("remoteUploadSizeCmd(%q) = %q, want %q", remotePath, got, want)
+	}
+}
+
+func TestParseRemoteUploadSize(t *testing.T) {
+	for _, input := range []string{
+		"12345\n",
+		"zshenv banner\n12345\n",
+		"debug 2026\n   12345\n",
+	} {
+		got, err := parseRemoteUploadSize(input)
+		if err != nil {
+			t.Fatalf("parseRemoteUploadSize(%q) returned error: %v", input, err)
+		}
+		if got != 12345 {
+			t.Fatalf("parseRemoteUploadSize(%q) = %d, want 12345", input, got)
+		}
+	}
+	if _, err := parseRemoteUploadSize(""); err == nil {
+		t.Fatal("expected empty size output to fail")
+	}
+	if _, err := parseRemoteUploadSize("no byte count here"); err == nil {
+		t.Fatal("expected non-numeric size output to fail")
+	}
+}

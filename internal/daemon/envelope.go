@@ -56,6 +56,7 @@ type GenericMessagePayload struct {
 	Body       string
 	Urgency    int
 	Verified   bool
+	Sound      string
 	Subtitle   string
 	DedupCount int
 }

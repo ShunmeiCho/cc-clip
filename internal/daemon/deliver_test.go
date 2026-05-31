@@ -342,6 +342,21 @@ func TestFormatNotificationToolAttention(t *testing.T) {
 	}
 }
 
+func TestNotificationSoundAllowlistAndCriticalDefault(t *testing.T) {
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2}}); got != defaultCriticalSound {
+		t.Fatalf("critical default sound = %q, want %q", got, defaultCriticalSound)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1, Sound: "ping"}}); got != "Ping" {
+		t.Fatalf("allowlisted sound = %q, want Ping", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2, Sound: "not-a-sound"}}); got != "" {
+		t.Fatalf("unknown explicit sound should be silent, got %q", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2, Sound: "none"}}); got != "" {
+		t.Fatalf("sound=none should suppress critical default, got %q", got)
+	}
+}
+
 func TestDeliveryChainNotifyBridgesEvent(t *testing.T) {
 	recorder := &fakeDeliverer{name: "test"}
 	chain := &DeliveryChain{adapters: []Deliverer{recorder}}

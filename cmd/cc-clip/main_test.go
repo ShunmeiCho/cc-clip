@@ -250,6 +250,9 @@ func TestNotifyFromCodexParsesLastAssistantMessage(t *testing.T) {
 	if msg.Title != "Codex" {
 		t.Fatalf("expected title %q, got %q", "Codex", msg.Title)
 	}
+	if !msg.Verified {
+		t.Fatal("Codex notify payload should be treated as trusted local config")
+	}
 }
 
 func TestNotifyFromCodexRejectsInvalidJSON(t *testing.T) {
@@ -408,9 +411,11 @@ func TestPostGenericNotificationDeliversExpectedPayload(t *testing.T) {
 	}()
 
 	msg := daemon.GenericMessagePayload{
-		Title:   "Build complete",
-		Body:    "All tests passed",
-		Urgency: 1,
+		Title:    "Build complete",
+		Body:     "All tests passed",
+		Urgency:  1,
+		Sound:    "Ping",
+		Verified: true,
 	}
 	if err := postGenericNotification(port, msg); err != nil {
 		t.Fatalf("postGenericNotification failed: %v", err)
@@ -429,6 +434,12 @@ func TestPostGenericNotificationDeliversExpectedPayload(t *testing.T) {
 		}
 		if env.GenericMessage.Urgency != msg.Urgency {
 			t.Fatalf("expected urgency %d, got %d", msg.Urgency, env.GenericMessage.Urgency)
+		}
+		if env.GenericMessage.Sound != msg.Sound {
+			t.Fatalf("expected sound %q, got %q", msg.Sound, env.GenericMessage.Sound)
+		}
+		if !env.GenericMessage.Verified {
+			t.Fatal("expected trusted notification to be verified")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected notification to be enqueued")

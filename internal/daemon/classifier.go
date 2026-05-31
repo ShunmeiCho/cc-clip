@@ -29,12 +29,17 @@ func ClassifyHookPayload(hookType string, raw map[string]any) *NotifyEnvelope {
 		notifType, _ := raw["type"].(string)
 		title, _ := raw["title"].(string)
 		body, _ := raw["body"].(string)
+		if body == "" {
+			body, _ = raw["message"].(string)
+		}
 		env.ToolAttention.NotifType = notifType
+		env.ToolAttention.Message = truncate(body, 280)
 		env.GenericMessage.Body = body
 		switch notifType {
 		case "permission_prompt":
 			env.GenericMessage.Title = "Tool approval needed"
 			env.GenericMessage.Urgency = 2
+			env.GenericMessage.Sound = defaultCriticalSound
 		case "idle_prompt":
 			env.GenericMessage.Title = "Claude is idle"
 			env.GenericMessage.Urgency = 1

@@ -1,7 +1,5 @@
 package shim
 
-import "fmt"
-
 const claudeWrapperTemplate = `#!/usr/bin/env bash
 # cc-clip claude wrapper — auto-inject notification hooks
 # Installed by: cc-clip connect
@@ -13,6 +11,7 @@ const claudeWrapperTemplate = `#!/usr/bin/env bash
 _REAL_CLAUDE=""
 _SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 _SIDECAR="$_SELF_DIR/claude.cc-clip-real"
+_NO_HOOKS_FILE="${HOME}/.cache/cc-clip/no-hooks"
 
 if [ -x "$_SIDECAR" ]; then
     _REAL_CLAUDE="$_SIDECAR"
@@ -29,9 +28,11 @@ if [ -z "$_REAL_CLAUDE" ]; then
     exit 1
 fi
 
-# Only inject hooks if cc-clip tunnel is alive
-if curl -sf --connect-timeout 1 --max-time 2 "http://127.0.0.1:${CC_CLIP_PORT:-%d}/health" >/dev/null 2>&1; then
-    exec "$_REAL_CLAUDE" --settings '{
+if [ -f "$_NO_HOOKS_FILE" ]; then
+    exec "$_REAL_CLAUDE" "$@"
+fi
+
+exec "$_REAL_CLAUDE" --settings '{
   "hooks": {
     "Stop": [
       {
@@ -47,18 +48,14 @@ if curl -sf --connect-timeout 1 --max-time 2 "http://127.0.0.1:${CC_CLIP_PORT:-%
     ]
   }
 }' "$@"
-else
-    # Tunnel not available — run claude without hook injection
-    exec "$_REAL_CLAUDE" "$@"
-fi
 `
 
 // ClaudeWrapperScript returns the claude wrapper bash script with the
 // given port baked in. This script is installed to ~/.local/bin/claude
-// on the remote. When the cc-clip tunnel is alive, it injects Stop and
-// Notification hooks via --settings so users don't need to manually
-// configure hooks in ~/.claude/settings.json. When the tunnel is down,
-// it transparently passes through to the real claude binary.
+// on the remote. It injects Stop and Notification hooks via --settings so
+// users don't need to manually configure hooks in ~/.claude/settings.json.
+// The hook script itself is fail-soft when the tunnel is unavailable.
 func ClaudeWrapperScript(port int) string {
-	return fmt.Sprintf(claudeWrapperTemplate, port)
+	_ = port
+	return claudeWrapperTemplate
 }

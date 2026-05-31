@@ -14,7 +14,6 @@ func TestClaudeWrapperContainsHookInjection(t *testing.T) {
 		`"Notification"`,
 		`"matcher": ""`,
 		"cc-clip-hook",
-		"CC_CLIP_PORT:-18339",
 		"exec \"$_REAL_CLAUDE\"",
 	} {
 		if !strings.Contains(got, needle) {
@@ -79,8 +78,8 @@ func assertClaudeV2HookSchema(t *testing.T, cfg string) {
 
 func TestClaudeWrapperPortSubstitution(t *testing.T) {
 	got := ClaudeWrapperScript(9999)
-	if !strings.Contains(got, "CC_CLIP_PORT:-9999") {
-		t.Error("expected port 9999 in health check URL")
+	if strings.Contains(got, "%!(EXTRA") {
+		t.Fatal("wrapper should ignore the legacy port argument without fmt artifacts")
 	}
 }
 
@@ -91,23 +90,25 @@ func TestClaudeWrapperSkipsOwnDirectory(t *testing.T) {
 	}
 }
 
-func TestClaudeWrapperFallsBackWhenTunnelDown(t *testing.T) {
+func TestClaudeWrapperDoesNotGateInjectionOnStartupHealth(t *testing.T) {
 	got := ClaudeWrapperScript(18339)
-	if !strings.Contains(got, "# Tunnel not available") {
-		t.Error("expected fallback comment for tunnel-down case")
+	if strings.Contains(got, "/health") || strings.Contains(got, "curl ") {
+		t.Fatal("wrapper must not skip hook injection based on a startup tunnel probe")
 	}
-	// The else branch should exec without --settings
-	lines := strings.Split(got, "\n")
-	foundElseExec := false
-	for _, line := range lines {
-		if strings.Contains(line, `exec "$_REAL_CLAUDE" "$@"`) &&
-			!strings.Contains(line, "--settings") {
-			foundElseExec = true
-			break
-		}
+	if !strings.Contains(got, `exec "$_REAL_CLAUDE" --settings`) {
+		t.Fatal("wrapper should inject hooks unconditionally when no opt-out marker is present")
 	}
-	if !foundElseExec {
-		t.Error("expected fallback exec without --settings flag")
+}
+
+func TestClaudeWrapperHonorsNoHooksMarker(t *testing.T) {
+	got := ClaudeWrapperScript(18339)
+	if !strings.Contains(got, `.cache/cc-clip/no-hooks`) {
+		t.Fatal("wrapper should check persistent no-hooks marker")
+	}
+	markerIdx := strings.Index(got, `_NO_HOOKS_FILE`)
+	settingsIdx := strings.Index(got, `--settings`)
+	if markerIdx == -1 || settingsIdx == -1 || markerIdx >= settingsIdx {
+		t.Fatal("no-hooks marker check must run before --settings injection")
 	}
 }
 
