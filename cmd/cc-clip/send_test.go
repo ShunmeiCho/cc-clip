@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -226,5 +227,95 @@ func TestParseRemoteUploadSize(t *testing.T) {
 	}
 	if _, err := parseRemoteUploadSize("no byte count here"); err == nil {
 		t.Fatal("expected non-numeric size output to fail")
+	}
+}
+
+// TestParseRemoteHomeStripsSSHWarningPollution reproduces issue #80. Windows
+// OpenSSH emits a post-quantum key-exchange banner on every connection. Under
+// the old CombinedOutput()-based remote home lookup, that banner was
+// concatenated into $HOME, so the remote upload path became
+// "/root/** WARNING.../root/.cache/cc-clip/uploads/clip-*.png" and the file
+// landed at a wrong, deeply nested path while `send` still exited 0. Wrapping
+// the value in sentinels and extracting only the text between them must yield
+// the clean home regardless of any banner lines before or after it.
+func TestParseRemoteHomeStripsSSHWarningPollution(t *testing.T) {
+	pqBanner := "** WARNING: connection is not using a post-quantum key exchange algorithm.\n" +
+		"** This session may be vulnerable to \"store now, decrypt later\" attacks.\n" +
+		"** The server may need to be upgraded. See https://openssh.com/pq.html\n"
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"banner before", pqBanner + remoteHomeMarkerStart + "/root" + remoteHomeMarkerEnd},
+		{"banner after", remoteHomeMarkerStart + "/root" + remoteHomeMarkerEnd + "\n" + pqBanner},
+		{"banner both sides", pqBanner + remoteHomeMarkerStart + "/root" + remoteHomeMarkerEnd + "\n" + pqBanner},
+		{"clean", remoteHomeMarkerStart + "/root" + remoteHomeMarkerEnd},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseRemoteHome(tc.raw)
+			if err != nil {
+				t.Fatalf("parseRemoteHome(%q) returned error: %v", tc.raw, err)
+			}
+			if got != "/root" {
+				t.Fatalf("parseRemoteHome(%q) = %q, want %q", tc.raw, got, "/root")
+			}
+		})
+	}
+}
+
+// TestParseRemoteHomeRejectsInvalid pins the loud-failure contract: anything
+// that is not a single absolute POSIX path between the sentinels must error
+// instead of silently producing a corrupt remote path.
+func TestParseRemoteHomeRejectsInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"no markers", "/root"},
+		{"only start marker", remoteHomeMarkerStart + "/root"},
+		{"only end marker", "/root" + remoteHomeMarkerEnd},
+		{"empty home", remoteHomeMarkerStart + remoteHomeMarkerEnd},
+		{"whitespace home", remoteHomeMarkerStart + "   " + remoteHomeMarkerEnd},
+		{"relative path", remoteHomeMarkerStart + "relative/dir" + remoteHomeMarkerEnd},
+		{"multiline home", remoteHomeMarkerStart + "/root\n/evil" + remoteHomeMarkerEnd},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := parseRemoteHome(tc.raw); err == nil {
+				t.Fatalf("parseRemoteHome(%q) = %q, want error", tc.raw, got)
+			}
+		})
+	}
+}
+
+// TestRemoteHomeProbeCmdEmbedsSentinelsAndReadsHome pins the probe command so
+// the sentinels wrap exactly the $HOME value and parseRemoteHome can extract
+// it. The %s must sit between the two markers.
+func TestRemoteHomeProbeCmdEmbedsSentinelsAndReadsHome(t *testing.T) {
+	cmd := remoteHomeProbeCmd()
+	if !strings.Contains(cmd, `"$HOME"`) {
+		t.Fatalf("probe cmd must read $HOME: %q", cmd)
+	}
+	if !strings.Contains(cmd, remoteHomeMarkerStart+"%s"+remoteHomeMarkerEnd) {
+		t.Fatalf("probe cmd must place %%s between the markers: %q", cmd)
+	}
+}
+
+// TestSSHNoForwardArgsSuppressesBannerAndForwarding pins the shared ssh argv
+// builder used by every cc-clip ssh call. LogLevel=ERROR suppresses the
+// post-quantum banner (#80) at the source, ClearAllForwardings=yes keeps a
+// user's global RemoteForward from triggering, and `--` terminates option
+// parsing before the host so a dash-leading host can never be read as a flag.
+func TestSSHNoForwardArgsSuppressesBannerAndForwarding(t *testing.T) {
+	got := sshNoForwardArgs("myserver", "echo hi")
+	want := []string{
+		"-o", "ClearAllForwardings=yes",
+		"-o", "LogLevel=ERROR",
+		"--", "myserver", "echo hi",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sshNoForwardArgs(\"myserver\", \"echo hi\") = %#v, want %#v", got, want)
 	}
 }

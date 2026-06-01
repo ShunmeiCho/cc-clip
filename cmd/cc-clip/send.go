@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
@@ -300,16 +301,59 @@ func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
 	}, nil
 }
 
+// Sentinel markers wrap the remote $HOME value so parseRemoteHome can extract
+// it even when SSH banners (e.g. the Windows OpenSSH post-quantum warning) or a
+// login shell's profile output land on the same stream. See issue #80.
+const (
+	remoteHomeMarkerStart = "__CCHOME_BEGIN__"
+	remoteHomeMarkerEnd   = "__CCHOME_END__"
+)
+
 func remoteHomeDir(host string) (string, error) {
-	out, err := remoteExecNoForward(host, `sh -lc 'printf %s "$HOME"'`)
+	out, err := remoteExecNoForward(host, remoteHomeProbeCmd())
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve remote home: %w", err)
 	}
-	out = strings.TrimSpace(out)
-	if out == "" {
+	home, err := parseRemoteHome(out)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve remote home: %w", err)
+	}
+	return home, nil
+}
+
+// remoteHomeProbeCmd prints $HOME wrapped in sentinel markers and nothing else.
+// printf emits no trailing newline, so the text between the markers is exactly
+// $HOME. The markers let parseRemoteHome discard any banner lines emitted by
+// SSH or the remote login shell on the same stream.
+func remoteHomeProbeCmd() string {
+	return "sh -lc 'printf " + remoteHomeMarkerStart + "%s" + remoteHomeMarkerEnd + ` "$HOME"'`
+}
+
+// parseRemoteHome extracts the remote $HOME from probe output, tolerating
+// banner/warning lines before or after the sentinels, and validates that the
+// result is a single absolute POSIX path. It fails loudly rather than return a
+// polluted value that would corrupt the remote upload path (issue #80).
+func parseRemoteHome(raw string) (string, error) {
+	start := strings.Index(raw, remoteHomeMarkerStart)
+	if start < 0 {
+		return "", fmt.Errorf("remote home start marker not found in output: %q", raw)
+	}
+	rest := raw[start+len(remoteHomeMarkerStart):]
+	end := strings.Index(rest, remoteHomeMarkerEnd)
+	if end < 0 {
+		return "", fmt.Errorf("remote home end marker not found in output: %q", raw)
+	}
+	home := strings.TrimSpace(rest[:end])
+	if home == "" {
 		return "", fmt.Errorf("remote home directory is empty")
 	}
-	return out, nil
+	if strings.ContainsAny(home, "\r\n") {
+		return "", fmt.Errorf("remote home directory spans multiple lines: %q", home)
+	}
+	if !strings.HasPrefix(home, "/") {
+		return "", fmt.Errorf("remote home directory is not an absolute path: %q", home)
+	}
+	return home, nil
 }
 
 func resolveRemoteDir(homeDir, remoteDir string) string {
@@ -356,14 +400,42 @@ func writeTempImage(data []byte, ext string) (string, error) {
 	return f.Name(), nil
 }
 
-func remoteExecNoForward(host, cmd string) (string, error) {
-	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, cmd)
-	hideConsoleWindow(c)
-	out, err := c.CombinedOutput()
-	if err != nil {
-		return strings.TrimSpace(string(out)), fmt.Errorf("ssh failed: %s: %w", strings.TrimSpace(string(out)), err)
+// sshNoForwardArgs builds the argv for cc-clip's ssh invocations.
+//
+//   - ClearAllForwardings=yes stops a user's global RemoteForward in ssh_config
+//     from triggering on these one-shot connections.
+//   - LogLevel=ERROR suppresses connection banners such as Windows OpenSSH's
+//     post-quantum key-exchange warning, which otherwise reaches the client and
+//     used to pollute the remote home lookup (issue #80).
+//   - "--" terminates option parsing so a host beginning with "-" can never be
+//     interpreted as a flag.
+func sshNoForwardArgs(host, cmd string) []string {
+	return []string{
+		"-o", "ClearAllForwardings=yes",
+		"-o", "LogLevel=ERROR",
+		"--", host, cmd,
 	}
-	return strings.TrimSpace(string(out)), nil
+}
+
+// remoteExecNoForward runs an SSH command and returns only its stdout. stderr
+// is captured separately and surfaced solely in the error message, so banner
+// or warning text on stderr never pollutes the returned value (issue #80).
+func remoteExecNoForward(host, cmd string) (string, error) {
+	c := exec.Command("ssh", sshNoForwardArgs(host, cmd)...)
+	hideConsoleWindow(c)
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	err := c.Run()
+	out := strings.TrimSpace(stdout.String())
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = out
+		}
+		return out, fmt.Errorf("ssh failed: %s: %w", detail, err)
+	}
+	return out, nil
 }
 
 func sshUploadNoForward(host, localPath, remotePath string) error {
@@ -389,7 +461,7 @@ func sshUploadNoForward(host, localPath, remotePath string) error {
 		return fmt.Errorf("local file is empty: %s", localPath)
 	}
 
-	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, sshUploadRemoteCmd(remotePath))
+	c := exec.Command("ssh", sshNoForwardArgs(host, sshUploadRemoteCmd(remotePath))...)
 	c.Stdin = f
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
