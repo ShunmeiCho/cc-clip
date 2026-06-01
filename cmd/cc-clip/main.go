@@ -104,7 +104,7 @@ Remote:
     --target         auto|xclip|wl-paste (default: auto)
     --path           Install directory (default: ~/.local/bin)
   uninstall          Remove shim
-    --host           Also clean up remote: claude wrapper restore + PATH marker
+    --host           Also clean up remote: Claude hooks/wrapper + PATH marker
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
   send [<host>] [<file>]
@@ -145,8 +145,8 @@ Deploy (local -> remote):
     --local-bin      Path to pre-downloaded remote binary
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
-    --no-hooks       Persistently disable Claude wrapper hook injection
-    --hooks          Re-enable Claude wrapper hook injection
+    --no-hooks       Persistently disable Claude Code hook injection
+    --hooks          Re-enable Claude Code hook injection
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
 Codex support (extends connect/setup/uninstall):
@@ -436,16 +436,26 @@ func cmdUninstall() {
 	}
 
 	if host != "" {
-		fmt.Printf("Restoring claude wrapper on remote %s...\n", host)
+		fmt.Printf("Removing Claude Code hooks on remote %s...\n", host)
 		session, err := shim.NewSSHSession(host)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SSH session for wrapper restore: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: failed to open SSH session for Claude hook cleanup: %v\n", err)
 		} else {
 			defer session.Close()
-			if err := shim.UninstallRemoteClaudeWrapper(session); err != nil {
+			if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to remove managed Claude settings hooks: %v\n", err)
+			} else if changed {
+				fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+			}
+			if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to remove Claude no-hooks marker: %v\n", err)
+			}
+			if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to restore claude wrapper: %v\n", err)
-			} else {
+			} else if removed {
 				fmt.Println("      claude wrapper removed; original entry restored from sidecar")
+			} else {
+				fmt.Println("      no cc-clip claude wrapper installed")
 			}
 		}
 
@@ -607,8 +617,8 @@ func rejectAutoRecoverWithTokenOnly(cmdName string, autoRecover, tokenOnly bool)
 func rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly bool) {
 	if tokenOnly && (noHooks || hooks) {
 		fmt.Fprintln(os.Stderr, `error: --no-hooks/--hooks cannot be combined with --token-only
-       --token-only only syncs remote credentials and does not reinstall or
-       update the Claude wrapper hook marker.
+       --token-only only syncs remote credentials and does not update remote
+       Claude Code hook settings or markers.
        Re-run without --token-only:
            cc-clip connect <host> --no-hooks
        Or re-enable hook injection with:
@@ -1016,34 +1026,10 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 
 	hookInstalled := true
 
-	// Step N4: Install claude wrapper (auto-injects hooks via --settings
-	// unless the persistent no-hooks marker is present).
-	fmt.Println("  [N4] Installing claude wrapper...")
-	if opts.noHooks {
-		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
-			log.Printf("      warning: failed to disable claude wrapper hooks: %v", err)
-		} else {
-			fmt.Println("      claude wrapper hook injection disabled by ~/.cache/cc-clip/no-hooks")
-		}
-	} else {
-		if opts.hooks {
-			if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
-				log.Printf("      warning: failed to re-enable claude wrapper hooks: %v", err)
-			}
-		}
-	}
-	if err := shim.InstallRemoteClaudeWrapper(session, port); err != nil {
-		log.Printf("      warning: failed to install claude wrapper: %v", err)
-		fmt.Println("      Falling back to manual hook config:")
-		fmt.Println()
-		for _, line := range strings.Split(claudeHookConfigJSON(), "\n") {
-			fmt.Printf("      %s\n", line)
-		}
-		fmt.Println()
-	} else {
-		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
-		fmt.Println("      Hooks will be auto-injected unless disabled by ~/.cache/cc-clip/no-hooks")
-	}
+	// Step N4: Install Claude Code hooks in durable settings.json first.
+	// The wrapper remains only as a fallback for settings merge failures.
+	fmt.Println("  [N4] Configuring Claude Code hooks...")
+	configureRemoteClaudeHooks(session, port, opts)
 
 	// Step N5: Detect and configure Codex notify
 	codexInjected := false
@@ -1078,6 +1064,80 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		HookInstalled:  hookInstalled,
 		CodexInjected:  codexInjected,
 		HealthVerified: healthVerified,
+	}
+}
+
+func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) {
+	if opts.noHooks {
+		if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+			log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
+		} else if changed {
+			fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+		}
+		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
+			log.Printf("      warning: failed to disable Claude hooks: %v", err)
+		} else {
+			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
+		}
+		if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+			log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+		} else if removed {
+			fmt.Println("      legacy claude wrapper removed; original entry restored")
+		}
+		return
+	}
+
+	if opts.hooks {
+		if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
+			log.Printf("      warning: failed to re-enable Claude hooks: %v", err)
+		}
+	} else {
+		disabled, err := shim.RemoteClaudeHooksDisabled(session)
+		if err != nil {
+			log.Printf("      warning: failed to check Claude hook opt-out marker: %v", err)
+		} else if disabled {
+			if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+				log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
+			} else if changed {
+				fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+			}
+			if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+				log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+			} else if removed {
+				fmt.Println("      legacy claude wrapper removed; original entry restored")
+			}
+			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
+			return
+		}
+	}
+
+	changed, err := shim.MergeRemoteClaudeSettingsHooks(session)
+	if err == nil {
+		if changed {
+			fmt.Println("      hooks installed in ~/.claude/settings.json")
+		} else {
+			fmt.Println("      hooks already present in ~/.claude/settings.json")
+		}
+		if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+			log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+		} else if removed {
+			fmt.Println("      legacy claude wrapper removed; original entry restored")
+		}
+		return
+	}
+
+	log.Printf("      warning: failed to merge ~/.claude/settings.json hooks: %v", err)
+	fmt.Println("      Falling back to legacy claude wrapper (may be overwritten by Claude Code self-update)")
+	if err := shim.InstallRemoteClaudeWrapper(session, port); err != nil {
+		log.Printf("      warning: failed to install claude wrapper: %v", err)
+		fmt.Println("      Falling back to manual hook config:")
+		fmt.Println()
+		for _, line := range strings.Split(claudeHookConfigJSON(), "\n") {
+			fmt.Printf("      %s\n", line)
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
 	}
 }
 

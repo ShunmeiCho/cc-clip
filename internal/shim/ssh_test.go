@@ -231,6 +231,69 @@ func TestSetRemoteClaudeHooksEnabledTogglesMarker(t *testing.T) {
 	}
 }
 
+func TestUninstallRemoteClaudeWrapperIfPresentSkipsNonWrapper(t *testing.T) {
+	home := t.TempDir()
+	s := &localSession{home: home}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	claudePath := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\necho real\n"), 0755); err != nil {
+		t.Fatalf("write real claude: %v", err)
+	}
+
+	removed, err := UninstallRemoteClaudeWrapperIfPresent(s)
+	if err != nil {
+		t.Fatalf("UninstallRemoteClaudeWrapperIfPresent returned error: %v", err)
+	}
+	if removed {
+		t.Fatal("non-wrapper claude should not be removed")
+	}
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read claude: %v", err)
+	}
+	if !strings.Contains(string(data), "echo real") {
+		t.Fatalf("real claude was modified:\n%s", data)
+	}
+}
+
+func TestUninstallRemoteClaudeWrapperIfPresentRestoresSidecar(t *testing.T) {
+	home := t.TempDir()
+	s := &localSession{home: home}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	claudePath := filepath.Join(binDir, "claude")
+	sidecarPath := filepath.Join(binDir, "claude.cc-clip-real")
+	if err := os.WriteFile(claudePath, []byte("# cc-clip claude wrapper\n"), 0755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	if err := os.WriteFile(sidecarPath, []byte("#!/bin/sh\necho restored\n"), 0755); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	removed, err := UninstallRemoteClaudeWrapperIfPresent(s)
+	if err != nil {
+		t.Fatalf("UninstallRemoteClaudeWrapperIfPresent returned error: %v", err)
+	}
+	if !removed {
+		t.Fatal("cc-clip wrapper should be removed")
+	}
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read restored claude: %v", err)
+	}
+	if !strings.Contains(string(data), "echo restored") {
+		t.Fatalf("sidecar was not restored:\n%s", data)
+	}
+	if _, err := os.Stat(sidecarPath); !os.IsNotExist(err) {
+		t.Fatalf("sidecar should be consumed, got err=%v", err)
+	}
+}
+
 func TestCodexNotifyManagedBlockUsesConfigArray(t *testing.T) {
 	block := codexNotifyManagedBlock("start", "end", 18339)
 	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]`) {

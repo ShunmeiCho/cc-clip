@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -137,6 +138,142 @@ func TestManualFlagParsingRejectsExplicitFalseBool(t *testing.T) {
 
 	if hasFlag("force") {
 		t.Fatal("hasFlag(force) should not treat --force=false as enabled")
+	}
+}
+
+type testRemoteSession struct {
+	home string
+}
+
+func (s *testRemoteSession) Exec(cmd string) (string, error) {
+	c := exec.Command("bash", "-c", cmd)
+	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	out, err := c.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func (s *testRemoteSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
+	c := exec.Command("bash", "-c", cmd)
+	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	c.Stdin = stdin
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
+func TestConfigureRemoteClaudeHooksInstallsSettingsWithoutWrapper(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if strings.Count(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") != 2 {
+		t.Fatalf("settings should contain two managed hooks, got:\n%s", settings)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".local", "bin", "claude")); !os.IsNotExist(err) {
+		t.Fatalf("settings-first install should not create wrapper, got err=%v", err)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksRemovesLegacyWrapperAfterSettingsInstall(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	writeTestClaudeWrapper(t, s.home)
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if !strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") {
+		t.Fatalf("settings missing managed hook:\n%s", settings)
+	}
+	claude, err := os.ReadFile(filepath.Join(s.home, ".local", "bin", "claude"))
+	if err != nil {
+		t.Fatalf("claude should be restored from sidecar: %v", err)
+	}
+	if !strings.Contains(string(claude), "echo restored") {
+		t.Fatalf("legacy wrapper was not restored from sidecar:\n%s", claude)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksHonorsExistingNoHooksMarker(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	marker := filepath.Join(s.home, ".cache", "cc-clip", "no-hooks")
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	if err := os.WriteFile(marker, nil, 0600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	if _, err := os.Stat(filepath.Join(s.home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("opt-out marker should prevent settings install, got err=%v", err)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksNoHooksRemovesManagedSettingsAndWrapper(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	settingsPath := filepath.Join(s.home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "env CC_CLIP_MANAGED=1 cc-clip-hook"},
+          {"type": "command", "command": "cc-clip-hook"}
+        ]
+      }
+    ]
+  }
+}`), 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	writeTestClaudeWrapper(t, s.home)
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{noHooks: true})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") {
+		t.Fatalf("managed hook should be removed:\n%s", settings)
+	}
+	if !strings.Contains(settings, `"cc-clip-hook"`) {
+		t.Fatalf("user-managed hook should remain:\n%s", settings)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".cache", "cc-clip", "no-hooks")); err != nil {
+		t.Fatalf("no-hooks marker should exist: %v", err)
+	}
+	claude, err := os.ReadFile(filepath.Join(s.home, ".local", "bin", "claude"))
+	if err != nil {
+		t.Fatalf("claude should be restored from sidecar: %v", err)
+	}
+	if !strings.Contains(string(claude), "echo restored") {
+		t.Fatalf("legacy wrapper was not restored from sidecar:\n%s", claude)
+	}
+}
+
+func readTestClaudeSettings(t *testing.T, home string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read Claude settings: %v", err)
+	}
+	return string(data)
+}
+
+func writeTestClaudeWrapper(t *testing.T, home string) {
+	t.Helper()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("# cc-clip claude wrapper\n"), 0755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude.cc-clip-real"), []byte("#!/bin/sh\necho restored\n"), 0755); err != nil {
+		t.Fatalf("write sidecar: %v", err)
 	}
 }
 

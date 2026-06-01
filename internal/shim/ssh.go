@@ -683,6 +683,24 @@ fi`
 	return nil
 }
 
+// UninstallRemoteClaudeWrapperIfPresent restores the user's original claude
+// entry only when ~/.local/bin/claude is currently a cc-clip wrapper. Non
+// wrapper entries are left untouched so settings-first hook setup can safely
+// clean up legacy wrappers without failing on normal Claude Code installs.
+func UninstallRemoteClaudeWrapperIfPresent(s SessionExecutor) (bool, error) {
+	kind, err := classifyClaudeBin(s)
+	if err != nil {
+		return false, fmt.Errorf("uninstall-if-present: classify failed: %w", err)
+	}
+	if kind != claudeBinCcWrapper {
+		return false, nil
+	}
+	if err := UninstallRemoteClaudeWrapper(s); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // V070State classifies the v0.7.0 wrapper-install bug aftermath into three
 // outcomes that the CLI N0 gate must distinguish:
 //

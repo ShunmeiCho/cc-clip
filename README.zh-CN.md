@@ -316,10 +316,10 @@ graph LR
 | CLI | 是否由 `cc-clip connect` 自动配置？ |
 |-----|----------------------------------------|
 | Codex CLI | ✅ 如果远程存在 `~/.codex/` |
-| Claude Code | ⚠️ 手动 — 把 `cc-clip-hook` 加到 `~/.claude/settings.json` |
+| Claude Code | ✅ 自动管理 `~/.claude/settings.json` hooks |
 | opencode | ❌ 尚未开箱支持 |
 
-完整设置、Claude Code 手动配置、nonce 注册和故障排查见：**[docs/notifications.md](docs/notifications.md)**。
+完整设置、Claude Code hooks、nonce 注册和故障排查见：**[docs/notifications.md](docs/notifications.md)**。
 
 ## 安全性
 

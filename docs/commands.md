@@ -25,7 +25,7 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | `cc-clip setup <host> --auto-recover` | Same recovery flow via setup path |
 | `cc-clip connect <host> --force` | Full redeploy ignoring cache |
 | `cc-clip uninstall` | Remove local xclip shim only |
-| `cc-clip uninstall --host <host>` | Remove from remote: claude wrapper, PATH marker (local shim best-effort) |
+| `cc-clip uninstall --host <host>` | Remove from remote: Claude managed hooks/wrapper, PATH marker (local shim best-effort) |
 | `cc-clip uninstall --codex` | Remove Codex support (local) |
 | `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
 

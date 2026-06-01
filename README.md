@@ -314,7 +314,7 @@ Remote hook events (Claude finishing, tool approval requests, image paste events
 | CLI | Auto-configured by `cc-clip connect`? |
 |-----|----------------------------------------|
 | Codex CLI | ✅ If `~/.codex/` exists on the remote |
-| Claude Code | ⚠️ Manual — add `cc-clip-hook` to `~/.claude/settings.json` |
+| Claude Code | ✅ Managed hooks in `~/.claude/settings.json` |
 | opencode | ❌ Not yet supported out of the box |
 
 Full setup, manual configuration for Claude Code, nonce registration, and troubleshooting: **[docs/notifications.md](docs/notifications.md)**.
