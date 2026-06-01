@@ -48,6 +48,7 @@
 - [設定](#設定)
 - [プラットフォーム対応](#プラットフォーム対応)
 - [要件](#要件)
+- [代替案と、cc-clip を使わない方がよい場合](#代替案とcc-clip-を使わない方がよい場合)
 - [トラブルシューティング](#トラブルシューティング)
 - [コントリビュート](#コントリビュート)
 - [関連 Issue](#関連-issue)
@@ -392,8 +393,7 @@ Windows ワークフローは専用の remote-paste hotkey（デフォルト: `A
 
 | ローカル | リモート | 状態 |
 |-------|--------|--------|
-| macOS (Apple Silicon) | Linux (amd64) | Stable |
-| macOS (Intel) | Linux (arm64) | Stable |
+| macOS (Apple Silicon / Intel) | Linux (amd64/arm64) | Stable |
 | Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
 
 ### 対応しているリモート CLI
@@ -402,7 +402,7 @@ cc-clip は、Linux 上で `xclip` または `wl-paste` を使ってクリップ
 
 | CLI | 画像貼り付け | 通知 |
 |-----|-------------|----------------|
-| [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box（xclip / wl-paste shim） | ✅ `Stop` / `Notification` hooks の `cc-clip-hook` 経由 |
+| [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box（xclip / wl-paste shim） | ✅ managed `Stop` / `Notification` hooks の `cc-clip-hook` 経由 |
 | [Codex CLI](https://github.com/openai/codex) | ✅ out of the box（Xvfb + x11-bridge。`--codex` が必要） | ✅ リモートに `~/.codex/` がある場合、`cc-clip connect` 中に自動設定 |
 | [opencode](https://opencode.ai) | ✅ out of the box（X11 は xclip shim、Wayland は wl-paste shim） | ⚠️ 自動設定はされません — 必要なら自分で notifier を接続してください |
 | その他の `xclip`/`wl-paste` consumer | ✅ そのまま動くはずです。動かない場合は [discussion](https://github.com/ShunmeiCho/cc-clip/discussions) を開いてください | — |
@@ -415,9 +415,21 @@ cc-clip は、Linux 上で `xclip` または `wl-paste` を使ってクリップ
 
 **ローカル（Windows）:** Windows 10/11。PowerShell、`ssh`、`scp` が `PATH` で利用可能
 
-**リモート:** Linux。`xclip`、`curl`、`bash`、SSH アクセスが必要です。macOS の tunnel/shim 経路は `cc-clip connect` が自動設定します。Windows の upload/hotkey 経路は SSH/SCP を直接使います。
+**リモート:** Linux。SSH アクセス、`curl`、`bash`、そして少なくとも 1 つのクリップボード backend が必要です。X11 consumer には `xclip`、Wayland consumer には `wl-paste` を使います。macOS の tunnel/shim 経路は `cc-clip connect` が自動設定します。Windows の upload/hotkey 経路は SSH/SCP を直接使います。
 
 **リモート（Codex `--codex`）:** 追加で `Xvfb` が必要です。passwordless sudo があれば自動インストールされます。ない場合は `sudo apt install xvfb`（Debian/Ubuntu）または `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）を実行してください。
+
+## 代替案と、cc-clip を使わない方がよい場合
+
+次の単純な方法で十分なら、そちらを使ってください。
+
+- **VS Code Remote-SSH:** ワークフローがすでに VS Code 内にあるなら、エディタ組み込みのクリップボード挙動を使うのが簡単です。
+- **OSC52:** テキストのクリップボード同期には有効ですが、これらの CLI agent で信頼できるバイナリ画像貼り付け経路にはなりません。
+- **`scp` または手動アップロード:** 画像貼り付けがまれで、`Ctrl+V` を維持するための追加セットアップが不要なら最適です。
+- **lemonade や piknik などの汎用クリップボードブリッジ:** agent の画像貼り付けに特化した狭いブリッジではなく、広い双方向クリップボードシステムが欲しい場合に向いています。
+- **信頼できない共有 jump host:** リモート host 上の他のローカルユーザーが、ユーザー単位の token だけで守られた loopback tunnel に到達できてはいけない場合は、cc-clip を避けてください。
+
+cc-clip は、SSH 越しに coding agent を動かし、agent 自体を変更せずに画像貼り付けと任意の通知をローカルセッションのように扱いたい、という狭い用途のためのツールです。
 
 ## トラブルシューティング
 
@@ -425,6 +437,18 @@ cc-clip は、Linux 上で `xclip` または `wl-paste` を使ってクリップ
 # すべてを確認する 1 コマンド
 cc-clip doctor --host myserver
 ```
+
+### v0.7.0 実行後に `cc-clip: real claude binary not found in PATH` が出る
+
+Anthropic Native Installer（`curl https://claude.ai/install.sh`）で Claude Code を入れたリモートに対して cc-clip v0.7.0 をインストールしていた場合、v0.7.0 には symlink target 上の本物の Claude binary を上書きしてしまう bug（[#55](https://github.com/ShunmeiCho/cc-clip/issues/55)）がありました。復旧するには:
+
+```
+cc-clip setup <host> --auto-recover
+```
+
+このコマンドは破損状態を検出し、元の binary を `~/.local/bin/claude.cc-clip-bak` から戻したうえで、修正済みの v0.7.1+ wrapper をインストールします。`--auto-recover` と `--token-only` は意図が異なるため併用できません。
+
+リモートに `~/.local/bin/claude.cc-clip-bak` がない場合、binary は自動復旧できません。`curl https://claude.ai/install.sh` で Claude Code を再インストールしてから、`cc-clip setup` を再実行してください。
 
 <details>
 <summary><b>インストール後に “zsh: killed” が出る</b></summary>
@@ -592,7 +616,7 @@ cc-clip setup myserver
 
 コントリビュート歓迎です。バグ報告や機能リクエストは [issue](https://github.com/ShunmeiCho/cc-clip/issues) を開いてください。
 
-コードで貢献する場合:
+コードで貢献する場合（ソースからのビルドには `go.mod` に従って Go 1.25.10+ が必要です）:
 
 ```bash
 git clone https://github.com/ShunmeiCho/cc-clip.git
