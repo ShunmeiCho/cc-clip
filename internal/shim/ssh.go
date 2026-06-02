@@ -552,14 +552,17 @@ trap - EXIT
 }
 
 func codexNotifyManagedBlock(markerStart, markerEnd string, port int) string {
+	// Emit the plugin-runner notify form. EnsureRemoteCodexNotifyConfig strips
+	// any prior managed block and rebuilds via a single atomic rename, so the old
+	// `...--from-codex-stdin` block is replaced with no coexistence instant.
 	// Include port in CC_CLIP_PORT env so non-default ports work.
 	if port == 18339 {
 		return markerStart + "\n" +
-			`notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]` + "\n" +
+			`notify = ["cc-clip", "plugin", "run", "codex-notify"]` + "\n" +
 			markerEnd
 	}
 	return markerStart + "\n" +
-		fmt.Sprintf(`notify = ["env", "CC_CLIP_PORT=%d", "cc-clip", "notify", "--trusted", "--from-codex-stdin"]`, port) + "\n" +
+		fmt.Sprintf(`notify = ["env", "CC_CLIP_PORT=%d", "cc-clip", "plugin", "run", "codex-notify"]`, port) + "\n" +
 		markerEnd
 }
 

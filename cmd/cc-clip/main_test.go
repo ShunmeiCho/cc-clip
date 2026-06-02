@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
+	"github.com/shunmei/cc-clip/internal/install"
 	"github.com/shunmei/cc-clip/internal/session"
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
@@ -166,8 +167,8 @@ func TestConfigureRemoteClaudeHooksInstallsSettingsWithoutWrapper(t *testing.T) 
 	configureRemoteClaudeHooks(s, 18339, connectOpts{})
 
 	settings := readTestClaudeSettings(t, s.home)
-	if strings.Count(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") != 2 {
-		t.Fatalf("settings should contain two managed hooks, got:\n%s", settings)
+	if strings.Count(settings, "env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify") != 2 {
+		t.Fatalf("settings should contain two managed runner hooks, got:\n%s", settings)
 	}
 	if _, err := os.Stat(filepath.Join(s.home, ".local", "bin", "claude")); !os.IsNotExist(err) {
 		t.Fatalf("settings-first install should not create wrapper, got err=%v", err)
@@ -181,8 +182,8 @@ func TestConfigureRemoteClaudeHooksRemovesLegacyWrapperAfterSettingsInstall(t *t
 	configureRemoteClaudeHooks(s, 18339, connectOpts{})
 
 	settings := readTestClaudeSettings(t, s.home)
-	if !strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") {
-		t.Fatalf("settings missing managed hook:\n%s", settings)
+	if !strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify") {
+		t.Fatalf("settings missing managed runner hook:\n%s", settings)
 	}
 	claude, err := os.ReadFile(filepath.Join(s.home, ".local", "bin", "claude"))
 	if err != nil {
@@ -519,7 +520,7 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 		}
 	})
 
-	t.Run("allocates empty struct on nil Notify with nil Adapters", func(t *testing.T) {
+	t.Run("allocates struct and populates claude adapter on nil Notify", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
 		mergeNotifyDeployState(state, true, false, false)
@@ -533,10 +534,59 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 		if state.Notify.CodexInjected || state.Notify.HealthVerified {
 			t.Fatalf("false bools should stay false: %+v", state.Notify)
 		}
-		// First-connect parity: no Adapters map means omitempty keeps wire output
-		// identical to the old hard-assignment behavior.
+		// 3c: hookInstalled=true populates the claude adapter; codexInjected=false
+		// leaves the codex adapter absent.
+		if state.Notify.Adapters == nil {
+			t.Fatal("Adapters must be allocated when an adapter succeeded")
+		}
+		claude := state.Notify.Adapters[shim.AdapterClaudeNotify]
+		if claude == nil || !claude.Installed || claude.Verified || claude.Source != install.SourceConfig {
+			t.Fatalf("claude adapter not populated correctly: %+v", claude)
+		}
+		if _, ok := state.Notify.Adapters[shim.AdapterCodexNotify]; ok {
+			t.Fatalf("codex adapter must be absent when codexInjected=false: %+v", state.Notify.Adapters)
+		}
+	})
+
+	// 3c: both adapters succeeded -> both populated with Installed=true,
+	// Verified=false (forces N6 re-verify), Source=config.
+	t.Run("populates both adapters when both succeed", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, true, true, true)
+
+		if state.Notify == nil || state.Notify.Adapters == nil {
+			t.Fatal("Adapters must be populated when both adapters succeed")
+		}
+		for _, id := range []shim.AdapterID{shim.AdapterClaudeNotify, shim.AdapterCodexNotify} {
+			st := state.Notify.Adapters[id]
+			if st == nil {
+				t.Fatalf("adapter %q missing", id)
+			}
+			if !st.Installed {
+				t.Fatalf("adapter %q must be Installed=true: %+v", id, st)
+			}
+			if st.Verified {
+				t.Fatalf("adapter %q must be Verified=false to force N6 re-verify: %+v", id, st)
+			}
+			if st.Source != install.SourceConfig {
+				t.Fatalf("adapter %q Source = %q, want %q", id, st.Source, install.SourceConfig)
+			}
+		}
+	})
+
+	// 3c first-connect parity: when neither adapter succeeds, the map stays nil
+	// so omitempty keeps wire output byte-identical to the legacy hard-assignment.
+	t.Run("nil Adapters when neither adapter succeeds", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, false, false, false)
+
+		if state.Notify == nil {
+			t.Fatal("Notify must be allocated when nil")
+		}
 		if state.Notify.Adapters != nil {
-			t.Fatalf("expected nil Adapters on first connect, got %+v", state.Notify.Adapters)
+			t.Fatalf("expected nil Adapters when nothing installed, got %+v", state.Notify.Adapters)
 		}
 	})
 }

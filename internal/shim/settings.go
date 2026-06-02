@@ -7,9 +7,27 @@ import (
 	"strings"
 )
 
-const claudeManagedHookCommand = "env CC_CLIP_MANAGED=1 cc-clip-hook"
+// claudeManagedHookCommand is the command cc-clip INSERTS for managed events.
+// Per-release this flips; only the suffix changes. The CC_CLIP_MANAGED=1 prefix
+// is the permanent ownership marker.
+const claudeManagedHookCommand = "env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify"
+
+// claudeManagedHookOwnerPrefix matches the UNION of every cc-clip-owned managed
+// command across releases: legacy "...cc-clip-hook" AND new "...plugin run
+// claude-notify". Detection/strip key off THIS prefix permanently; only the
+// INSERT string (claudeManagedHookCommand) flips. This guarantees idempotent
+// forward migration and clean binary rollback. A bare user-authored
+// "cc-clip-hook" lacks this prefix and is therefore never matched or stripped.
+const claudeManagedHookOwnerPrefix = "env CC_CLIP_MANAGED=1"
 
 var claudeManagedEvents = []string{"Stop", "Notification"}
+
+// isManagedClaudeCommand reports whether command is cc-clip-owned, keying off the
+// permanent CC_CLIP_MANAGED=1 ownership prefix (the union of legacy and current
+// managed commands). User-authored bare cc-clip-hook commands are not matched.
+func isManagedClaudeCommand(command map[string]any) bool {
+	return strings.HasPrefix(commandString(command), claudeManagedHookOwnerPrefix)
+}
 
 const (
 	claudeSettingsProbeBegin = "__CC_CLIP_CLAUDE_SETTINGS_BEGIN__"
@@ -17,8 +35,11 @@ const (
 )
 
 // MergeRemoteClaudeSettingsHooks installs the cc-clip Claude Code hooks in
-// ~/.claude/settings.json. It is idempotent and skips insertion when the user
-// already has any cc-clip-hook command configured for Stop/Notification.
+// ~/.claude/settings.json. It strips the owner-prefix union (legacy + current
+// managed commands) before inserting exactly one current managed command per
+// event, then writes the file in a single atomic rename. It is idempotent: when
+// the current managed command is already present for an event, that event is
+// left untouched.
 func MergeRemoteClaudeSettingsHooks(session SessionExecutor) (bool, error) {
 	existing, err := readRemoteClaudeSettings(session)
 	if err != nil {
@@ -37,9 +58,10 @@ func MergeRemoteClaudeSettingsHooks(session SessionExecutor) (bool, error) {
 	return true, nil
 }
 
-// RemoveRemoteClaudeManagedHooks removes only cc-clip's managed hook command
-// from ~/.claude/settings.json. User-authored cc-clip-hook entries are left
-// intact because cc-clip did not create them.
+// RemoveRemoteClaudeManagedHooks removes cc-clip's managed hook commands from
+// ~/.claude/settings.json, matching the owner-prefix union (legacy + current).
+// User-authored bare cc-clip-hook entries lack the CC_CLIP_MANAGED=1 prefix and
+// are left intact because cc-clip did not create them.
 func RemoveRemoteClaudeManagedHooks(session SessionExecutor) (bool, error) {
 	existing, err := readRemoteClaudeSettings(session)
 	if err != nil {
@@ -149,14 +171,26 @@ func mergeClaudeHooks(existing []byte) ([]byte, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		hasCcClipHook, err := claudeEventHasCcClipHook(event, eventHooks)
+		// Idempotent skip: if the CURRENT managed command is already present, the
+		// remote is already migrated; leave the event untouched. A legacy command
+		// is NOT the current command, so it does not block the forward upgrade.
+		hasCurrent, err := claudeEventHasCurrentManagedCommand(event, eventHooks)
 		if err != nil {
 			return nil, false, err
 		}
-		if hasCcClipHook {
+		if hasCurrent {
 			continue
 		}
-		hooks[event] = append(eventHooks, map[string]any{
+		// Strip-before-insert: remove every owner-prefix-matching managed command
+		// (legacy + any stale current) from this event, then append exactly one
+		// current managed matcher. The whole file is written in one atomic rename
+		// by writeRemoteClaudeSettings, so there is no on-disk instant where both
+		// the legacy and current managed commands fire the same event.
+		stripped, _, err := stripManagedFromEvent(eventHooks, event)
+		if err != nil {
+			return nil, false, err
+		}
+		hooks[event] = append(stripped, map[string]any{
 			"matcher": "",
 			"hooks": []any{
 				map[string]any{
@@ -205,47 +239,12 @@ func removeClaudeManagedHooks(existing []byte) ([]byte, bool, error) {
 			return nil, false, fmt.Errorf("claude settings hooks.%s must be an array", event)
 		}
 
-		nextEventHooks := make([]any, 0, len(eventHooks))
-		for _, rawMatcher := range eventHooks {
-			matcher, ok := rawMatcher.(map[string]any)
-			if !ok {
-				return nil, false, fmt.Errorf("claude settings hooks.%s entries must be objects", event)
-			}
-
-			rawCommands, ok := matcher["hooks"]
-			if !ok {
-				nextEventHooks = append(nextEventHooks, rawMatcher)
-				continue
-			}
-			commands, ok := rawCommands.([]any)
-			if !ok {
-				return nil, false, fmt.Errorf("claude settings hooks.%s entry hooks must be an array", event)
-			}
-
-			nextCommands := make([]any, 0, len(commands))
-			removed := false
-			for _, rawCommand := range commands {
-				command, ok := rawCommand.(map[string]any)
-				if !ok {
-					return nil, false, fmt.Errorf("claude settings hooks.%s command entries must be objects", event)
-				}
-				if commandString(command) == claudeManagedHookCommand {
-					removed = true
-					changed = true
-					continue
-				}
-				nextCommands = append(nextCommands, rawCommand)
-			}
-
-			if !removed {
-				nextEventHooks = append(nextEventHooks, rawMatcher)
-				continue
-			}
-			if len(nextCommands) == 0 && isPlainManagedMatcher(matcher, commands) {
-				continue
-			}
-			matcher["hooks"] = nextCommands
-			nextEventHooks = append(nextEventHooks, matcher)
+		nextEventHooks, removed, err := stripManagedFromEvent(eventHooks, event)
+		if err != nil {
+			return nil, false, err
+		}
+		if removed {
+			changed = true
 		}
 
 		if len(nextEventHooks) == 0 {
@@ -306,7 +305,61 @@ func claudeHookMatchers(hooks map[string]any, event string) ([]any, error) {
 	return eventHooks, nil
 }
 
-func claudeEventHasCcClipHook(event string, eventHooks []any) (bool, error) {
+// stripManagedFromEvent removes all owner-prefix-matching managed commands from
+// one event's matcher slice, collapsing now-empty plain managed matchers via
+// isPlainManagedMatcher. It is the shared core used by both
+// removeClaudeManagedHooks and mergeClaudeHooks. Non-managed commands and
+// non-plain matchers are preserved verbatim.
+func stripManagedFromEvent(eventHooks []any, event string) (next []any, removed bool, err error) {
+	nextEventHooks := make([]any, 0, len(eventHooks))
+	for _, rawMatcher := range eventHooks {
+		matcher, ok := rawMatcher.(map[string]any)
+		if !ok {
+			return nil, false, fmt.Errorf("claude settings hooks.%s entries must be objects", event)
+		}
+
+		rawCommands, ok := matcher["hooks"]
+		if !ok {
+			nextEventHooks = append(nextEventHooks, rawMatcher)
+			continue
+		}
+		commands, ok := rawCommands.([]any)
+		if !ok {
+			return nil, false, fmt.Errorf("claude settings hooks.%s entry hooks must be an array", event)
+		}
+
+		nextCommands := make([]any, 0, len(commands))
+		matcherRemoved := false
+		for _, rawCommand := range commands {
+			command, ok := rawCommand.(map[string]any)
+			if !ok {
+				return nil, false, fmt.Errorf("claude settings hooks.%s command entries must be objects", event)
+			}
+			if isManagedClaudeCommand(command) {
+				matcherRemoved = true
+				removed = true
+				continue
+			}
+			nextCommands = append(nextCommands, rawCommand)
+		}
+
+		if !matcherRemoved {
+			nextEventHooks = append(nextEventHooks, rawMatcher)
+			continue
+		}
+		if len(nextCommands) == 0 && isPlainManagedMatcher(matcher, commands) {
+			continue
+		}
+		matcher["hooks"] = nextCommands
+		nextEventHooks = append(nextEventHooks, matcher)
+	}
+	return nextEventHooks, removed, nil
+}
+
+// claudeEventHasCurrentManagedCommand reports whether the CURRENT managed insert
+// command (claudeManagedHookCommand) is already present for the event. Used as
+// the merge skip guard so a legacy command never blocks the forward upgrade.
+func claudeEventHasCurrentManagedCommand(event string, eventHooks []any) (bool, error) {
 	for _, rawMatcher := range eventHooks {
 		matcher, ok := rawMatcher.(map[string]any)
 		if !ok {
@@ -325,7 +378,7 @@ func claudeEventHasCcClipHook(event string, eventHooks []any) (bool, error) {
 			if !ok {
 				return false, fmt.Errorf("claude settings hooks.%s command entries must be objects", event)
 			}
-			if strings.Contains(commandString(command), "cc-clip-hook") {
+			if commandString(command) == claudeManagedHookCommand {
 				return true, nil
 			}
 		}

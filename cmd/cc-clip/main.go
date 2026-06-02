@@ -21,6 +21,7 @@ import (
 	"github.com/shunmei/cc-clip/internal/daemon"
 	"github.com/shunmei/cc-clip/internal/doctor"
 	"github.com/shunmei/cc-clip/internal/exitcode"
+	"github.com/shunmei/cc-clip/internal/install"
 	"github.com/shunmei/cc-clip/internal/plugin"
 	"github.com/shunmei/cc-clip/internal/service"
 	"github.com/shunmei/cc-clip/internal/session"
@@ -1062,18 +1063,21 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println("      health probe passed")
 	}
 
-	// Update deploy state: preserve any migrated/prior per-adapter map while
-	// refreshing the legacy boolean fields. Adapters survives connect cycles;
-	// nothing consumes it yet (3c), so user-visible behavior is unchanged.
+	// Update deploy state: refresh the legacy boolean fields and populate the
+	// per-adapter map for whatever succeeded this connect. Adapters survives
+	// connect cycles and now drives NeedsAdapterVerify so the runner path is
+	// re-validated on the next connect.
 	mergeNotifyDeployState(state, hookInstalled, codexInjected, healthVerified)
 }
 
-// mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify
-// while preserving any existing Adapters map (from read-time migration or a
-// prior write). It allocates an empty NotifyDeployState when state.Notify is nil
-// — leaving Adapters nil so the omitempty JSON tag keeps first-connect wire
-// output byte-identical to the old hard-assignment. The Adapters field is
-// intentionally left untouched (merge, not replace); nothing consumes it yet.
+// mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify and
+// populates the per-adapter map for adapters that succeeded this connect
+// (hookInstalled -> claude-notify, codexInjected -> codex-notify). Each entry is
+// written with Verified=false so the N6 health probe (via NeedsAdapterVerify)
+// re-validates the new runner path on the next connect. The map is lazily
+// allocated and existing entries are preserved (migrate, not nil-clobber). When
+// neither adapter succeeds, the map is left nil so the omitempty JSON tag keeps
+// first-connect wire output byte-identical to the legacy hard-assignment.
 func mergeNotifyDeployState(state *shim.DeployState, hookInstalled, codexInjected, healthVerified bool) {
 	if state.Notify == nil {
 		state.Notify = &shim.NotifyDeployState{}
@@ -1082,7 +1086,22 @@ func mergeNotifyDeployState(state *shim.DeployState, hookInstalled, codexInjecte
 	state.Notify.HookInstalled = hookInstalled
 	state.Notify.CodexInjected = codexInjected
 	state.Notify.HealthVerified = healthVerified
-	// state.Notify.Adapters is intentionally left untouched (merge, not replace).
+
+	if hookInstalled || codexInjected {
+		if state.Notify.Adapters == nil {
+			state.Notify.Adapters = make(map[shim.AdapterID]*shim.AdapterState)
+		}
+	}
+	if hookInstalled {
+		state.Notify.Adapters[shim.AdapterClaudeNotify] = &shim.AdapterState{
+			Installed: true, Source: install.SourceConfig, Verified: false,
+		}
+	}
+	if codexInjected {
+		state.Notify.Adapters[shim.AdapterCodexNotify] = &shim.AdapterState{
+			Installed: true, Source: install.SourceConfig, Verified: false,
+		}
+	}
 }
 
 func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) {
