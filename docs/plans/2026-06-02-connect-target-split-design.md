@@ -42,6 +42,18 @@
    marketplace(git源钉版, consent-gated) → bundled(cc-clip 上传) → config(legacy 直写)
 ```
 
+## 命名决策（Antigravity，v0.9.0 锁定）
+
+用户可见 flag 一律 = CLI 二进制名（与 `--claude`→`claude`、`--codex`→`codex`、`--opencode`→`opencode` 一致）。Antigravity 二进制是 `agy`，因此：
+
+- **canonical flag = `--agy`**；`--antigravity` 作为 **alias** 接受（可发现性）。
+- **adapter 名对齐 = `agy-notify`**（与 claude-notify/codex-notify/opencode-notify 同规律）。
+- 内部 Go 字段保留 `DeployTargets.Antigravity`（描述性、非用户可见，无需缩写）。
+- 交互菜单项显示 `agy (Antigravity)`。
+- 真实路径 `~/.gemini/antigravity-cli/` 是 Antigravity 自带，**不改**。
+
+> 本文档下文凡出现 `--antigravity` / `antigravity-notify`，按本决策读作 **`--agy`（alias `--antigravity`）** / **`agy-notify`**。Step 5/6 实现时以此为准并同步全文。
+
 ## 3. 命令语义
 
 | 命令 | transport | adapter (v0.9.0) | 备注 |
@@ -52,7 +64,7 @@
 | `--antigravity` | **pending(probe)** | antigravity-notify | notify 可先做（bundled plugin）；clipboard 待远端 strace |
 | `--all` | shim + x11 (+antigravity-notify) | claude-notify + codex-notify + antigravity-notify | **不含** antigravity clipboard（未定性前） |
 | 无参 (TTY) | 菜单 | | connect 默认未触发；菜单见 §5 |
-| 无参 (非 TTY) | connect=shim / setup=all | | connect→claude+告警；setup→all |
+| 无参 (非 TTY) | connect=shim / setup=shim | | connect→claude+告警；setup→claude+告警（v0.9.0：与 connect 一致回退 {Claude}，绝不静默 all/sudo） |
 | 修饰：`--token-only`/`--no-hooks`/`--hooks`/`--no-notify`/`--yes`/`--no-plugin-marketplace`/`--force` | | | 见 §6 矩阵 |
 
 ## 4. 目标解析（含判别器，connect/setup 共用）
@@ -84,7 +96,7 @@ Select deployment target:
 >
 ```
 
-非 TTY：`os.Stdin.Stat()&os.ModeCharDevice==0` → connect 回退 `{Claude}`、setup 回退 all，stderr 告警，不阻塞。
+非 TTY：`os.Stdin.Stat()&os.ModeCharDevice==0` → connect 回退 `{Claude}`、setup 回退 `{Claude}`（v0.9.0 锁定：无人值守默认最小副作用，绝不静默 all/sudo；全装须显式 `--all`），stderr 告警，不阻塞。
 
 ## 6. Flag 交互矩阵
 
@@ -283,7 +295,7 @@ grep -E 'xclip|wl-paste|xsel|wl-copy|osc52|tmux|uploaded_media' /tmp/agy.execve
 - **state**：legacy 全 true/部分迁移、新 schema no-op、legacy 仍可反序列化、nil-safe、幂等、`Needs*` 谓词、transport 字段不被迁移触碰、round-trip 不含旧 key（11 项）。
 - **flag**：`parseDeployTargets` 五 target + 互斥 + explicit 判别器；矩阵 `--codex --no-hooks`→ERROR、`--all --no-hooks`→ALLOWED、token-only 各组合；`runConnect` token-only 下 deploy.json adapter 不变 + 无 config 写。
 - **install-chain**：UserRefused/PolicyForbidden 仅降级本地否则 HARD_STOP；VerifyFailed 立即 HARD_STOP 不降级；`--no-plugin-marketplace` 删 marketplace 源；`--yes` 不抑制 PolicyForbidden；与 `daemon.DeliveryChain` 零符号共享（编译级）。
-- **setup**：非 TTY→all 不阻塞、TTY→菜单、`setup --codex`→codex-only + 一次性 stderr 提示、`--codex --all`→exit 2、与 connect 共用 parser。
+- **setup**：非 TTY→{Claude} 不阻塞、TTY→菜单、`setup --codex`→codex-only + 一次性 stderr 提示、`--codex --all`→exit 2、与 connect 共用 parser。
 - **antigravity**：`agy plugin validate/install <dir>` 命令构造；Stop hook runner 始终吐 `{"decision":""}`；hook-fire smoke。
 - **marketplace builder**：Codex 用 `plugin add` 非 `install`；无 `--ref`。
 

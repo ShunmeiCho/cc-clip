@@ -5,11 +5,13 @@ import (
 	"io"
 )
 
-// Adapter names dispatched by Run.
+// Adapter names dispatched by Run. The Antigravity adapter's user-facing id is
+// "agy-notify" (canonical CLI flag --agy, alias --antigravity); its Go identifier
+// stays descriptive, mirroring DeployTargets.Antigravity.
 const (
 	AdapterClaudeNotify      = "claude-notify"
 	AdapterCodexNotify       = "codex-notify"
-	AdapterAntigravityNotify = "antigravity-notify"
+	AdapterAntigravityNotify = "agy-notify"
 )
 
 // Run dispatches to the named adapter handler. stdin/stdout are injected for

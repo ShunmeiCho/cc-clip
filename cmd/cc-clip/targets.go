@@ -104,8 +104,8 @@ const targetMenu = `Select deployment target:
   1) claude       clipboard shim + claude-notify
   2) codex        X11 bridge + codex-notify
   3) opencode     clipboard shim only (no Claude/Codex config changes)
-  4) antigravity  antigravity-notify plugin (clipboard transport pending)
-  5) all          everything above (antigravity clipboard excluded until resolved)
+  4) agy          Antigravity (agy-notify plugin; clipboard transport pending)
+  5) all          everything above (Antigravity clipboard excluded until resolved)
 `
 
 // maxMenuAttempts bounds invalid-input re-prompts so a misbehaving stream cannot

@@ -179,7 +179,7 @@ Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
     --display        X11 display (default: $DISPLAY)
     --port           cc-clip daemon port (default: 18339)
-  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | antigravity-notify)
+  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | agy-notify)
                      reads agent hook JSON from stdin`)
 }
 
