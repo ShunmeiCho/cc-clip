@@ -208,3 +208,49 @@ func TestResolveImplicitTargets(t *testing.T) {
 		}
 	})
 }
+
+// TestHostFromArgs verifies flag-tolerant host extraction so the host may appear
+// before OR after flags (replacing the positional os.Args[2] assumption). The
+// args slice is os.Args[2:] (everything after the subcommand). Space-form value
+// flags (--port, --local-bin) consume the following token, which must NOT be
+// mistaken for the host; their =value form keeps the value inline.
+func TestHostFromArgs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{"host then flags", []string{"myhost", "--codex", "--port", "1234"}, "myhost", false},
+		{"flag then host", []string{"--codex", "myhost"}, "myhost", false},
+		{"bool =value flag then host", []string{"--force=true", "myhost"}, "myhost", false},
+		{"flags surrounding host", []string{"--codex", "myhost", "--force"}, "myhost", false},
+		{"port space-value skipped, host after", []string{"--port", "9", "myhost"}, "myhost", false},
+		{"port =value inline, host after", []string{"--port=9", "myhost"}, "myhost", false},
+		{"local-bin space-value skipped, host after", []string{"--local-bin", "/tmp/cc-clip", "myhost"}, "myhost", false},
+		{"local-bin =value inline, host after", []string{"--local-bin=/tmp/cc-clip", "myhost"}, "myhost", false},
+		{"no host only flags", []string{"--codex", "--force"}, "", true},
+		{"dangling value flag is not a host", []string{"--port", "1234"}, "", true},
+		{"empty", []string{}, "", true},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := hostFromArgs(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got host=%q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("host = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

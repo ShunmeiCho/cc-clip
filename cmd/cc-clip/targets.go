@@ -168,3 +168,39 @@ func resolveImplicitTargets(isTTY bool, in io.Reader, out, errOut io.Writer, fal
 	fmt.Fprintf(errOut, "cc-clip: no target flag given and stdin is not a TTY; defaulting to %s (pass --claude/--codex/--opencode/--agy/--all to choose explicitly)\n", fallbackLabel)
 	return fallback
 }
+
+// valueFlags are the connect/setup flags that consume the FOLLOWING token as
+// their value (space form, e.g. "--port 18339"), so hostFromArgs does not
+// mistake that value for the host. In connect/setup only --port (getPort ->
+// getFlag) and --local-bin (resolveLocalBinary -> getFlag) take a value; every
+// other connect/setup flag is boolean. --to is an `update` flag (update.go
+// FlagSet), NOT a connect/setup flag, so it is intentionally absent here.
+var valueFlags = map[string]bool{"--port": true, "--local-bin": true}
+
+// errNoHost is returned by hostFromArgs when args carry no positional host token.
+var errNoHost = errors.New("missing <host>: usage: cc-clip <connect|setup> <host> [flags]")
+
+// hostFromArgs returns the first positional (non-flag) token in args, where args
+// is os.Args[2:] (everything after the subcommand). It tolerates flags appearing
+// before the host (e.g. `connect --codex myhost`), replacing the old positional
+// os.Args[2] assumption, by skipping --flag, --flag=value, the value token after
+// a space-form value flag, and short -x flags. Returns errNoHost when no
+// positional token is present.
+func hostFromArgs(args []string) (string, error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "--") {
+			// "--flag=value" carries its value inline; "--flag value" (a known
+			// value flag) consumes the next token so it is not read as the host.
+			if !strings.ContainsRune(a, '=') && valueFlags[a] && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(a, "-") { // short flags (e.g. -v) are not a host
+			continue
+		}
+		return a, nil
+	}
+	return "", errNoHost
+}

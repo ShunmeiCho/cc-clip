@@ -636,6 +636,10 @@ func cmdConnect() {
 	if len(os.Args) < 3 {
 		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
 	}
+	host, err := hostFromArgs(os.Args[2:])
+	if err != nil {
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
+	}
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
 	noHooks := hasFlag("no-hooks")
@@ -646,7 +650,7 @@ func cmdConnect() {
 	rejectAutoRecoverWithTokenOnly("connect", autoRecover, tokenOnly)
 	rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly)
 	runConnect(connectOpts{
-		host:        os.Args[2],
+		host:        host,
 		port:        getPort(),
 		force:       hasFlag("force"),
 		tokenOnly:   tokenOnly,
@@ -1347,7 +1351,10 @@ func cmdSetup() {
 	if len(os.Args) < 3 {
 		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
 	}
-	host := os.Args[2]
+	host, err := hostFromArgs(os.Args[2:])
+	if err != nil {
+		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+	}
 	port := getPort()
 
 	// Reject conflicting flag combinations at parse time, before any
