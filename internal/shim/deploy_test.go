@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shunmei/cc-clip/internal/install"
 )
 
 func TestLocalBinaryHash(t *testing.T) {
@@ -627,5 +629,409 @@ func TestDeployState_ClaudeWrapperOmitemptyWhenNil(t *testing.T) {
 	}
 	if strings.Contains(string(data), "claude_wrapper") {
 		t.Fatalf("nil ClaudeWrapper should be omitted, got: %s", data)
+	}
+}
+
+// --- Step 1: per-adapter schema migration tests ---
+
+func TestMigrateLegacyNotifyState_AllBooleansTrue(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:legacy",
+  "binary_version": "v0.8.0",
+  "shim_installed": true,
+  "shim_target": "xclip",
+  "path_fixed": true,
+  "notify": {"enabled": true, "hook_installed": true, "codex_injected": true, "health_verified": true}
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil || state.Notify == nil {
+		t.Fatalf("expected Notify state, got %+v", state)
+	}
+	if state.Notify.Adapters == nil {
+		t.Fatal("expected Adapters map after migration")
+	}
+
+	claude := state.Notify.Adapters[AdapterClaudeNotify]
+	if claude == nil {
+		t.Fatal("expected claude-notify adapter")
+	}
+	if !claude.Installed {
+		t.Error("claude-notify Installed should be true")
+	}
+	if claude.Verified {
+		t.Error("claude-notify Verified should be migrated as false")
+	}
+	if claude.Source != install.SourceConfig {
+		t.Errorf("claude-notify Source = %q, want %q", claude.Source, install.SourceConfig)
+	}
+
+	codex := state.Notify.Adapters[AdapterCodexNotify]
+	if codex == nil {
+		t.Fatal("expected codex-notify adapter")
+	}
+	if !codex.Installed {
+		t.Error("codex-notify Installed should be true")
+	}
+	if codex.Verified {
+		t.Error("codex-notify Verified should be migrated as false")
+	}
+	if codex.Source != install.SourceConfig {
+		t.Errorf("codex-notify Source = %q, want %q", codex.Source, install.SourceConfig)
+	}
+
+	if _, ok := state.Notify.Adapters[AdapterOpencodeNotify]; ok {
+		t.Error("opencode-notify adapter should be absent")
+	}
+}
+
+func TestMigrateLegacyNotifyState_PartialBooleans(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:legacy",
+  "notify": {"enabled": true, "hook_installed": true, "codex_injected": false, "health_verified": false}
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil || state.Notify == nil || state.Notify.Adapters == nil {
+		t.Fatalf("expected migrated Notify state, got %+v", state)
+	}
+
+	claude := state.Notify.Adapters[AdapterClaudeNotify]
+	if claude == nil {
+		t.Fatal("expected claude-notify adapter")
+	}
+	if !claude.Installed {
+		t.Error("claude-notify Installed should be true")
+	}
+	if claude.Verified {
+		t.Error("claude-notify Verified should be false")
+	}
+
+	if _, ok := state.Notify.Adapters[AdapterCodexNotify]; ok {
+		t.Error("codex-notify adapter should be absent when codex_injected=false")
+	}
+}
+
+func TestReadRemoteState_NewSchemaUnchanged(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:new",
+  "notify": {
+    "enabled": true,
+    "adapters": {
+      "claude-notify": {"installed": true, "source": "marketplace", "version": "1.2.3", "verified": true}
+    }
+  }
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil || state.Notify == nil || state.Notify.Adapters == nil {
+		t.Fatalf("expected Notify adapters, got %+v", state)
+	}
+
+	claude := state.Notify.Adapters[AdapterClaudeNotify]
+	if claude == nil {
+		t.Fatal("expected claude-notify adapter preserved")
+	}
+	if !claude.Installed || !claude.Verified {
+		t.Errorf("claude-notify should be preserved Installed+Verified, got %+v", claude)
+	}
+	if claude.Source != install.SourceMarketplace {
+		t.Errorf("claude-notify Source = %q, want %q", claude.Source, install.SourceMarketplace)
+	}
+	if claude.Version != "1.2.3" {
+		t.Errorf("claude-notify Version = %q, want 1.2.3", claude.Version)
+	}
+
+	// migrate must be a no-op: no synthesized codex-notify entry
+	if _, ok := state.Notify.Adapters[AdapterCodexNotify]; ok {
+		t.Error("codex-notify should not be synthesized when adapters map already present")
+	}
+}
+
+func TestReadRemoteState_LegacyUnmarshalsWithoutError(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:deadbeef",
+  "binary_version": "v0.8.1",
+  "shim_installed": true,
+  "shim_target": "wl-paste",
+  "path_fixed": false,
+  "notify": {"enabled": true, "hook_installed": true, "codex_injected": true, "health_verified": true}
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("legacy deploy.json should unmarshal without error, got: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+}
+
+func TestMigrateNotifyState_NilSafe(t *testing.T) {
+	// Direct nil pointer
+	migrateNotifyState(nil)
+
+	// DeployState with Notify == nil through ReadRemoteState
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:abc",
+  "shim_installed": true
+}`)
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if state.Notify != nil {
+		t.Fatalf("Notify should remain nil, got %+v", state.Notify)
+	}
+}
+
+func TestMigrateNotifyState_Idempotent(t *testing.T) {
+	n := &NotifyDeployState{
+		Enabled:       true,
+		HookInstalled: true,
+		CodexInjected: true,
+	}
+	migrateNotifyState(n)
+
+	// Snapshot after first migration
+	first, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	migrateNotifyState(n)
+
+	second, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if string(first) != string(second) {
+		t.Fatalf("second migration mutated state:\nfirst:  %s\nsecond: %s", first, second)
+	}
+}
+
+func TestNeedsAdapterInstall(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{
+			name:   "nil DeployState",
+			remote: nil,
+			want:   true,
+		},
+		{
+			name: "installed false",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: false},
+				},
+			}},
+			want: true,
+		},
+		{
+			name: "installed true",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: true},
+				},
+			}},
+			want: false,
+		},
+		{
+			name: "absent entry",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{},
+			}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NeedsAdapterInstall(tt.remote, AdapterClaudeNotify)
+			if got != tt.want {
+				t.Errorf("NeedsAdapterInstall() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNeedsAdapterVerify(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{
+			name: "installed true, verified false",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: true, Verified: false},
+				},
+			}},
+			want: true,
+		},
+		{
+			name: "installed true, verified true",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: true, Verified: true},
+				},
+			}},
+			want: false,
+		},
+		{
+			name: "absent entry",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{},
+			}},
+			want: false,
+		},
+		{
+			name:   "nil DeployState",
+			remote: nil,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NeedsAdapterVerify(tt.remote, AdapterClaudeNotify)
+			if got != tt.want {
+				t.Errorf("NeedsAdapterVerify() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdapterInstalled(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{
+			name: "present and installed",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: true},
+				},
+			}},
+			want: true,
+		},
+		{
+			name: "present but not installed",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{
+					AdapterClaudeNotify: {Installed: false},
+				},
+			}},
+			want: false,
+		},
+		{
+			name: "absent entry",
+			remote: &DeployState{Notify: &NotifyDeployState{
+				Adapters: map[AdapterID]*AdapterState{},
+			}},
+			want: false,
+		},
+		{
+			name:   "nil DeployState",
+			remote: nil,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AdapterInstalled(tt.remote, AdapterClaudeNotify)
+			if got != tt.want {
+				t.Errorf("AdapterInstalled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNeedsNotifySetup_BackwardCompat(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote *DeployState
+		want   bool
+	}{
+		{name: "nil remote", remote: nil, want: true},
+		{name: "Notify nil", remote: &DeployState{}, want: true},
+		{name: "Enabled false", remote: &DeployState{Notify: &NotifyDeployState{Enabled: false}}, want: true},
+		{name: "Enabled true", remote: &DeployState{Notify: &NotifyDeployState{Enabled: true}}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NeedsNotifySetup(tt.remote); got != tt.want {
+				t.Errorf("NeedsNotifySetup() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClipboardTransportPreserved(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:transport",
+  "binary_version": "v0.8.0",
+  "shim_installed": true,
+  "shim_target": "xclip",
+  "path_fixed": true,
+  "codex": {"enabled": true, "mode": "xvfb", "display_fixed": true},
+  "notify": {"enabled": true, "hook_installed": true, "codex_injected": true, "health_verified": true}
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+
+	// Transport fields must be byte-equivalent / unchanged by migration.
+	if state.BinaryHash != "sha256:transport" {
+		t.Errorf("BinaryHash = %q, want sha256:transport", state.BinaryHash)
+	}
+	if state.BinaryVersion != "v0.8.0" {
+		t.Errorf("BinaryVersion = %q, want v0.8.0", state.BinaryVersion)
+	}
+	if !state.ShimInstalled {
+		t.Error("ShimInstalled should be true")
+	}
+	if state.ShimTarget != "xclip" {
+		t.Errorf("ShimTarget = %q, want xclip", state.ShimTarget)
+	}
+	if !state.PathFixed {
+		t.Error("PathFixed should be true")
+	}
+	if state.Codex == nil {
+		t.Fatal("Codex transport state should be preserved")
+	}
+	if !state.Codex.Enabled || state.Codex.Mode != "xvfb" || !state.Codex.DisplayFixed {
+		t.Errorf("Codex transport state mutated: %+v", state.Codex)
 	}
 }
