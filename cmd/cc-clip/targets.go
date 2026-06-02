@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -92,4 +95,76 @@ func flagInArgs(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// targetMenu is the interactive target chooser shown (per design §5) when no
+// target flag was given on a TTY. It must be rendered BEFORE any SSH/daemon
+// activity so the user picks before a passphrase prompt.
+const targetMenu = `Select deployment target:
+  1) claude       clipboard shim + claude-notify
+  2) codex        X11 bridge + codex-notify
+  3) opencode     clipboard shim only (no Claude/Codex config changes)
+  4) antigravity  antigravity-notify plugin (clipboard transport pending)
+  5) all          everything above (antigravity clipboard excluded until resolved)
+`
+
+// maxMenuAttempts bounds invalid-input re-prompts so a misbehaving stream cannot
+// loop forever; after the cap the caller's default is applied.
+const maxMenuAttempts = 3
+
+// menuSelection maps a raw menu choice (1-5, surrounding whitespace tolerated) to
+// DeployTargets. ok=false for any unrecognized choice.
+func menuSelection(choice string) (DeployTargets, bool) {
+	switch strings.TrimSpace(choice) {
+	case "1":
+		return DeployTargets{Claude: true}, true
+	case "2":
+		return DeployTargets{Codex: true}, true
+	case "3":
+		return DeployTargets{Opencode: true}, true
+	case "4":
+		return DeployTargets{Antigravity: true}, true
+	case "5":
+		return DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true
+	default:
+		return DeployTargets{}, false
+	}
+}
+
+// promptDeployTargets renders the target menu to out and reads a 1-5 selection
+// from in, re-prompting on invalid input up to maxMenuAttempts. It returns the
+// chosen targets with ok=true on a valid selection, or ok=false on EOF/read
+// error or exhausted attempts so the caller applies its own default.
+func promptDeployTargets(in io.Reader, out io.Writer) (DeployTargets, bool) {
+	fmt.Fprint(out, targetMenu)
+	scanner := bufio.NewScanner(in)
+	for attempt := 0; attempt < maxMenuAttempts; attempt++ {
+		fmt.Fprint(out, "> ")
+		if !scanner.Scan() {
+			return DeployTargets{}, false // EOF / read error
+		}
+		if t, ok := menuSelection(scanner.Text()); ok {
+			return t, true
+		}
+		fmt.Fprintln(out, "  invalid selection; enter a number 1-5")
+	}
+	return DeployTargets{}, false
+}
+
+// resolveImplicitTargets is called when parseDeployTargets reported explicit=false
+// (no target flag present). On a TTY it presents the menu; on a non-TTY it falls
+// back to fallback and writes a one-line, non-blocking warning to errOut naming
+// fallbackLabel. A TTY user who declines (EOF/invalid) also gets the fallback.
+// Callers MUST pass a minimal-side-effect fallback ({Claude}) so an unattended
+// run never silently triggers high-side-effect installs (Xvfb/sudo/consent).
+func resolveImplicitTargets(isTTY bool, in io.Reader, out, errOut io.Writer, fallback DeployTargets, fallbackLabel string) DeployTargets {
+	if isTTY {
+		if t, ok := promptDeployTargets(in, out); ok {
+			return t
+		}
+		fmt.Fprintf(out, "no selection made; defaulting to %s\n", fallbackLabel)
+		return fallback
+	}
+	fmt.Fprintf(errOut, "cc-clip: no target flag given and stdin is not a TTY; defaulting to %s (pass --claude/--codex/--opencode/--agy/--all to choose explicitly)\n", fallbackLabel)
+	return fallback
 }

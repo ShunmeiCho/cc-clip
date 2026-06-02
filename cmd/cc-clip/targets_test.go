@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -84,4 +86,125 @@ func TestDeployTargetsAny(t *testing.T) {
 	if !(DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}).Any() {
 		t.Fatal("full DeployTargets must report Any()==true")
 	}
+}
+
+// TestMenuSelection maps each valid menu choice (surrounding whitespace
+// tolerated) and rejects out-of-range / non-numeric input.
+func TestMenuSelection(t *testing.T) {
+	t.Parallel()
+	valid := map[string]DeployTargets{
+		"1":   {Claude: true},
+		"2":   {Codex: true},
+		"3":   {Opencode: true},
+		"4":   {Antigravity: true},
+		"5":   {Claude: true, Codex: true, Opencode: true, Antigravity: true},
+		" 3 ": {Opencode: true},
+	}
+	for in, want := range valid {
+		if got, ok := menuSelection(in); !ok || got != want {
+			t.Errorf("menuSelection(%q) = %+v,%v; want %+v,true", in, got, ok, want)
+		}
+	}
+	for _, bad := range []string{"", "0", "6", "x", "12", "-1"} {
+		if got, ok := menuSelection(bad); ok {
+			t.Errorf("menuSelection(%q) = %+v,true; want ok=false", bad, got)
+		}
+	}
+}
+
+// TestPromptDeployTargets covers a valid selection, re-prompt after invalid
+// input, EOF, and exhausted attempts.
+func TestPromptDeployTargets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid selection returns targets and renders menu", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		got, ok := promptDeployTargets(strings.NewReader("2\n"), &out)
+		if !ok || got != (DeployTargets{Codex: true}) {
+			t.Fatalf("got %+v,%v; want {Codex:true},true", got, ok)
+		}
+		if !strings.Contains(out.String(), "Select deployment target:") {
+			t.Fatalf("menu not rendered:\n%s", out.String())
+		}
+	})
+
+	t.Run("re-prompts after invalid then accepts valid", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		got, ok := promptDeployTargets(strings.NewReader("9\n3\n"), &out)
+		if !ok || got != (DeployTargets{Opencode: true}) {
+			t.Fatalf("got %+v,%v; want {Opencode:true},true", got, ok)
+		}
+		if !strings.Contains(out.String(), "invalid selection") {
+			t.Fatalf("expected invalid-selection notice:\n%s", out.String())
+		}
+	})
+
+	t.Run("EOF returns ok=false", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		if got, ok := promptDeployTargets(strings.NewReader(""), &out); ok {
+			t.Fatalf("EOF must yield ok=false, got %+v", got)
+		}
+	})
+
+	t.Run("exhausted attempts returns ok=false", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		if got, ok := promptDeployTargets(strings.NewReader("9\n8\n7\n6\n"), &out); ok {
+			t.Fatalf("3 invalid attempts must yield ok=false, got %+v", got)
+		}
+	})
+}
+
+// TestResolveImplicitTargets covers the non-TTY fallback (with stderr warning),
+// the TTY menu path, and a TTY user declining (EOF -> fallback). The fallback is
+// always the minimal-side-effect {Claude} so an unattended run never silently
+// triggers high-side-effect installs.
+func TestResolveImplicitTargets(t *testing.T) {
+	t.Parallel()
+	fallback := DeployTargets{Claude: true}
+
+	t.Run("non-TTY falls back and warns on stderr", func(t *testing.T) {
+		t.Parallel()
+		var out, errOut bytes.Buffer
+		got := resolveImplicitTargets(false, strings.NewReader(""), &out, &errOut, fallback, "claude")
+		if got != fallback {
+			t.Fatalf("got %+v, want fallback %+v", got, fallback)
+		}
+		if !strings.Contains(errOut.String(), "not a TTY") || !strings.Contains(errOut.String(), "claude") {
+			t.Fatalf("expected non-TTY warning naming the fallback:\n%s", errOut.String())
+		}
+		if out.Len() != 0 {
+			t.Fatalf("non-TTY path must not render the menu to out:\n%s", out.String())
+		}
+	})
+
+	t.Run("TTY presents menu and returns selection", func(t *testing.T) {
+		t.Parallel()
+		var out, errOut bytes.Buffer
+		got := resolveImplicitTargets(true, strings.NewReader("5\n"), &out, &errOut, fallback, "claude")
+		if got != (DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}) {
+			t.Fatalf("got %+v, want all", got)
+		}
+		if !strings.Contains(out.String(), "Select deployment target:") {
+			t.Fatalf("menu not rendered:\n%s", out.String())
+		}
+		if errOut.Len() != 0 {
+			t.Fatalf("TTY path must not warn on stderr:\n%s", errOut.String())
+		}
+	})
+
+	t.Run("TTY declined (EOF) falls back to default", func(t *testing.T) {
+		t.Parallel()
+		var out, errOut bytes.Buffer
+		got := resolveImplicitTargets(true, strings.NewReader(""), &out, &errOut, fallback, "claude")
+		if got != fallback {
+			t.Fatalf("got %+v, want fallback %+v", got, fallback)
+		}
+		if !strings.Contains(out.String(), "defaulting to claude") {
+			t.Fatalf("expected default notice:\n%s", out.String())
+		}
+	})
 }
