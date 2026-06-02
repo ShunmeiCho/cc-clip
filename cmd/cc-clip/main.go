@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +21,7 @@ import (
 	"github.com/shunmei/cc-clip/internal/daemon"
 	"github.com/shunmei/cc-clip/internal/doctor"
 	"github.com/shunmei/cc-clip/internal/exitcode"
+	"github.com/shunmei/cc-clip/internal/plugin"
 	"github.com/shunmei/cc-clip/internal/service"
 	"github.com/shunmei/cc-clip/internal/session"
 	"github.com/shunmei/cc-clip/internal/setup"
@@ -71,6 +71,8 @@ func main() {
 		cmdUpdate()
 	case "notify":
 		cmdNotify()
+	case "plugin":
+		cmdPlugin()
 	case "x11-bridge":
 		cmdX11Bridge()
 	case "version", "--version", "-v":
@@ -1951,60 +1953,10 @@ func parseCodexNotifyPayload(payload string) (daemon.GenericMessagePayload, erro
 }
 
 // postGenericNotification sends a generic notification to the local cc-clip daemon.
-// It reads the notification nonce from ~/.cache/cc-clip/notify.nonce for auth.
+// It delegates to the shared plugin.PostNotification core so the wire bytes stay
+// identical across the notify subcommand and the plugin runner.
 func postGenericNotification(port int, msg daemon.GenericMessagePayload) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	nonceFile := filepath.Join(home, ".cache", "cc-clip", "notify.nonce")
-	nonceBytes, err := os.ReadFile(nonceFile)
-	if err != nil {
-		return fmt.Errorf("cannot read nonce file %s: %w", nonceFile, err)
-	}
-	nonce := strings.TrimSpace(string(nonceBytes))
-
-	payload := struct {
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		Urgency int    `json:"urgency"`
-		Sound   string `json:"sound,omitempty"`
-		Trusted bool   `json:"trusted,omitempty"`
-	}{
-		Title:   msg.Title,
-		Body:    msg.Body,
-		Urgency: msg.Urgency,
-		Sound:   msg.Sound,
-		Trusted: msg.Verified,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %w", err)
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/notify", port)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+nonce)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "cc-clip-notify/0.1")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send notification: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("daemon returned HTTP %d", resp.StatusCode)
-	}
-
-	return nil
+	return plugin.PostNotification(port, msg)
 }
 
 // cmdX11Bridge runs the X11 clipboard bridge daemon (internal command).
