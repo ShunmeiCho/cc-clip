@@ -1148,8 +1148,11 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 		}
 	}
 
-	changed, err := shim.MergeRemoteClaudeSettingsHooks(session)
+	changed, warnings, err := shim.MergeRemoteClaudeSettingsHooks(session)
 	if err == nil {
+		for _, w := range warnings {
+			log.Printf("      warning: %s", w)
+		}
 		if changed {
 			fmt.Println("      hooks installed in ~/.claude/settings.json")
 		} else {

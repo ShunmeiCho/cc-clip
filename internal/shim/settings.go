@@ -38,24 +38,26 @@ const (
 // ~/.claude/settings.json. It strips the owner-prefix union (legacy + current
 // managed commands) before inserting exactly one current managed command per
 // event, then writes the file in a single atomic rename. It is idempotent: when
-// the current managed command is already present for an event, that event is
-// left untouched.
-func MergeRemoteClaudeSettingsHooks(session SessionExecutor) (bool, error) {
+// exactly one current managed command is already present for an event, that
+// event is left untouched. It returns any per-event warnings (e.g. a detected
+// user-authored bare cc-clip-hook the caller should surface) regardless of
+// whether the file changed.
+func MergeRemoteClaudeSettingsHooks(session SessionExecutor) (bool, []string, error) {
 	existing, err := readRemoteClaudeSettings(session)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
-	merged, changed, err := mergeClaudeHooks(existing)
+	merged, changed, warnings, err := mergeClaudeHooks(existing)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	if !changed {
-		return false, nil
+		return false, warnings, nil
 	}
 	if err := writeRemoteClaudeSettings(session, merged); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return true, nil
+	return true, warnings, nil
 }
 
 // RemoveRemoteClaudeManagedHooks removes cc-clip's managed hook commands from
@@ -150,45 +152,75 @@ trap - EXIT`
 	return nil
 }
 
-func mergeClaudeHooks(existing []byte) ([]byte, bool, error) {
+// mergeClaudeHooks installs exactly one current managed command per managed
+// event, returning the rewritten settings, whether anything changed, and any
+// per-event warnings the caller should surface. Per event it applies:
+//
+//  1. USER-BARE DETECTION (P2#3): if the event already holds a user-authored
+//     bare cc-clip-hook (a command CONTAINING "cc-clip-hook" but WITHOUT the
+//     CC_CLIP_MANAGED=1 ownership prefix), cc-clip skips insertion and strips
+//     nothing for that event, recording a warning so the operator can resolve
+//     the double-notify risk.
+//  2. STRIP-THEN-INSERT (P1#1 mixed-state fix): otherwise strip every
+//     owner-prefix managed command (legacy + current) from the event. If the
+//     event consisted of EXACTLY one managed command and it was already the
+//     current command, skip the rewrite (idempotent). Else append exactly one
+//     current managed matcher. A MIXED state (current + legacy) is repaired:
+//     the legacy is stripped, leaving exactly one current.
+func mergeClaudeHooks(existing []byte) ([]byte, bool, []string, error) {
 	if len(bytes.TrimSpace(existing)) == 0 {
 		existing = []byte(`{}`)
 	}
 
 	settings, err := decodeClaudeSettings(existing)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 
 	hooks, err := ensureClaudeHooksObject(settings)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 
 	changed := false
+	var warnings []string
 	for _, event := range claudeManagedEvents {
 		eventHooks, err := claudeHookMatchers(hooks, event)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
-		// Idempotent skip: if the CURRENT managed command is already present, the
-		// remote is already migrated; leave the event untouched. A legacy command
-		// is NOT the current command, so it does not block the forward upgrade.
-		hasCurrent, err := claudeEventHasCurrentManagedCommand(event, eventHooks)
+
+		// P2#3: a user-authored bare cc-clip-hook means the operator already
+		// wired their own notification. Do not insert the managed runner and do
+		// not strip the user's hook; warn and move on.
+		userBare, err := claudeEventHasUserBareCcClipHook(event, eventHooks)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
-		if hasCurrent {
+		if userBare {
+			warnings = append(warnings, fmt.Sprintf("detected a user-authored cc-clip-hook for %s; skipping cc-clip managed hook to avoid double-notify (remove it or keep relying on your own hook)", event))
 			continue
 		}
+
+		// Count owner-prefix managed commands BEFORE stripping so we can detect
+		// the idempotent case (exactly one managed command and it is the current
+		// command) versus a mixed/legacy state that needs repair.
+		total, current, err := claudeEventManagedCommandCounts(event, eventHooks)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if total == 1 && current == 1 {
+			continue // already exactly the current managed command; leave untouched
+		}
+
 		// Strip-before-insert: remove every owner-prefix-matching managed command
-		// (legacy + any stale current) from this event, then append exactly one
-		// current managed matcher. The whole file is written in one atomic rename
-		// by writeRemoteClaudeSettings, so there is no on-disk instant where both
-		// the legacy and current managed commands fire the same event.
+		// (legacy + any stale/duplicate current) from this event, then append
+		// exactly one current managed matcher. The whole file is written in one
+		// atomic rename by writeRemoteClaudeSettings, so there is no on-disk
+		// instant where both the legacy and current managed commands fire.
 		stripped, _, err := stripManagedFromEvent(eventHooks, event)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		hooks[event] = append(stripped, map[string]any{
 			"matcher": "",
@@ -203,14 +235,14 @@ func mergeClaudeHooks(existing []byte) ([]byte, bool, error) {
 	}
 
 	if !changed {
-		return existing, false, nil
+		return existing, false, warnings, nil
 	}
 
 	out, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return nil, false, fmt.Errorf("marshal Claude settings: %w", err)
+		return nil, false, nil, fmt.Errorf("marshal Claude settings: %w", err)
 	}
-	return append(out, '\n'), true, nil
+	return append(out, '\n'), true, warnings, nil
 }
 
 func removeClaudeManagedHooks(existing []byte) ([]byte, bool, error) {
@@ -356,10 +388,49 @@ func stripManagedFromEvent(eventHooks []any, event string) (next []any, removed 
 	return nextEventHooks, removed, nil
 }
 
-// claudeEventHasCurrentManagedCommand reports whether the CURRENT managed insert
-// command (claudeManagedHookCommand) is already present for the event. Used as
-// the merge skip guard so a legacy command never blocks the forward upgrade.
-func claudeEventHasCurrentManagedCommand(event string, eventHooks []any) (bool, error) {
+// claudeEventManagedCommandCounts walks one event's matchers and returns the
+// total number of owner-prefix managed commands and how many of those equal the
+// CURRENT managed command. The merge uses (total==1 && current==1) as the
+// idempotent-skip guard: exactly one managed command that is already current.
+// Any other shape (legacy present, duplicate current, mixed legacy+current)
+// fails that guard and is repaired by strip-then-insert.
+func claudeEventManagedCommandCounts(event string, eventHooks []any) (total, current int, err error) {
+	for _, rawMatcher := range eventHooks {
+		matcher, ok := rawMatcher.(map[string]any)
+		if !ok {
+			return 0, 0, fmt.Errorf("claude settings hooks.%s entries must be objects", event)
+		}
+		rawCommands, ok := matcher["hooks"]
+		if !ok {
+			continue
+		}
+		commands, ok := rawCommands.([]any)
+		if !ok {
+			return 0, 0, fmt.Errorf("claude settings hooks.%s entry hooks must be an array", event)
+		}
+		for _, rawCommand := range commands {
+			command, ok := rawCommand.(map[string]any)
+			if !ok {
+				return 0, 0, fmt.Errorf("claude settings hooks.%s command entries must be objects", event)
+			}
+			if !isManagedClaudeCommand(command) {
+				continue
+			}
+			total++
+			if commandString(command) == claudeManagedHookCommand {
+				current++
+			}
+		}
+	}
+	return total, current, nil
+}
+
+// claudeEventHasUserBareCcClipHook reports whether the event holds a
+// user-authored bare cc-clip-hook: a command whose string CONTAINS
+// "cc-clip-hook" but does NOT carry the CC_CLIP_MANAGED=1 ownership prefix.
+// Such a hook signals the operator already wired their own notification, so the
+// merge must skip insertion (P2#3) rather than risk double-notify.
+func claudeEventHasUserBareCcClipHook(event string, eventHooks []any) (bool, error) {
 	for _, rawMatcher := range eventHooks {
 		matcher, ok := rawMatcher.(map[string]any)
 		if !ok {
@@ -378,7 +449,8 @@ func claudeEventHasCurrentManagedCommand(event string, eventHooks []any) (bool, 
 			if !ok {
 				return false, fmt.Errorf("claude settings hooks.%s command entries must be objects", event)
 			}
-			if commandString(command) == claudeManagedHookCommand {
+			cmd := commandString(command)
+			if strings.Contains(cmd, "cc-clip-hook") && !strings.HasPrefix(cmd, claudeManagedHookOwnerPrefix) {
 				return true, nil
 			}
 		}

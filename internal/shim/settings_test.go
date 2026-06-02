@@ -31,12 +31,15 @@ func TestClaudeManagedHookCommandIsRunnerForm(t *testing.T) {
 }
 
 func TestMergeClaudeHooksAddsManagedStopAndNotification(t *testing.T) {
-	out, changed, err := mergeClaudeHooks(nil)
+	out, changed, warnings, err := mergeClaudeHooks(nil)
 	if err != nil {
 		t.Fatalf("mergeClaudeHooks returned error: %v", err)
 	}
 	if !changed {
 		t.Fatal("empty settings should be changed")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("empty settings should produce no warnings, got %v", warnings)
 	}
 
 	settings := decodeClaudeSettingsForTest(t, out)
@@ -57,7 +60,7 @@ func TestMergeClaudeHooksAddsManagedStopAndNotification(t *testing.T) {
 }
 
 func TestMergeClaudeHooksIsIdempotentForManagedHooks(t *testing.T) {
-	first, changed, err := mergeClaudeHooks([]byte(`{}`))
+	first, changed, _, err := mergeClaudeHooks([]byte(`{}`))
 	if err != nil {
 		t.Fatalf("first merge: %v", err)
 	}
@@ -65,7 +68,7 @@ func TestMergeClaudeHooksIsIdempotentForManagedHooks(t *testing.T) {
 		t.Fatal("first merge should change settings")
 	}
 
-	second, changed, err := mergeClaudeHooks(first)
+	second, changed, _, err := mergeClaudeHooks(first)
 	if err != nil {
 		t.Fatalf("second merge: %v", err)
 	}
@@ -77,12 +80,14 @@ func TestMergeClaudeHooksIsIdempotentForManagedHooks(t *testing.T) {
 	}
 }
 
-// TestMergeClaudeHooksPreservesUserBareCcClipHook asserts that a user-authored
-// bare `cc-clip-hook` command (lacking the CC_CLIP_MANAGED=1 ownership prefix)
-// is NOT stripped, while the current managed command is still inserted alongside
-// it. The new skip guard keys off the CURRENT managed command, not any
-// `cc-clip-hook` substring, so a bare user hook no longer suppresses the upgrade.
-func TestMergeClaudeHooksPreservesUserBareCcClipHook(t *testing.T) {
+// TestMergeClaudeHooks_UserBareHook_SkipsManagedAndWarns asserts the P2#3
+// decision: when an event already contains a user-authored bare `cc-clip-hook`
+// command (a command whose string CONTAINS "cc-clip-hook" but does NOT carry the
+// CC_CLIP_MANAGED=1 ownership prefix), cc-clip must NOT insert its managed runner
+// for that event and must NOT strip the user's bare hook. Instead it records a
+// per-event warning so the operator can resolve the double-notify risk. Other
+// user commands in the event are also left untouched.
+func TestMergeClaudeHooks_UserBareHook_SkipsManagedAndWarns(t *testing.T) {
 	existing := []byte(`{
   "theme": "dark",
   "hooks": {
@@ -106,12 +111,13 @@ func TestMergeClaudeHooksPreservesUserBareCcClipHook(t *testing.T) {
   }
 }`)
 
-	out, changed, err := mergeClaudeHooks(existing)
+	out, changed, warnings, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("mergeClaudeHooks returned error: %v", err)
 	}
-	if !changed {
-		t.Fatal("bare user cc-clip-hook lacks the managed prefix, so the managed command must still be inserted")
+	// Both managed events have a user bare hook, so nothing is inserted -> no change.
+	if changed {
+		t.Fatalf("user bare hook in every managed event should leave settings unchanged:\n%s", out)
 	}
 	text := string(out)
 	// Bare user-authored commands must survive verbatim.
@@ -120,9 +126,70 @@ func TestMergeClaudeHooksPreservesUserBareCcClipHook(t *testing.T) {
 			t.Fatalf("user-authored hook %q must be preserved:\n%s", want, text)
 		}
 	}
-	// The current managed command must be inserted exactly once per event.
-	if got := strings.Count(text, claudeManagedHookCommand); got != 2 {
-		t.Fatalf("managed command should appear once per event (2 total), got %d:\n%s", got, text)
+	// The managed command must NOT be inserted for any event with a user bare hook.
+	if strings.Contains(text, claudeManagedHookCommand) {
+		t.Fatalf("managed command must NOT be inserted when a user bare hook is present:\n%s", text)
+	}
+	// A warning must be recorded for each managed event with a user bare hook.
+	if len(warnings) != 2 {
+		t.Fatalf("expected one warning per managed event (2 total), got %d: %v", len(warnings), warnings)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, event := range claudeManagedEvents {
+		if !strings.Contains(joined, event) {
+			t.Fatalf("warning should name event %q: %v", event, warnings)
+		}
+	}
+}
+
+// TestMergeClaudeHooks_UserBareHook_OnlyOneEventSkips asserts per-event scoping:
+// a user bare hook in ONE managed event suppresses+warns for that event only,
+// while the other managed event still receives exactly one current managed
+// command.
+func TestMergeClaudeHooks_UserBareHook_OnlyOneEventSkips(t *testing.T) {
+	existing := []byte(`{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "cc-clip-hook"}
+        ]
+      }
+    ]
+  }
+}`)
+
+	out, changed, warnings, err := mergeClaudeHooks(existing)
+	if err != nil {
+		t.Fatalf("mergeClaudeHooks returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("Notification has no user bare hook, so the managed command must be inserted there")
+	}
+	text := string(out)
+	// Stop keeps the user bare hook and receives no managed command.
+	if !strings.Contains(text, `"cc-clip-hook"`) {
+		t.Fatalf("user bare Stop hook must be preserved:\n%s", text)
+	}
+	// Exactly one managed command total: only the Notification event gets it.
+	if got := strings.Count(text, claudeManagedHookCommand); got != 1 {
+		t.Fatalf("managed command should be inserted only for Notification (1 total), got %d:\n%s", got, text)
+	}
+	settings := decodeClaudeSettingsForTest(t, out)
+	stopMatchers := settings["hooks"].(map[string]any)["Stop"].([]any)
+	for _, rawMatcher := range stopMatchers {
+		for _, rawCmd := range rawMatcher.(map[string]any)["hooks"].([]any) {
+			if rawCmd.(map[string]any)["command"] == claudeManagedHookCommand {
+				t.Fatalf("Stop must not receive the managed command:\n%s", text)
+			}
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning for the Stop event, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "Stop") {
+		t.Fatalf("warning should name the Stop event: %v", warnings)
 	}
 }
 
@@ -154,7 +221,7 @@ func TestMergeClaudeHooksMigratesLegacyManagedCommand(t *testing.T) {
   }
 }`)
 
-	out, changed, err := mergeClaudeHooks(existing)
+	out, changed, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("mergeClaudeHooks returned error: %v", err)
 	}
@@ -189,7 +256,7 @@ func TestMergeClaudeHooksMigratesLegacyManagedCommand(t *testing.T) {
 // already-migrated remote is a no-op (skip guard sees the current command).
 func TestMergeClaudeHooksMigrationIsIdempotent(t *testing.T) {
 	const legacy = "env CC_CLIP_MANAGED=1 cc-clip-hook"
-	first, changed, err := mergeClaudeHooks([]byte(`{
+	first, changed, _, err := mergeClaudeHooks([]byte(`{
   "hooks": {
     "Stop": [{"matcher":"","hooks":[{"type":"command","command":"` + legacy + `"}]}],
     "Notification": [{"matcher":"","hooks":[{"type":"command","command":"` + legacy + `"}]}]
@@ -201,7 +268,7 @@ func TestMergeClaudeHooksMigrationIsIdempotent(t *testing.T) {
 	if !changed {
 		t.Fatal("first merge should migrate")
 	}
-	second, changed, err := mergeClaudeHooks(first)
+	second, changed, _, err := mergeClaudeHooks(first)
 	if err != nil {
 		t.Fatalf("second merge: %v", err)
 	}
@@ -236,7 +303,7 @@ func TestMergeClaudeHooksMigrationPreservesSiblingCommands(t *testing.T) {
   }
 }`)
 
-	out, changed, err := mergeClaudeHooks(existing)
+	out, changed, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("mergeClaudeHooks returned error: %v", err)
 	}
@@ -297,7 +364,7 @@ func TestMergeClaudeHooksPreservesOtherHooks(t *testing.T) {
   }
 }`)
 
-	out, changed, err := mergeClaudeHooks(existing)
+	out, changed, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("mergeClaudeHooks returned error: %v", err)
 	}
@@ -313,14 +380,108 @@ func TestMergeClaudeHooksPreservesOtherHooks(t *testing.T) {
 }
 
 func TestMergeClaudeHooksRejectsInvalidJSON(t *testing.T) {
-	if _, _, err := mergeClaudeHooks([]byte(`{"hooks":`)); err == nil {
+	if _, _, _, err := mergeClaudeHooks([]byte(`{"hooks":`)); err == nil {
 		t.Fatal("invalid JSON should be rejected")
 	}
 }
 
 func TestMergeClaudeHooksRejectsMalformedHookSchema(t *testing.T) {
-	if _, _, err := mergeClaudeHooks([]byte(`{"hooks":{"Stop":["not-an-object"]}}`)); err == nil {
+	if _, _, _, err := mergeClaudeHooks([]byte(`{"hooks":{"Stop":["not-an-object"]}}`)); err == nil {
 		t.Fatal("malformed hook schema should be rejected instead of rewritten")
+	}
+}
+
+// TestMergeClaudeHooks_MixedLegacyAndCurrent_StripsLegacyKeepsOneCurrent
+// asserts the P1#1 mixed-state fix: an event holding BOTH the legacy managed
+// command AND the current managed command must be rewritten so the legacy is
+// stripped, leaving EXACTLY ONE current managed command (count==1 per event).
+// The pre-strip skip guard would have left the legacy behind; strip-then-insert
+// repairs it.
+func TestMergeClaudeHooks_MixedLegacyAndCurrent_StripsLegacyKeepsOneCurrent(t *testing.T) {
+	const legacy = "env CC_CLIP_MANAGED=1 cc-clip-hook"
+	existing := []byte(`{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "` + legacy + `"},
+          {"type": "command", "command": "` + claudeManagedHookCommand + `"}
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "` + claudeManagedHookCommand + `"}
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "` + legacy + `"}
+        ]
+      }
+    ]
+  }
+}`)
+
+	out, changed, warnings, err := mergeClaudeHooks(existing)
+	if err != nil {
+		t.Fatalf("mergeClaudeHooks returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("a mixed legacy+current event must be rewritten to drop the legacy command")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("mixed managed state should not warn, got %v", warnings)
+	}
+	text := string(out)
+	if strings.Contains(text, legacy) {
+		t.Fatalf("legacy managed command must be stripped from the mixed event:\n%s", text)
+	}
+	settings := decodeClaudeSettingsForTest(t, out)
+	for _, event := range []string{"Stop", "Notification"} {
+		matchers := settings["hooks"].(map[string]any)[event].([]any)
+		current := 0
+		for _, rawMatcher := range matchers {
+			for _, rawCmd := range rawMatcher.(map[string]any)["hooks"].([]any) {
+				if rawCmd.(map[string]any)["command"] == claudeManagedHookCommand {
+					current++
+				}
+			}
+		}
+		if current != 1 {
+			t.Fatalf("%s must hold exactly one current managed command after merge, got %d:\n%s", event, current, text)
+		}
+	}
+}
+
+// TestMergeClaudeHooks_AlreadyExactlyCurrent_NoChange asserts idempotency: an
+// event consisting of EXACTLY one current managed command (and nothing else
+// managed) must not be rewritten. changed==false and bytes are returned
+// verbatim.
+func TestMergeClaudeHooks_AlreadyExactlyCurrent_NoChange(t *testing.T) {
+	existing := []byte(`{
+  "hooks": {
+    "Stop": [{"matcher":"","hooks":[{"type":"command","command":"` + claudeManagedHookCommand + `"}]}],
+    "Notification": [{"matcher":"","hooks":[{"type":"command","command":"` + claudeManagedHookCommand + `"}]}]
+  }
+}`)
+
+	out, changed, warnings, err := mergeClaudeHooks(existing)
+	if err != nil {
+		t.Fatalf("mergeClaudeHooks returned error: %v", err)
+	}
+	if changed {
+		t.Fatalf("already-exactly-current settings must be a no-op:\n%s", out)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("exact-current settings should not warn, got %v", warnings)
+	}
+	if string(out) != string(existing) {
+		t.Fatalf("no-op merge must return bytes verbatim\nwant:\n%s\ngot:\n%s", existing, out)
 	}
 }
 
@@ -410,12 +571,15 @@ func TestParseRemoteClaudeSettingsProbeIgnoresOuterNoise(t *testing.T) {
 func TestMergeRemoteClaudeSettingsHooksWritesSettings(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
 
-	changed, err := MergeRemoteClaudeSettingsHooks(s)
+	changed, warnings, err := MergeRemoteClaudeSettingsHooks(s)
 	if err != nil {
 		t.Fatalf("MergeRemoteClaudeSettingsHooks returned error: %v", err)
 	}
 	if !changed {
 		t.Fatal("missing settings should be changed")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("clean install should produce no warnings, got %v", warnings)
 	}
 
 	settingsPath := filepath.Join(s.home, ".claude", "settings.json")
@@ -427,7 +591,7 @@ func TestMergeRemoteClaudeSettingsHooksWritesSettings(t *testing.T) {
 		t.Fatalf("settings should contain two managed hooks, got:\n%s", data)
 	}
 
-	changed, err = MergeRemoteClaudeSettingsHooks(s)
+	changed, _, err = MergeRemoteClaudeSettingsHooks(s)
 	if err != nil {
 		t.Fatalf("second MergeRemoteClaudeSettingsHooks returned error: %v", err)
 	}
