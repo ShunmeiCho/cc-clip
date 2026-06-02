@@ -201,13 +201,28 @@ func TestInstallSourceChain_FailureClassPolicy(t *testing.T) {
 			wantCallCount: []int{1, 1},
 		},
 		{
-			name: "all no-op yields idempotent success",
+			name: "all no-op stops at first no-op (idempotent success)",
 			sources: []*mockSource{
 				{name: "a", local: true, out: noOp()},
 				{name: "b", local: true, out: noOp()},
 			},
 			wantOutcome:   OutcomeNoOp,
-			wantCallCount: []int{1, 1},
+			wantSource:    "a",
+			wantCallCount: []int{1, 0},
+		},
+		{
+			// The user-requested guarantee: a no-op from the first source stops the
+			// walk, and a later source that WOULD have installed is never invoked.
+			// Proves no-op is terminal (not merely skipped): outcome is NoOp by "a",
+			// not Installed by "b".
+			name: "first no-op stops walk and does not call later installing source",
+			sources: []*mockSource{
+				{name: "a", local: true, out: noOp()},
+				{name: "b", local: true, out: installed("b", "9")},
+			},
+			wantOutcome:   OutcomeNoOp,
+			wantSource:    "a",
+			wantCallCount: []int{1, 0},
 		},
 		{
 			name: "source returning hard stop directly stops walk",
@@ -221,18 +236,19 @@ func TestInstallSourceChain_FailureClassPolicy(t *testing.T) {
 			wantCallCount: []int{1, 0},
 		},
 		{
-			// A fall-back (NotFound) advances to a no-op final source. The loop
-			// completes naturally with allNoOp=false, exercising the aggregated
-			// exhaustion branch rather than decideNext's last-source hard-stop.
-			name: "fall back then no-op exhausts with aggregated guidance",
+			// A fall-back (NotFound) advances to b, which reports the component
+			// already present (no-op). Because no-op is now terminal success, the
+			// chain returns OutcomeNoOp attributed to b — it does NOT treat the
+			// earlier fall-back as an exhaustion failure.
+			name: "fall back then no-op returns idempotent success",
 			sources: []*mockSource{
 				{name: "a", local: true, out: fellBack(NotFound)},
 				{name: "b", local: true, out: noOp()},
 			},
-			wantOutcome:   OutcomeHardStop,
+			wantOutcome:   OutcomeNoOp,
 			wantFailure:   ClassNone,
+			wantSource:    "b",
 			wantCallCount: []int{1, 1},
-			guidanceHas:   "exhausted",
 		},
 		{
 			// Last source falls back with a non-restricted class and has no

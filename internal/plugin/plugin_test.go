@@ -135,10 +135,10 @@ func TestInjectHostSetsKeyOnObject(t *testing.T) {
 func TestInjectHostFallsBackOnMalformed(t *testing.T) {
 	t.Setenv("CC_CLIP_HOST_ALIAS", "host-x")
 	cases := [][]byte{
-		[]byte(`{invalid`),    // unparseable
+		[]byte(`{invalid`),        // unparseable
 		[]byte(`"just a string"`), // valid JSON but not an object
-		[]byte(`null`),        // JSON null => nil map
-		[]byte(`[1,2,3]`),     // array, not object
+		[]byte(`null`),            // JSON null => nil map
+		[]byte(`[1,2,3]`),         // array, not object
 	}
 	for _, raw := range cases {
 		if got := injectHost(raw); string(got) != string(raw) {

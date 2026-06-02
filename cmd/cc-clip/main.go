@@ -1034,7 +1034,7 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	// Step N4: Install Claude Code hooks in durable settings.json first.
 	// The wrapper remains only as a fallback for settings merge failures.
 	fmt.Println("  [N4] Configuring Claude Code hooks...")
-	configureRemoteClaudeHooks(session, port, opts)
+	claudeHooks := configureRemoteClaudeHooks(session, port, opts)
 
 	// Step N5: Detect and configure Codex notify
 	codexInjected := false
@@ -1063,48 +1063,82 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println("      health probe passed")
 	}
 
-	// Update deploy state: refresh the legacy boolean fields and populate the
-	// per-adapter map for whatever succeeded this connect. Adapters survives
-	// connect cycles and now drives NeedsAdapterVerify so the runner path is
-	// re-validated on the next connect.
-	mergeNotifyDeployState(state, hookInstalled, codexInjected, healthVerified)
+	// Update deploy state: refresh the legacy boolean fields and record per-adapter
+	// truth. claude-notify is marked installed ONLY when the managed runner was
+	// genuinely wired this connect (claudeHooks.adapterInstalled) — not merely
+	// because the cc-clip-hook script exists on disk. Adapters survives connect
+	// cycles and drives NeedsAdapterVerify so the runner path is re-validated next.
+	mergeNotifyDeployState(state, hookInstalled, claudeHooks.adapterInstalled, codexInjected, healthVerified)
 }
 
 // mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify and
-// populates the per-adapter map for adapters that succeeded this connect
-// (hookInstalled -> claude-notify, codexInjected -> codex-notify). Each entry is
-// written with Verified=false so the N6 health probe (via NeedsAdapterVerify)
-// re-validates the new runner path on the next connect. The map is lazily
-// allocated and existing entries are preserved (migrate, not nil-clobber). When
-// neither adapter succeeds, the map is left nil so the omitempty JSON tag keeps
-// first-connect wire output byte-identical to the legacy hard-assignment.
-func mergeNotifyDeployState(state *shim.DeployState, hookInstalled, codexInjected, healthVerified bool) {
+// records per-adapter truth for this connect. The legacy HookInstalled reflects
+// the cc-clip-hook fallback SCRIPT on disk; the claude-notify ADAPTER entry is
+// written installed ONLY when the managed runner is genuinely wired
+// (claudeAdapterInstalled) — decoupling script presence from adapter wiring so
+// the state never over-claims (P3). codexInjected -> codex-notify. Entries are
+// written Verified=false so the N6 probe (via NeedsAdapterVerify) re-validates
+// the runner path next connect; a stale installed claude-notify is downgraded
+// when the runner is not wired this connect. The map is lazily allocated and
+// existing entries are preserved; when neither adapter is wired the map stays nil
+// so omitempty keeps first-connect wire output byte-identical to the legacy
+// hard-assignment.
+func mergeNotifyDeployState(state *shim.DeployState, hookScriptInstalled, claudeAdapterInstalled, codexInjected, healthVerified bool) {
 	if state.Notify == nil {
 		state.Notify = &shim.NotifyDeployState{}
 	}
 	state.Notify.Enabled = true
-	state.Notify.HookInstalled = hookInstalled
+	state.Notify.HookInstalled = hookScriptInstalled
 	state.Notify.CodexInjected = codexInjected
 	state.Notify.HealthVerified = healthVerified
 
-	if hookInstalled || codexInjected {
+	ensureAdapters := func() {
 		if state.Notify.Adapters == nil {
 			state.Notify.Adapters = make(map[shim.AdapterID]*shim.AdapterState)
 		}
 	}
-	if hookInstalled {
+
+	// claude-notify reflects the ACTUAL managed-runner wiring this connect — NOT
+	// the mere presence of the fallback cc-clip-hook script (P3). When the runner
+	// is genuinely wired, record Installed=true (Verified=false forces N6
+	// re-verify). When it is not (opt-out, user-bare deferral, wrapper fallback),
+	// never claim it installed; if a prior connect left a stale Installed=true,
+	// downgrade that entry so the state never over-claims.
+	if claudeAdapterInstalled {
+		ensureAdapters()
 		state.Notify.Adapters[shim.AdapterClaudeNotify] = &shim.AdapterState{
 			Installed: true, Source: install.SourceConfig, Verified: false,
 		}
+	} else if existing, ok := state.Notify.Adapters[shim.AdapterClaudeNotify]; ok {
+		existing.Installed = false
+		existing.Verified = false
 	}
+
 	if codexInjected {
+		ensureAdapters()
 		state.Notify.Adapters[shim.AdapterCodexNotify] = &shim.AdapterState{
 			Installed: true, Source: install.SourceConfig, Verified: false,
 		}
 	}
 }
 
-func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) {
+// claudeHooksResult reports what configureRemoteClaudeHooks actually achieved so
+// the deploy state records the claude-notify adapter as installed ONLY when the
+// managed plugin runner is genuinely wired into ~/.claude/settings.json — not
+// merely because the cc-clip-hook fallback script exists on disk.
+type claudeHooksResult struct {
+	// adapterInstalled is true ONLY when the managed runner is present in
+	// settings.json after this call (freshly merged OR already present, with no
+	// per-event skip). It is false for: --no-hooks, the persistent opt-out
+	// marker, a user-bare hook that suppressed insertion (any merge warning), and
+	// the wrapper/manual fallback (the wrapper is not the plugin-runner adapter).
+	adapterInstalled bool
+	// usedFallback is true when settings merge failed and the legacy wrapper (or
+	// manual config) path was taken instead of the durable settings runner.
+	usedFallback bool
+}
+
+func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) claudeHooksResult {
 	if opts.noHooks {
 		if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
 			log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
@@ -1121,7 +1155,7 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 		} else if removed {
 			fmt.Println("      legacy claude wrapper removed; original entry restored")
 		}
-		return
+		return claudeHooksResult{}
 	}
 
 	if opts.hooks {
@@ -1144,7 +1178,7 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 				fmt.Println("      legacy claude wrapper removed; original entry restored")
 			}
 			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
-			return
+			return claudeHooksResult{}
 		}
 	}
 
@@ -1163,7 +1197,7 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 		} else if removed {
 			fmt.Println("      legacy claude wrapper removed; original entry restored")
 		}
-		return
+		return claudeHooksResult{adapterInstalled: len(warnings) == 0}
 	}
 
 	log.Printf("      warning: failed to merge ~/.claude/settings.json hooks: %v", err)
@@ -1179,6 +1213,7 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 	} else {
 		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
 	}
+	return claudeHooksResult{usedFallback: true}
 }
 
 func syncNotificationNonce(session *shim.SSHSession, port int, daemonToken, host string) (string, error) {

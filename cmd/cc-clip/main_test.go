@@ -503,7 +503,7 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 			},
 		}
 
-		mergeNotifyDeployState(state, true, true, true)
+		mergeNotifyDeployState(state, true, true, true, true)
 
 		if state.Notify == nil {
 			t.Fatal("Notify must not be nil after merge")
@@ -523,7 +523,7 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("allocates struct and populates claude adapter on nil Notify", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, true, false, false)
+		mergeNotifyDeployState(state, true, true, false, false)
 
 		if state.Notify == nil {
 			t.Fatal("Notify must be allocated when nil")
@@ -534,8 +534,9 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 		if state.Notify.CodexInjected || state.Notify.HealthVerified {
 			t.Fatalf("false bools should stay false: %+v", state.Notify)
 		}
-		// 3c: hookInstalled=true populates the claude adapter; codexInjected=false
-		// leaves the codex adapter absent.
+		// claudeAdapterInstalled=true populates the claude adapter; codexInjected=false
+		// leaves the codex adapter absent. hookScriptInstalled=true sets the legacy
+		// HookInstalled bool but does NOT by itself populate the adapter (P3).
 		if state.Notify.Adapters == nil {
 			t.Fatal("Adapters must be allocated when an adapter succeeded")
 		}
@@ -553,7 +554,7 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("populates both adapters when both succeed", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, true, true, true)
+		mergeNotifyDeployState(state, true, true, true, true)
 
 		if state.Notify == nil || state.Notify.Adapters == nil {
 			t.Fatal("Adapters must be populated when both adapters succeed")
@@ -580,13 +581,37 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("nil Adapters when neither adapter succeeds", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, false, false, false)
+		mergeNotifyDeployState(state, true, false, false, false)
 
 		if state.Notify == nil {
 			t.Fatal("Notify must be allocated when nil")
 		}
 		if state.Notify.Adapters != nil {
 			t.Fatalf("expected nil Adapters when nothing installed, got %+v", state.Notify.Adapters)
+		}
+	})
+
+	// P3: when the managed runner is NOT wired this connect (opt-out / user-bare /
+	// wrapper fallback) but a prior connect recorded claude-notify installed, the
+	// stale entry must be downgraded to Installed=false so the state does not
+	// over-claim. The cc-clip-hook script may still be on disk (hookScript=true).
+	t.Run("downgrades stale claude adapter when runner not wired", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterClaudeNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, true, false, false, false)
+
+		claude := state.Notify.Adapters[shim.AdapterClaudeNotify]
+		if claude == nil {
+			t.Fatal("stale claude adapter entry should remain (downgraded, not deleted)")
+		}
+		if claude.Installed || claude.Verified {
+			t.Fatalf("stale claude adapter must be downgraded to Installed=false/Verified=false: %+v", claude)
 		}
 	})
 }

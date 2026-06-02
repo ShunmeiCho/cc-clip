@@ -158,9 +158,12 @@ trap - EXIT`
 //
 //  1. USER-BARE DETECTION (P2#3): if the event already holds a user-authored
 //     bare cc-clip-hook (a command CONTAINING "cc-clip-hook" but WITHOUT the
-//     CC_CLIP_MANAGED=1 ownership prefix), cc-clip skips insertion and strips
-//     nothing for that event, recording a warning so the operator can resolve
-//     the double-notify risk.
+//     CC_CLIP_MANAGED=1 ownership prefix), cc-clip does NOT insert the managed
+//     runner (the operator owns notification) — but it STILL strips any cc-clip
+//     owner-prefix managed command (legacy or current) from that event, because
+//     a mixed user-bare-plus-stale-managed state would otherwise double-notify.
+//     The user's bare hook lacks the ownership prefix and is preserved. A
+//     warning is recorded so the operator knows cc-clip deferred to their hook.
 //  2. STRIP-THEN-INSERT (P1#1 mixed-state fix): otherwise strip every
 //     owner-prefix managed command (legacy + current) from the event. If the
 //     event consisted of EXACTLY one managed command and it was already the
@@ -191,14 +194,24 @@ func mergeClaudeHooks(existing []byte) ([]byte, bool, []string, error) {
 		}
 
 		// P2#3: a user-authored bare cc-clip-hook means the operator already
-		// wired their own notification. Do not insert the managed runner and do
-		// not strip the user's hook; warn and move on.
+		// wired their own notification. Do not insert the managed runner, but
+		// STILL strip any cc-clip owner-prefix managed command from this event so
+		// a mixed (user-bare + stale managed) state cannot double-notify. The
+		// user's bare hook lacks the ownership prefix and survives the strip.
 		userBare, err := claudeEventHasUserBareCcClipHook(event, eventHooks)
 		if err != nil {
 			return nil, false, nil, err
 		}
 		if userBare {
-			warnings = append(warnings, fmt.Sprintf("detected a user-authored cc-clip-hook for %s; skipping cc-clip managed hook to avoid double-notify (remove it or keep relying on your own hook)", event))
+			stripped, removed, err := stripManagedFromEvent(eventHooks, event)
+			if err != nil {
+				return nil, false, nil, err
+			}
+			warnings = append(warnings, fmt.Sprintf("detected a user-authored cc-clip-hook for %s; deferring to it and not installing the managed runner (any cc-clip-managed hook for this event was stripped to avoid double-notify)", event))
+			if removed {
+				hooks[event] = stripped
+				changed = true
+			}
 			continue
 		}
 

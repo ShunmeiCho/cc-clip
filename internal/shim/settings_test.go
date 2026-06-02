@@ -193,6 +193,64 @@ func TestMergeClaudeHooks_UserBareHook_OnlyOneEventSkips(t *testing.T) {
 	}
 }
 
+// TestMergeClaudeHooks_UserBareHook_StripsCoLocatedManaged asserts the P2 fix:
+// when an event holds BOTH a user-authored bare cc-clip-hook AND a cc-clip
+// owner-prefix managed command (legacy or current), cc-clip defers to the user's
+// hook (does NOT insert/keep the managed runner) but STILL strips the
+// owner-prefix managed command so the two cannot double-notify. The bare hook
+// survives, changed is true (a managed command was removed), and a per-event
+// warning is recorded. This is the mixed state the older user-bare tests did not
+// cover — their fixtures had no co-located managed command, so they were no-ops.
+func TestMergeClaudeHooks_UserBareHook_StripsCoLocatedManaged(t *testing.T) {
+	const legacy = "env CC_CLIP_MANAGED=1 cc-clip-hook"
+	existing := []byte(`{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "cc-clip-hook"},
+          {"type": "command", "command": "` + legacy + `"}
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "cc-clip-hook"},
+          {"type": "command", "command": "` + claudeManagedHookCommand + `"}
+        ]
+      }
+    ]
+  }
+}`)
+
+	out, changed, warnings, err := mergeClaudeHooks(existing)
+	if err != nil {
+		t.Fatalf("mergeClaudeHooks returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("a user-bare hook co-located with a managed command must strip the managed command (changed)")
+	}
+	text := string(out)
+	// Both owner-prefix managed commands (legacy AND current) must be stripped.
+	if strings.Contains(text, legacy) {
+		t.Fatalf("legacy managed command must be stripped from the user-bare event:\n%s", text)
+	}
+	if strings.Contains(text, claudeManagedHookCommand) {
+		t.Fatalf("managed runner must NOT remain (nor be inserted) when a user bare hook owns the event:\n%s", text)
+	}
+	// The user's bare hook survives verbatim in both events.
+	if got := strings.Count(text, `"cc-clip-hook"`); got != 2 {
+		t.Fatalf("both user bare cc-clip-hook commands must be preserved (2), got %d:\n%s", got, text)
+	}
+	// A warning is recorded for each affected managed event.
+	if len(warnings) != 2 {
+		t.Fatalf("expected one warning per managed event (2), got %d: %v", len(warnings), warnings)
+	}
+}
+
 // TestMergeClaudeHooksMigratesLegacyManagedCommand asserts the strip-before-insert
 // forward migration: a settings.json carrying the LEGACY managed command
 // (env CC_CLIP_MANAGED=1 cc-clip-hook) for Stop/Notification must be rewritten so

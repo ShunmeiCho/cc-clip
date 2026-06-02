@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/shunmei/cc-clip/internal/exitcode"
 )
@@ -143,10 +142,10 @@ type InstallSourceChain struct {
 }
 
 // Install walks sources in order applying the FailureClass policy.
-// Returns the winning OutcomeInstalled, an idempotent OutcomeNoOp if every
-// source was a no-op, or OutcomeHardStop (on a non-fallback failure or on
-// exhaustion). Never silently retries a remote source after a refusal, and
-// never falls back after a VerifyFailed.
+// Returns the winning OutcomeInstalled, an idempotent OutcomeNoOp as soon as a
+// source reports the component already present, or OutcomeHardStop (on a
+// non-fallback failure or exhaustion). Never silently retries a remote source
+// after a refusal, and never falls back after a VerifyFailed.
 func (c *InstallSourceChain) Install(ctx context.Context, req InstallRequest) InstallOutcome {
 	if len(c.sources) == 0 {
 		return InstallOutcome{
@@ -156,9 +155,6 @@ func (c *InstallSourceChain) Install(ctx context.Context, req InstallRequest) In
 			Err:      errors.New("install: empty source chain"),
 		}
 	}
-
-	allNoOp := true
-	var agg []string // per-source failure context for exhaustion guidance
 
 	for i, src := range c.sources {
 		if err := ctx.Err(); err != nil { // honor cancellation, but as a HardStop
@@ -174,15 +170,15 @@ func (c *InstallSourceChain) Install(ctx context.Context, req InstallRequest) In
 		out.SourceName = nameOr(out.SourceName, src.Name())
 
 		switch out.Outcome {
-		case OutcomeInstalled:
-			return out // first success stops the walk
-		case OutcomeNoOp:
-			continue // idempotent; keep allNoOp true
+		case OutcomeInstalled, OutcomeNoOp:
+			// Terminal success: the source either installed the component or
+			// reported it already present (idempotent no-op). Either way the
+			// install goal is satisfied, so stop the walk — a later source (e.g.
+			// bundled/config) must NOT run after marketplace already succeeded.
+			return out
 		case OutcomeHardStop:
 			return out // source already decided to stop (e.g. VerifyFailed, refusal+no-local-next)
 		case OutcomeFellBack:
-			allNoOp = false
-			agg = append(agg, fmt.Sprintf("%s: %s", src.Name(), out.Failure))
 			if _, stop, stopOut := c.decideNext(i, out.Failure); stop {
 				return stopOut // policy says do NOT advance
 			}
@@ -197,13 +193,15 @@ func (c *InstallSourceChain) Install(ctx context.Context, req InstallRequest) In
 		}
 	}
 
-	if allNoOp {
-		return InstallOutcome{Outcome: OutcomeNoOp, Failure: ClassNone} // every source idempotent
-	}
+	// Unreachable under the current fall-back policy: the final source always
+	// terminates the walk (Installed/NoOp/HardStop return inline, and decideNext
+	// hard-stops at the last index for every FailureClass). Retained as a
+	// defensive total return so the function stays well-typed if the policy ever
+	// changes to permit advancing past the last source.
 	return InstallOutcome{
 		Outcome:  OutcomeHardStop,
 		Failure:  ClassNone,
-		Guidance: "all install sources exhausted: " + strings.Join(agg, "; "),
+		Guidance: "install: source chain exhausted without success",
 		Err:      errors.New("install: source chain exhausted without success"),
 	}
 }
