@@ -503,7 +503,12 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 			},
 		}
 
-		mergeNotifyDeployState(state, true, true, true, true)
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: true,
+			healthVerified: true,
+		})
 
 		if state.Notify == nil {
 			t.Fatal("Notify must not be nil after merge")
@@ -523,7 +528,12 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("allocates struct and populates claude adapter on nil Notify", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, true, true, false, false)
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
 
 		if state.Notify == nil {
 			t.Fatal("Notify must be allocated when nil")
@@ -534,9 +544,10 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 		if state.Notify.CodexInjected || state.Notify.HealthVerified {
 			t.Fatalf("false bools should stay false: %+v", state.Notify)
 		}
-		// claudeAdapterInstalled=true populates the claude adapter; codexInjected=false
-		// leaves the codex adapter absent. hookScriptInstalled=true sets the legacy
-		// HookInstalled bool but does NOT by itself populate the adapter (P3).
+		// claudeWired=true populates the claude adapter; codex attempted but not
+		// injected leaves the codex adapter absent (no stale entry to downgrade).
+		// hookScriptInstalled=true sets the legacy HookInstalled bool but does NOT
+		// by itself populate the adapter (P3).
 		if state.Notify.Adapters == nil {
 			t.Fatal("Adapters must be allocated when an adapter succeeded")
 		}
@@ -554,7 +565,12 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("populates both adapters when both succeed", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, true, true, true, true)
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: true,
+			healthVerified: true,
+		})
 
 		if state.Notify == nil || state.Notify.Adapters == nil {
 			t.Fatal("Adapters must be populated when both adapters succeed")
@@ -581,7 +597,12 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 	t.Run("nil Adapters when neither adapter succeeds", func(t *testing.T) {
 		state := &shim.DeployState{Notify: nil}
 
-		mergeNotifyDeployState(state, true, false, false, false)
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
 
 		if state.Notify == nil {
 			t.Fatal("Notify must be allocated when nil")
@@ -604,7 +625,12 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 			},
 		}
 
-		mergeNotifyDeployState(state, true, false, false, false)
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
 
 		claude := state.Notify.Adapters[shim.AdapterClaudeNotify]
 		if claude == nil {
@@ -612,6 +638,65 @@ func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
 		}
 		if claude.Installed || claude.Verified {
 			t.Fatalf("stale claude adapter must be downgraded to Installed=false/Verified=false: %+v", claude)
+		}
+	})
+
+	// Codex symmetry: when Codex is attempted (pre-Step-5 it always is) but the
+	// config.toml injection did not succeed, a stale codex-notify entry from a
+	// prior connect must be downgraded so NeedsAdapterInstall does not wrongly
+	// skip a re-attempt.
+	t.Run("codex attempted but not injected downgrades stale adapter", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterCodexNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
+
+		codex := state.Notify.Adapters[shim.AdapterCodexNotify]
+		if codex == nil {
+			t.Fatal("stale codex adapter entry should remain (downgraded, not deleted)")
+		}
+		if codex.Installed || codex.Verified {
+			t.Fatalf("stale codex adapter must be downgraded to Installed=false/Verified=false: %+v", codex)
+		}
+	})
+
+	// Target-aware preservation (Step 5 semantics, exercised now): when Codex is
+	// NOT attempted this connect (e.g. only --claude requested), a prior
+	// codex-notify entry must be PRESERVED untouched — not downgraded — because
+	// this connect did not target Codex. The legacy CodexInjected is likewise kept.
+	t.Run("codex target not requested preserves existing adapter", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				CodexInjected: true,
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterCodexNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: false, codexInjected: false,
+			healthVerified: true,
+		})
+
+		codex := state.Notify.Adapters[shim.AdapterCodexNotify]
+		if codex == nil || !codex.Installed || !codex.Verified {
+			t.Fatalf("un-attempted codex adapter must be preserved untouched: %+v", codex)
+		}
+		if !state.Notify.CodexInjected {
+			t.Fatalf("legacy CodexInjected must be preserved when codex not attempted: %+v", state.Notify)
 		}
 	})
 }

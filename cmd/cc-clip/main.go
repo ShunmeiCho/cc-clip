@@ -1064,61 +1064,82 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	}
 
 	// Update deploy state: refresh the legacy boolean fields and record per-adapter
-	// truth. claude-notify is marked installed ONLY when the managed runner was
-	// genuinely wired this connect (claudeHooks.adapterInstalled) — not merely
-	// because the cc-clip-hook script exists on disk. Adapters survives connect
-	// cycles and drives NeedsAdapterVerify so the runner path is re-validated next.
-	mergeNotifyDeployState(state, hookInstalled, claudeHooks.adapterInstalled, codexInjected, healthVerified)
+	// truth. Each adapter is marked installed ONLY when genuinely wired this connect
+	// (claude-notify: managed runner in settings.json; codex-notify: config.toml
+	// injected) — not merely because the cc-clip-hook script exists. Both adapters
+	// are attempted on every pre-Step-5 connect (N4 Claude, N5 Codex), so a stale
+	// installed entry is downgraded when wiring did not succeed; Step 5 gates
+	// attempted on DeployTargets so un-targeted adapters are preserved instead.
+	mergeNotifyDeployState(state, notifyOutcome{
+		hookScriptInstalled: hookInstalled,
+		claudeAttempted:     true,
+		claudeWired:         claudeHooks.adapterInstalled,
+		codexAttempted:      true,
+		codexInjected:       codexInjected,
+		healthVerified:      healthVerified,
+	})
+}
+
+// notifyOutcome captures what this connect attempted and achieved for each notify
+// adapter so mergeNotifyDeployState can record per-adapter truth without
+// over-claiming. "attempted" means this connect targeted the adapter — pre-Step-5
+// both are always attempted (N4 configures Claude hooks, N5 probes Codex); Step 5
+// gates them on DeployTargets. When an adapter is NOT attempted, its existing
+// deploy-state entry is preserved untouched.
+type notifyOutcome struct {
+	hookScriptInstalled bool // cc-clip-hook fallback script installed on disk (N3)
+	claudeAttempted     bool // this connect configured Claude hooks (N4)
+	claudeWired         bool // managed runner genuinely wired in ~/.claude/settings.json
+	codexAttempted      bool // this connect probed/attempted Codex notify (N5)
+	codexInjected       bool // ~/.codex/config.toml notify successfully injected
+	healthVerified      bool // N6 health probe passed
 }
 
 // mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify and
-// records per-adapter truth for this connect. The legacy HookInstalled reflects
-// the cc-clip-hook fallback SCRIPT on disk; the claude-notify ADAPTER entry is
-// written installed ONLY when the managed runner is genuinely wired
-// (claudeAdapterInstalled) — decoupling script presence from adapter wiring so
-// the state never over-claims (P3). codexInjected -> codex-notify. Entries are
-// written Verified=false so the N6 probe (via NeedsAdapterVerify) re-validates
-// the runner path next connect; a stale installed claude-notify is downgraded
-// when the runner is not wired this connect. The map is lazily allocated and
-// existing entries are preserved; when neither adapter is wired the map stays nil
-// so omitempty keeps first-connect wire output byte-identical to the legacy
-// hard-assignment.
-func mergeNotifyDeployState(state *shim.DeployState, hookScriptInstalled, claudeAdapterInstalled, codexInjected, healthVerified bool) {
+// records per-adapter truth for this connect via applyAdapterState. The legacy
+// HookInstalled reflects the cc-clip-hook fallback SCRIPT on disk; the adapter
+// entries reflect ACTUAL wiring, decoupled from script presence so the state
+// never over-claims (P3). CodexInjected is refreshed ONLY when Codex was
+// attempted, so the legacy field never contradicts a preserved adapter entry.
+func mergeNotifyDeployState(state *shim.DeployState, o notifyOutcome) {
 	if state.Notify == nil {
 		state.Notify = &shim.NotifyDeployState{}
 	}
 	state.Notify.Enabled = true
-	state.Notify.HookInstalled = hookScriptInstalled
-	state.Notify.CodexInjected = codexInjected
-	state.Notify.HealthVerified = healthVerified
-
-	ensureAdapters := func() {
-		if state.Notify.Adapters == nil {
-			state.Notify.Adapters = make(map[shim.AdapterID]*shim.AdapterState)
-		}
+	state.Notify.HookInstalled = o.hookScriptInstalled
+	state.Notify.HealthVerified = o.healthVerified
+	if o.codexAttempted {
+		state.Notify.CodexInjected = o.codexInjected
 	}
 
-	// claude-notify reflects the ACTUAL managed-runner wiring this connect — NOT
-	// the mere presence of the fallback cc-clip-hook script (P3). When the runner
-	// is genuinely wired, record Installed=true (Verified=false forces N6
-	// re-verify). When it is not (opt-out, user-bare deferral, wrapper fallback),
-	// never claim it installed; if a prior connect left a stale Installed=true,
-	// downgrade that entry so the state never over-claims.
-	if claudeAdapterInstalled {
-		ensureAdapters()
-		state.Notify.Adapters[shim.AdapterClaudeNotify] = &shim.AdapterState{
+	applyAdapterState(state.Notify, shim.AdapterClaudeNotify, o.claudeAttempted, o.claudeWired)
+	applyAdapterState(state.Notify, shim.AdapterCodexNotify, o.codexAttempted, o.codexInjected)
+}
+
+// applyAdapterState records one adapter's per-connect truth without over-claiming:
+//   - !attempted          -> preserve any existing entry untouched (not targeted
+//     this connect; Step 5 gates attempted on DeployTargets).
+//   - attempted && wired  -> Installed=true, Source=config, Verified=false (the N6
+//     probe re-verifies the runner path next connect).
+//   - attempted && !wired -> downgrade a stale installed entry to Installed=false
+//     (attempted this connect but not wired); absence already means "not
+//     installed", so no entry is created.
+func applyAdapterState(notify *shim.NotifyDeployState, id shim.AdapterID, attempted, wired bool) {
+	if !attempted {
+		return
+	}
+	if wired {
+		if notify.Adapters == nil {
+			notify.Adapters = make(map[shim.AdapterID]*shim.AdapterState)
+		}
+		notify.Adapters[id] = &shim.AdapterState{
 			Installed: true, Source: install.SourceConfig, Verified: false,
 		}
-	} else if existing, ok := state.Notify.Adapters[shim.AdapterClaudeNotify]; ok {
+		return
+	}
+	if existing, ok := notify.Adapters[id]; ok {
 		existing.Installed = false
 		existing.Verified = false
-	}
-
-	if codexInjected {
-		ensureAdapters()
-		state.Notify.Adapters[shim.AdapterCodexNotify] = &shim.AdapterState{
-			Installed: true, Source: install.SourceConfig, Verified: false,
-		}
 	}
 }
 
