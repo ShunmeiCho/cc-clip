@@ -28,31 +28,37 @@ func Run(name string, port int, stdin io.Reader, stdout io.Writer) error {
 	}
 }
 
-// runClaudeNotify reads raw Claude hook JSON from stdin and forwards it
-// unchanged to /notify using the hook content type, reproducing the
-// cc-clip-hook bash flow's payload semantics (the daemon classifies the raw
-// hook JSON). Host injection stays the bash script's job in the deployed path.
+// runClaudeNotify reads raw Claude hook JSON from stdin, injects the host alias
+// (reproducing the cc-clip-hook bash flow, hook_template.go:24-31), and forwards
+// it to /notify using the hook content type so the daemon classifies it. It is
+// fail-soft: neither a stdin read error nor a POST failure propagates, matching
+// the cc-clip-hook always-exit-0 contract for hook contexts.
 func runClaudeNotify(port int, stdin io.Reader) error {
 	raw, err := io.ReadAll(stdin)
 	if err != nil {
-		return fmt.Errorf("failed to read hook payload from stdin: %w", err)
+		return nil // fail-soft: never block the hook (matches cc-clip-hook exit 0)
 	}
-	return postHookPayload(port, raw)
+	_ = postHookPayload(port, injectHost(raw)) // POST failure must not propagate
+	return nil
 }
 
 // runCodexNotify reads the Codex notify JSON from stdin, parses it into a
 // generic message, and posts it. This reproduces cmdNotify's
-// --from-codex-stdin parse+post core.
+// --from-codex-stdin parse+post core. It is fail-soft: a read error, parse
+// error, or POST failure must NOT propagate, since codex hook contexts require
+// exit 0 (mirrors antigravity's non-blocking posture but without the
+// decision-JSON stdout that codex hooks do not expect).
 func runCodexNotify(port int, stdin io.Reader) error {
 	b, err := io.ReadAll(stdin)
 	if err != nil {
-		return fmt.Errorf("failed to read codex payload from stdin: %w", err)
+		return nil
 	}
-	parsed, err := parseCodexNotifyPayload(string(b))
-	if err != nil {
-		return fmt.Errorf("invalid codex notify payload: %w", err)
+	parsed, perr := parseCodexNotifyPayload(string(b))
+	if perr != nil {
+		return nil // fail-soft: invalid payload must not block the agent
 	}
-	return PostNotification(port, parsed)
+	_ = PostNotification(port, parsed)
+	return nil
 }
 
 // runAntigravityNotify parses stdin as a codex-style payload and posts the

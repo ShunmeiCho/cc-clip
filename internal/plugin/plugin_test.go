@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -36,27 +37,186 @@ func drainOne(t *testing.T, ch <-chan daemon.NotifyEnvelope) daemon.NotifyEnvelo
 	}
 }
 
+// codexParseGolden is the cross-check contract for the duplicated
+// parseCodexNotifyPayload copies (internal/plugin here + package main). The
+// golden values represent main.parseCodexNotifyPayload's output. The IDENTICAL
+// table is driven against the main copy in
+// cmd/cc-clip/main_test.go:TestParseCodexNotifyPayloadGolden. If either copy
+// drifts, its test fails. KEEP THESE TWO TABLES IN SYNC.
+var codexParseGolden = []struct {
+	name      string
+	input     string
+	wantErr   bool
+	wantTitle string
+	wantBody  string
+	wantUrg   int
+	wantVer   bool
+}{
+	{name: "valid", input: `{"last-assistant-message":"hello world"}`, wantTitle: "Codex", wantBody: "hello world", wantUrg: 1, wantVer: true},
+	{name: "empty message", input: `{"last-assistant-message":""}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "missing field", input: `{"some-other-field":"value"}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "invalid json", input: `{invalid`, wantErr: true},
+}
+
 // TestCodexNotifyParseMatchesMainParser guards the duplicated parser copy: the
 // plugin package's parseCodexNotifyPayload must produce the same fields that
-// main.parseCodexNotifyPayload produces today.
+// main.parseCodexNotifyPayload produces today. It drives the SAME golden table as
+// cmd/cc-clip/main_test.go:TestParseCodexNotifyPayloadGolden so any drift between
+// the two unexported copies fails this test (or the main-side test).
 func TestCodexNotifyParseMatchesMainParser(t *testing.T) {
-	msg, err := parseCodexNotifyPayload(`{"last-assistant-message":"hello world"}`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if msg.Title != "Codex" {
-		t.Fatalf("title = %q, want %q", msg.Title, "Codex")
-	}
-	if msg.Body != "hello world" {
-		t.Fatalf("body = %q, want %q", msg.Body, "hello world")
-	}
-	if msg.Urgency != 1 {
-		t.Fatalf("urgency = %d, want 1", msg.Urgency)
-	}
-	if !msg.Verified {
-		t.Fatal("Verified should be true")
+	for _, tt := range codexParseGolden {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := parseCodexNotifyPayload(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if msg.Title != tt.wantTitle {
+				t.Fatalf("title = %q, want %q", msg.Title, tt.wantTitle)
+			}
+			if msg.Body != tt.wantBody {
+				t.Fatalf("body = %q, want %q", msg.Body, tt.wantBody)
+			}
+			if msg.Urgency != tt.wantUrg {
+				t.Fatalf("urgency = %d, want %d", msg.Urgency, tt.wantUrg)
+			}
+			if msg.Verified != tt.wantVer {
+				t.Fatalf("verified = %v, want %v", msg.Verified, tt.wantVer)
+			}
+		})
 	}
 }
+
+// TestHostAliasPrefersEnv asserts hostAlias honors CC_CLIP_HOST_ALIAS first,
+// matching the bash hook's ${CC_CLIP_HOST_ALIAS:-$(hostname -s)} precedence.
+func TestHostAliasPrefersEnv(t *testing.T) {
+	t.Setenv("CC_CLIP_HOST_ALIAS", "  my-alias  ")
+	if got := hostAlias(); got != "my-alias" {
+		t.Fatalf("hostAlias() = %q, want trimmed env value %q", got, "my-alias")
+	}
+}
+
+// TestHostAliasFallsBackToShortHostname asserts that with no env override,
+// hostAlias falls back to a short (domain-stripped) hostname, approximating
+// `hostname -s`.
+func TestHostAliasFallsBackToShortHostname(t *testing.T) {
+	t.Setenv("CC_CLIP_HOST_ALIAS", "")
+	got := hostAlias()
+	if strings.Contains(got, ".") {
+		t.Fatalf("hostAlias() = %q, want domain-stripped short host (no dot)", got)
+	}
+}
+
+// TestInjectHostSetsKeyOnObject asserts injectHost adds _cc_clip_host to a JSON
+// object payload, reproducing the bash hook's python3 injection.
+func TestInjectHostSetsKeyOnObject(t *testing.T) {
+	t.Setenv("CC_CLIP_HOST_ALIAS", "host-x")
+	out := injectHost([]byte(`{"hook_event_name":"Stop"}`))
+	var d map[string]interface{}
+	if err := json.Unmarshal(out, &d); err != nil {
+		t.Fatalf("injected output not valid JSON: %v (out=%s)", err, out)
+	}
+	if d["_cc_clip_host"] != "host-x" {
+		t.Fatalf("_cc_clip_host = %v, want host-x", d["_cc_clip_host"])
+	}
+	if d["hook_event_name"] != "Stop" {
+		t.Fatalf("original field lost: %+v", d)
+	}
+}
+
+// TestInjectHostFallsBackOnMalformed asserts injectHost returns the ORIGINAL raw
+// bytes unchanged when the payload is not a JSON object, matching the bash
+// `|| echo "$_payload"` fallback so malformed/non-object payloads still post.
+func TestInjectHostFallsBackOnMalformed(t *testing.T) {
+	t.Setenv("CC_CLIP_HOST_ALIAS", "host-x")
+	cases := [][]byte{
+		[]byte(`{invalid`),    // unparseable
+		[]byte(`"just a string"`), // valid JSON but not an object
+		[]byte(`null`),        // JSON null => nil map
+		[]byte(`[1,2,3]`),     // array, not object
+	}
+	for _, raw := range cases {
+		if got := injectHost(raw); string(got) != string(raw) {
+			t.Fatalf("injectHost(%s) = %s, want unchanged original", raw, got)
+		}
+	}
+}
+
+// TestRunClaudeNotifyInjectsHost asserts Run("claude-notify") injects the host
+// alias into the forwarded hook JSON (3b-1). The daemon reads _cc_clip_host into
+// the envelope's Host field.
+func TestRunClaudeNotifyInjectsHost(t *testing.T) {
+	t.Setenv("CC_CLIP_HOST_ALIAS", "remote-box")
+	port, srv := newNotifyServerWithChannel(t)
+
+	stdin := strings.NewReader(`{"hook_event_name":"Stop","stop_hook_reason":"stop_at_end_of_turn","last_assistant_message":"hi"}`)
+	var stdout strings.Builder
+	if err := Run(AdapterClaudeNotify, port, stdin, &stdout); err != nil {
+		t.Fatalf("Run claude-notify failed: %v", err)
+	}
+
+	env := drainOne(t, srv.NotifyChannel())
+	if env.Host != "remote-box" {
+		t.Fatalf("env.Host = %q, want remote-box (proves host injection)", env.Host)
+	}
+}
+
+// TestRunClaudeNotifyFailSoftOnReadError asserts a stdin read error does NOT
+// propagate (3b-1 fail-soft: the hook context requires exit 0).
+func TestRunClaudeNotifyFailSoftOnReadError(t *testing.T) {
+	if err := runClaudeNotify(18339, errReader{}); err != nil {
+		t.Fatalf("runClaudeNotify must be fail-soft on read error, got %v", err)
+	}
+}
+
+// TestRunClaudeNotifyFailSoftOnPostFailure asserts a POST failure (missing nonce)
+// does NOT propagate from runClaudeNotify (3b-1 fail-soft).
+func TestRunClaudeNotifyFailSoftOnPostFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // empty => nonce file missing => POST fails
+
+	stdin := strings.NewReader(`{"hook_event_name":"Stop"}`)
+	if err := runClaudeNotify(1, stdin); err != nil {
+		t.Fatalf("runClaudeNotify must not propagate POST failure, got %v", err)
+	}
+}
+
+// TestRunCodexNotifyFailSoftOnParseError asserts an invalid payload does NOT
+// propagate from runCodexNotify (3b-2 fail-soft).
+func TestRunCodexNotifyFailSoftOnParseError(t *testing.T) {
+	stdin := strings.NewReader(`{invalid`)
+	if err := runCodexNotify(18339, stdin); err != nil {
+		t.Fatalf("runCodexNotify must be fail-soft on parse error, got %v", err)
+	}
+}
+
+// TestRunCodexNotifyFailSoftOnPostFailure asserts a POST failure (missing nonce)
+// does NOT propagate from runCodexNotify (3b-2 fail-soft).
+func TestRunCodexNotifyFailSoftOnPostFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // empty => nonce file missing => POST fails
+
+	stdin := strings.NewReader(`{"last-assistant-message":"hi"}`)
+	if err := runCodexNotify(1, stdin); err != nil {
+		t.Fatalf("runCodexNotify must not propagate POST failure, got %v", err)
+	}
+}
+
+// errReader always fails, simulating a broken stdin.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errReadFail }
+
+var errReadFail = errReadFailType("simulated read failure")
+
+type errReadFailType string
+
+func (e errReadFailType) Error() string { return string(e) }
 
 func TestCodexNotifyParseRejectsInvalidJSON(t *testing.T) {
 	if _, err := parseCodexNotifyPayload(`{invalid`); err == nil {

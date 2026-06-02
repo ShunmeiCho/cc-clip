@@ -432,6 +432,115 @@ func TestParseCodexNotifyPayloadReturnType(t *testing.T) {
 	var _ daemon.GenericMessagePayload = msg
 }
 
+// codexParseGolden is the cross-check contract for the duplicated
+// parseCodexNotifyPayload copies (package main here + internal/plugin). The
+// golden values represent main.parseCodexNotifyPayload's output. The IDENTICAL
+// table is driven against the plugin copy in
+// internal/plugin/plugin_test.go:TestCodexNotifyParseMatchesMainParser. If
+// either copy drifts, its test fails. KEEP THESE TWO TABLES IN SYNC.
+var codexParseGolden = []struct {
+	name      string
+	input     string
+	wantErr   bool
+	wantTitle string
+	wantBody  string
+	wantUrg   int
+	wantVer   bool
+}{
+	{name: "valid", input: `{"last-assistant-message":"hello world"}`, wantTitle: "Codex", wantBody: "hello world", wantUrg: 1, wantVer: true},
+	{name: "empty message", input: `{"last-assistant-message":""}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "missing field", input: `{"some-other-field":"value"}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "invalid json", input: `{invalid`, wantErr: true},
+}
+
+// TestParseCodexNotifyPayloadGolden pins main.parseCodexNotifyPayload's output
+// against the shared golden table. It is the main-side half of the cross-check
+// contract (the plugin-side half lives in internal/plugin/plugin_test.go).
+func TestParseCodexNotifyPayloadGolden(t *testing.T) {
+	for _, tt := range codexParseGolden {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := parseCodexNotifyPayload(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if msg.Title != tt.wantTitle {
+				t.Fatalf("title = %q, want %q", msg.Title, tt.wantTitle)
+			}
+			if msg.Body != tt.wantBody {
+				t.Fatalf("body = %q, want %q", msg.Body, tt.wantBody)
+			}
+			if msg.Urgency != tt.wantUrg {
+				t.Fatalf("urgency = %d, want %d", msg.Urgency, tt.wantUrg)
+			}
+			if msg.Verified != tt.wantVer {
+				t.Fatalf("verified = %v, want %v", msg.Verified, tt.wantVer)
+			}
+		})
+	}
+}
+
+// TestMergeNotifyDeployStatePreservesAdapters is the 3a merge-contract test: the
+// connect writer must preserve a migrated/prior Adapters map while refreshing the
+// legacy boolean fields, instead of hard-replacing state.Notify with a
+// legacy-only struct (which dropped Adapters).
+func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
+	t.Run("preserves existing Adapters map", func(t *testing.T) {
+		adapters := map[shim.AdapterID]*shim.AdapterState{
+			shim.AdapterClaudeNotify: {Installed: true, Verified: false},
+		}
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Enabled:       false,
+				HookInstalled: false,
+				Adapters:      adapters,
+			},
+		}
+
+		mergeNotifyDeployState(state, true, true, true)
+
+		if state.Notify == nil {
+			t.Fatal("Notify must not be nil after merge")
+		}
+		if !state.Notify.Enabled || !state.Notify.HookInstalled || !state.Notify.CodexInjected || !state.Notify.HealthVerified {
+			t.Fatalf("legacy bools not refreshed: %+v", state.Notify)
+		}
+		if state.Notify.Adapters == nil {
+			t.Fatal("Adapters dropped by merge (regression)")
+		}
+		// Same map identity: merge must not reallocate or rebuild it.
+		if got := state.Notify.Adapters[shim.AdapterClaudeNotify]; got == nil || !got.Installed {
+			t.Fatalf("claude adapter not preserved: %+v", got)
+		}
+	})
+
+	t.Run("allocates empty struct on nil Notify with nil Adapters", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, true, false, false)
+
+		if state.Notify == nil {
+			t.Fatal("Notify must be allocated when nil")
+		}
+		if !state.Notify.Enabled || !state.Notify.HookInstalled {
+			t.Fatalf("legacy bools not set: %+v", state.Notify)
+		}
+		if state.Notify.CodexInjected || state.Notify.HealthVerified {
+			t.Fatalf("false bools should stay false: %+v", state.Notify)
+		}
+		// First-connect parity: no Adapters map means omitempty keeps wire output
+		// identical to the old hard-assignment behavior.
+		if state.Notify.Adapters != nil {
+			t.Fatalf("expected nil Adapters on first connect, got %+v", state.Notify.Adapters)
+		}
+	})
+}
+
 func TestRegisterNonceWithDaemonIntegration(t *testing.T) {
 	tm := token.NewManager(time.Hour)
 	sess, err := tm.Generate()

@@ -177,7 +177,9 @@ Notifications:
 Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
     --display        X11 display (default: $DISPLAY)
-    --port           cc-clip daemon port (default: 18339)`)
+    --port           cc-clip daemon port (default: 18339)
+  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | antigravity-notify)
+                     reads agent hook JSON from stdin`)
 }
 
 func getPort() int {
@@ -1060,13 +1062,27 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println("      health probe passed")
 	}
 
-	// Update deploy state
-	state.Notify = &shim.NotifyDeployState{
-		Enabled:        true,
-		HookInstalled:  hookInstalled,
-		CodexInjected:  codexInjected,
-		HealthVerified: healthVerified,
+	// Update deploy state: preserve any migrated/prior per-adapter map while
+	// refreshing the legacy boolean fields. Adapters survives connect cycles;
+	// nothing consumes it yet (3c), so user-visible behavior is unchanged.
+	mergeNotifyDeployState(state, hookInstalled, codexInjected, healthVerified)
+}
+
+// mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify
+// while preserving any existing Adapters map (from read-time migration or a
+// prior write). It allocates an empty NotifyDeployState when state.Notify is nil
+// — leaving Adapters nil so the omitempty JSON tag keeps first-connect wire
+// output byte-identical to the old hard-assignment. The Adapters field is
+// intentionally left untouched (merge, not replace); nothing consumes it yet.
+func mergeNotifyDeployState(state *shim.DeployState, hookInstalled, codexInjected, healthVerified bool) {
+	if state.Notify == nil {
+		state.Notify = &shim.NotifyDeployState{}
 	}
+	state.Notify.Enabled = true
+	state.Notify.HookInstalled = hookInstalled
+	state.Notify.CodexInjected = codexInjected
+	state.Notify.HealthVerified = healthVerified
+	// state.Notify.Adapters is intentionally left untouched (merge, not replace).
 }
 
 func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) {

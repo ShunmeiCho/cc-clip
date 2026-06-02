@@ -121,6 +121,39 @@ func postHookPayload(port int, raw []byte) error {
 	return nil
 }
 
+// injectHost returns raw with the "_cc_clip_host" key set to the resolved host
+// alias, reproducing the cc-clip-hook bash flow (hook_template.go:24-31). On any
+// parse/marshal failure it returns raw unchanged, matching the bash
+// `|| echo "$_payload"` fallback so malformed or non-object payloads still post.
+func injectHost(raw []byte) []byte {
+	var d map[string]interface{}
+	if err := json.Unmarshal(raw, &d); err != nil || d == nil {
+		return raw
+	}
+	d["_cc_clip_host"] = hostAlias()
+	out, err := json.Marshal(d)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// hostAlias resolves the host label injected into hook payloads, matching the
+// bash hook's ${CC_CLIP_HOST_ALIAS:-$(hostname -s)} precedence.
+func hostAlias() string {
+	if v := strings.TrimSpace(os.Getenv("CC_CLIP_HOST_ALIAS")); v != "" {
+		return v
+	}
+	if h, err := os.Hostname(); err == nil {
+		// match `hostname -s`: short host, strip domain.
+		if i := strings.IndexByte(h, '.'); i >= 0 {
+			h = h[:i]
+		}
+		return h
+	}
+	return ""
+}
+
 // parseCodexNotifyPayload extracts a GenericMessagePayload from the Codex JSON
 // format. Codex passes {"last-assistant-message": "..."} as its notify payload.
 // The extracted message becomes the body with title "Codex".
