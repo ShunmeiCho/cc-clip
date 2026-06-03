@@ -407,7 +407,7 @@ cc-clip works with **any coding agent that reads the clipboard via `xclip` or `w
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box (xclip / wl-paste shim) | ✅ via `cc-clip-hook` in `Stop` / `Notification` hooks |
 | [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured when a Codex target is selected (`--codex` or `--all`) during `cc-clip connect` and `~/.codex/` exists |
-| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ⚠️ not auto-configured — wire your own notifier if desired |
+| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ✅ auto-configured when an opencode target is selected (`--opencode` or `--all`) during `cc-clip connect` and `opencode` is installed |
 | [Antigravity (agy)](https://antigravity.google) | ⏳ pending — clipboard transport not yet implemented (notify-only today) | ✅ auto-configured when an Antigravity target is selected (`--agy` or `--all`) during `cc-clip connect` and `agy` is installed |
 | Any other `xclip`/`wl-paste` consumer | ✅ should just work — please [open a discussion](https://github.com/ShunmeiCho/cc-clip/discussions) if it doesn't | — |
 

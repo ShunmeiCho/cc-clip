@@ -278,7 +278,7 @@ grep -E 'xclip|wl-paste|xsel|wl-copy|osc52|tmux|uploaded_media' /tmp/agy.execve
 4. ✅ `internal/install` InstallSourceChain + 规范 AdapterSource + 失败分类 + consent gate + 新 exitcode。`dd30531`(step 4/7)。
 5. ✅ 引入 `--claude/--codex/--opencode/--antigravity/--all` + 菜单 + `parseDeployTargets`(判别器) + 矩阵；connect/setup 同步 breaking。`25d5947`(5.1 parser)、`5b86477`(5.2 菜单/非TTY)、`0286f83`(5.3a 容错 host 解析)、`5a1e269`+`d453a38`(5.3b 目标解析接线 + exit-2 矩阵 + legacy `--codex` 提示)、`489eea2`+`7d2ce09`+`5d0883f`(5.3c per-target 门控 + 非对称适配器测试 + 措辞修复)。**Option A 已拍板**：纯 `--codex`/`--agy` 跳过 shim 安装、绝不卸载既有 shim。
 6. ✅ **Antigravity**：agy-notify bundled adapter + connect N5/N5.5 接线（temp-src bundle → `agy plugin validate` → `agy plugin install`，`command -v agy` 探测，`Verified=false`）。install smoke 双门控（`CC_CLIP_AGY_SMOKE=1` + agy 在 PATH，隔离 HOME）；真实远端 Stop hook-fire smoke + uninstall 路径列入 backlog；clipboard 待 strace。`78819f8`+`196e8cb`+`c5fc37d`。
-7. ⏳ opencode-notify 真 plugin（步骤 4），剪贴板仍 shim。**（agy 之后）**
+7. ✅ **opencode-notify** 真 plugin：`opencode-notify` runner + parser（`runOpencodeNotify`/`parseOpencodeNotifyPayload`，`session.idle` → `GenericMessagePayload`）+ `RemoteHasOpencode` 探测 + `EnsureRemoteOpencodePlugin`（drop `~/.config/opencode/plugins/cc-clip-notify.js`，原子 mktemp+mv，`port` 烘焙进 `cc-clip plugin run opencode-notify` 命令）+ `StripRemoteOpencodePlugin`（对称 helper，Step 7 不接线任何 uninstall 分支）+ connect N5.7 `buildNotifyAdapters()` 表行（`opencodeNotifyTargeted` 门控 `--opencode`/`--all`，`command -v opencode` 探测，`Verified=false`）。JS 语法 smoke 默认跑（`node --check`，gated on node/bun）；真实 `session.idle` hook-fire smoke 双门控（`CC_CLIP_OPENCODE_SMOKE=1` + opencode 在 PATH）列入 backlog。剪贴板仍走 shim。`5fecd5c`(runner/parser)、`a497188`(探测/安装/JS 模板)、`41194a9`(connect 接线)。**（agy 之后）**
 
 ## 16. 需协调修改的文件
 

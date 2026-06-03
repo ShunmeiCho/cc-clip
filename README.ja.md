@@ -408,7 +408,7 @@ cc-clip は、Linux 上で `xclip` または `wl-paste` を使ってクリップ
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box（xclip / wl-paste shim） | ✅ managed `Stop` / `Notification` hooks の `cc-clip-hook` 経由 |
 | [Codex CLI](https://github.com/openai/codex) | ✅ out of the box（Xvfb + x11-bridge。`--codex` が必要） | ✅ Codex ターゲット（`--codex` または `--all`）を選び、リモートに `~/.codex/` がある場合、`cc-clip connect` 中に自動設定 |
-| [opencode](https://opencode.ai) | ✅ out of the box（X11 は xclip shim、Wayland は wl-paste shim） | ⚠️ 自動設定はされません — 必要なら自分で notifier を接続してください |
+| [opencode](https://opencode.ai) | ✅ out of the box（X11 は xclip shim、Wayland は wl-paste shim） | ✅ opencode ターゲット（`--opencode` または `--all`）を選び、リモートに `opencode` がある場合、`cc-clip connect` 中に自動設定 |
 | [Antigravity (agy)](https://antigravity.google) | ⏳ 未対応 — クリップボード転送は未実装（現状は通知のみ） | ✅ Antigravity ターゲット（`--agy` または `--all`）を選び、リモートに `agy` がある場合、`cc-clip connect` 中に自動設定 |
 | その他の `xclip`/`wl-paste` consumer | ✅ そのまま動くはずです。動かない場合は [discussion](https://github.com/ShunmeiCho/cc-clip/discussions) を開いてください | — |
 
