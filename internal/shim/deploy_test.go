@@ -1027,6 +1027,165 @@ func TestNeedsNotifySetup_BackwardCompat(t *testing.T) {
 	}
 }
 
+// --- P0a: deploy-state SchemaVersion + forward downgrade guard ---
+
+// TestStampSchemaVersionRoundTrip verifies the stamp helper sets
+// SchemaVersion=currentDeploySchemaVersion and that it survives a
+// marshal/unmarshal round-trip. WriteRemoteState applies the same stamp before
+// writing, so this exercises the on-the-wire encoding path WriteRemoteState uses.
+func TestStampSchemaVersionRoundTrip(t *testing.T) {
+	state := &DeployState{BinaryHash: "sha256:abc"}
+	if state.SchemaVersion != 0 {
+		t.Fatalf("precondition: fresh state SchemaVersion = %d, want 0", state.SchemaVersion)
+	}
+
+	stampSchemaVersion(state)
+	if state.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("stampSchemaVersion set SchemaVersion = %d, want %d", state.SchemaVersion, currentDeploySchemaVersion)
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if !strings.Contains(string(data), `"schema_version"`) {
+		t.Fatalf("marshaled JSON missing schema_version key: %s", data)
+	}
+
+	var decoded DeployState
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if decoded.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("round-trip SchemaVersion = %d, want %d", decoded.SchemaVersion, currentDeploySchemaVersion)
+	}
+}
+
+// TestStampSchemaVersionNeverLowers verifies stampSchemaVersion preserves a
+// HIGHER existing schema version (never downgrades). An older binary re-writing
+// a state deployed by a newer cc-clip (uninstall --codex / connect --force) must
+// not silently lower schema_version below what the remote already carries.
+func TestStampSchemaVersionNeverLowers(t *testing.T) {
+	newer := &DeployState{SchemaVersion: currentDeploySchemaVersion + 1}
+	stampSchemaVersion(newer)
+	if newer.SchemaVersion != currentDeploySchemaVersion+1 {
+		t.Fatalf("stampSchemaVersion lowered a newer schema: got %d, want %d", newer.SchemaVersion, currentDeploySchemaVersion+1)
+	}
+
+	legacy := &DeployState{SchemaVersion: 0}
+	stampSchemaVersion(legacy)
+	if legacy.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("stampSchemaVersion failed to bump legacy state: got %d, want %d", legacy.SchemaVersion, currentDeploySchemaVersion)
+	}
+}
+
+// TestStampSchemaVersionForceDiscardWritesCurrent documents the `connect --force`
+// outcome at the unit level. The --force branch in cmdConnect sets remoteState=nil
+// and builds a FRESH DeployState (SchemaVersion=0, the zero value) — it does NOT
+// preserve the newer remote's schema. WriteRemoteState then stamps that fresh
+// state to currentDeploySchemaVersion. This is the honest, by-design downgrade:
+// --force discards the newer remote's deploy-state fields and rewrites deploy.json
+// with THIS binary's schema. The never-lower clause in stampSchemaVersion does NOT
+// rescue this path because there is no preserved older->newer value to compare
+// against — the fresh state starts at 0.
+func TestStampSchemaVersionForceDiscardWritesCurrent(t *testing.T) {
+	// Mirror the --force build: newDeployState(..., remoteState=nil) yields a
+	// state whose SchemaVersion is the zero value, regardless of what the remote
+	// (possibly newer) actually carried.
+	fresh := &DeployState{BinaryHash: "sha256:force"}
+	if fresh.SchemaVersion != 0 {
+		t.Fatalf("precondition: fresh --force-derived state SchemaVersion = %d, want 0", fresh.SchemaVersion)
+	}
+
+	stampSchemaVersion(fresh)
+	if fresh.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("--force write stamped SchemaVersion = %d, want current %d", fresh.SchemaVersion, currentDeploySchemaVersion)
+	}
+}
+
+// TestSchemaVersionOmittedWhenZero verifies the omitempty tag keeps legacy
+// JSON byte-clean: a state that was never stamped writes no schema_version key.
+func TestSchemaVersionOmittedWhenZero(t *testing.T) {
+	data, err := json.Marshal(&DeployState{BinaryHash: "x"})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if strings.Contains(string(data), "schema_version") {
+		t.Fatalf("unstamped state should omit schema_version, got: %s", data)
+	}
+}
+
+// TestIsNewerSchema_LegacyStillMigrates verifies that a legacy state (no
+// schema_version => 0) is NOT considered newer and still migrates to the
+// per-adapter schema. SchemaVersion==0 means "pre-guard", not "from the future".
+func TestIsNewerSchema_LegacyStillMigrates(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:legacy",
+  "shim_installed": true,
+  "notify": {"enabled": true, "hook_installed": true, "codex_injected": false, "health_verified": false}
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if state.SchemaVersion != 0 {
+		t.Fatalf("legacy state SchemaVersion = %d, want 0", state.SchemaVersion)
+	}
+	if state.IsNewerSchema() {
+		t.Fatal("legacy state (SchemaVersion==0) must NOT report IsNewerSchema()==true")
+	}
+	// Still migrates: Adapters populated from legacy booleans.
+	if state.Notify == nil || state.Notify.Adapters == nil {
+		t.Fatalf("legacy state should migrate to per-adapter schema, got %+v", state.Notify)
+	}
+	if !AdapterInstalled(state, AdapterClaudeNotify) {
+		t.Fatal("legacy migration should mark claude-notify installed")
+	}
+}
+
+// TestIsNewerSchema_NewerStateDetected verifies that a state stamped with a
+// SchemaVersion greater than this binary's is reported as newer.
+func TestIsNewerSchema_NewerStateDetected(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	writeRemoteDeployState(t, s.home, `{
+  "binary_hash": "sha256:future",
+  "schema_version": 2,
+  "shim_installed": true
+}`)
+
+	state, err := ReadRemoteState(s)
+	if err != nil {
+		t.Fatalf("ReadRemoteState error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if state.SchemaVersion != currentDeploySchemaVersion+1 {
+		t.Fatalf("SchemaVersion = %d, want %d", state.SchemaVersion, currentDeploySchemaVersion+1)
+	}
+	if !state.IsNewerSchema() {
+		t.Fatal("a state with SchemaVersion > current must report IsNewerSchema()==true")
+	}
+}
+
+// TestIsNewerSchema_CurrentAndNil verifies edge cases: a state stamped at
+// exactly the current version is NOT newer, and a nil receiver is safe + false.
+func TestIsNewerSchema_CurrentAndNil(t *testing.T) {
+	current := &DeployState{SchemaVersion: currentDeploySchemaVersion}
+	if current.IsNewerSchema() {
+		t.Errorf("state at currentDeploySchemaVersion must not be newer")
+	}
+	var nilState *DeployState
+	if nilState.IsNewerSchema() {
+		t.Errorf("nil DeployState must not report IsNewerSchema()==true")
+	}
+}
+
 func TestClipboardTransportPreserved(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
 	writeRemoteDeployState(t, s.home, `{

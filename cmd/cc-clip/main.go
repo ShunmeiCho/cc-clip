@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -482,6 +484,24 @@ func cmdUninstall() {
 	}
 }
 
+// shouldAbortUninstallCodexNewerSchema decides whether `uninstall --codex`
+// must refuse to proceed because the remote was deployed by a newer cc-clip
+// (deploy-state schema > this binary's). Extracted as a pure helper so the
+// abort decision and its operator-facing message are unit-testable without a
+// live SSH session. Returns (false, "") for a nil/legacy/current-schema state.
+//
+// Unlike the connect guard, there is intentionally NO --force escape hatch:
+// uninstall is not an emergency-recovery path, so an older binary must never
+// be allowed to tear down a newer-schema remote and clobber its deploy.json.
+func shouldAbortUninstallCodexNewerSchema(host string, remoteState *shim.DeployState) (bool, string) {
+	if !remoteState.IsNewerSchema() {
+		return false, ""
+	}
+	return true, fmt.Sprintf(
+		"remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); refusing to uninstall Codex from it and clobber its newer state. Upgrade this cc-clip first.",
+		host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
+}
+
 // cmdUninstallCodexRemote cleans up Codex support on a remote host via SSH.
 func cmdUninstallCodexRemote(host string) {
 	fmt.Printf("Uninstalling Codex support from %s...\n", host)
@@ -491,6 +511,17 @@ func cmdUninstallCodexRemote(host string) {
 		log.Fatalf("SSH connection failed: %v", err)
 	}
 	defer session.Close()
+
+	// Forward downgrade guard (before ANY teardown): if the remote was deployed
+	// by a newer cc-clip, refuse — tearing it down would rewrite deploy.json with
+	// this older binary's schema and silently drop unknown newer fields. A read
+	// error or nil/legacy state is NOT a newer schema, so normal uninstalls
+	// proceed unaffected.
+	if preState, perr := shim.ReadRemoteState(session); perr == nil {
+		if abort, msg := shouldAbortUninstallCodexNewerSchema(host, preState); abort {
+			log.Fatalf("      %s", msg)
+		}
+	}
 
 	var teardownError bool
 	var stateError bool
@@ -842,6 +873,19 @@ remote has a valid claude binary installed.
 			remoteState = nil
 		} else {
 			log.Fatalf("      failed to read remote state: %v\n      Re-run with --force only if you intend to ignore deploy.json.", err)
+		}
+	}
+	// Forward downgrade guard: if the remote was deployed by a newer cc-clip
+	// (deploy-state schema > this binary's), refuse to overwrite it unless the
+	// operator explicitly passes --force. Runs before any deploy-state or
+	// binary write.
+	if remoteState.IsNewerSchema() {
+		if force {
+			log.Printf("      warning: remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); --force DISCARDS the newer remote's deploy-state fields and rewrites deploy.json with this older binary's schema v%d (data loss) — upgrade this cc-clip instead to preserve them.",
+				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion(), shim.CurrentDeploySchemaVersion())
+		} else {
+			log.Fatalf("      remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); refusing to overwrite it.\n      Upgrade this cc-clip, or pass --force to override.",
+				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
 		}
 	}
 	if remoteState != nil && !force {
@@ -1801,6 +1845,27 @@ func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 		return "", fmt.Errorf("download failed (%s): %s", url, string(out))
 	}
 
+	// Verify the archive's sha256 against the release checksums.txt before
+	// extracting. This downloads a release binary and pushes it to a remote
+	// host, so an unverified archive is a supply-chain exposure. On any
+	// mismatch or missing entry, refuse to extract.
+	checksumsURL := fmt.Sprintf("https://github.com/ShunmeiCho/cc-clip/releases/download/v%s/checksums.txt", ver)
+	checksumsPath := filepath.Join(tmpDir, "checksums.txt")
+	csCmd := exec.Command("curl", "-fsSL", "--max-time", "30", "-o", checksumsPath, checksumsURL)
+	if out, err := csCmd.CombinedOutput(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("checksums download failed (%s): %s", checksumsURL, string(out))
+	}
+	checksumsContent, err := os.ReadFile(checksumsPath)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("read checksums.txt: %w", err)
+	}
+	if err := verifyArchiveChecksum(archivePath, string(checksumsContent), archiveName); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("checksum verification failed: %w", err)
+	}
+
 	extractCmd := exec.Command("tar", "-xzf", archivePath, "-C", tmpDir)
 	if out, err := extractCmd.CombinedOutput(); err != nil {
 		os.RemoveAll(tmpDir)
@@ -1814,6 +1879,42 @@ func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 	}
 
 	return binPath, nil
+}
+
+// verifyArchiveChecksum computes the sha256 of the file at archivePath and
+// compares it against the expected digest for archiveName as listed in a
+// goreleaser checksums.txt. The checksums format is "<sha256>  <filename>"
+// lines (two spaces). Returns an error on a missing entry or a mismatch so the
+// caller can refuse to use an unverified archive.
+func verifyArchiveChecksum(archivePath, checksumsContent, archiveName string) error {
+	expected := ""
+	for _, line := range strings.Split(checksumsContent, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == archiveName {
+			expected = fields[0]
+			break
+		}
+	}
+	if expected == "" {
+		return fmt.Errorf("checksum for %s not found in checksums.txt", archiveName)
+	}
+
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash archive: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", archiveName, expected, actual)
+	}
+	return nil
 }
 
 func findSourceDir() (string, error) {

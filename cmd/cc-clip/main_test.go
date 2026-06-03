@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
@@ -285,6 +287,48 @@ func TestNewDeployStateReturnsHashError(t *testing.T) {
 	}
 }
 
+func TestShouldAbortUninstallCodexNewerSchema(t *testing.T) {
+	cur := shim.CurrentDeploySchemaVersion()
+
+	t.Run("newer schema aborts", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: cur + 1}
+		abort, msg := shouldAbortUninstallCodexNewerSchema("host-a", state)
+		if !abort {
+			t.Fatal("expected abort for a remote with a newer deploy-state schema")
+		}
+		// The message must be actionable: name the host, both versions, refusal,
+		// and the upgrade remedy. No --force escape hatch is offered for uninstall.
+		for _, want := range []string{"host-a", "newer cc-clip", "refusing", "Upgrade this cc-clip"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("abort message missing %q; got: %q", want, msg)
+			}
+		}
+		if strings.Contains(msg, "--force") {
+			t.Errorf("uninstall abort message must NOT offer --force; got: %q", msg)
+		}
+	})
+
+	t.Run("current schema proceeds", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: cur}
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-b", state); abort {
+			t.Fatal("must not abort for a remote stamped at the current schema")
+		}
+	})
+
+	t.Run("legacy schema proceeds", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: 0}
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-c", state); abort {
+			t.Fatal("must not abort for a legacy (SchemaVersion==0) remote")
+		}
+	})
+
+	t.Run("nil state proceeds", func(t *testing.T) {
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-d", nil); abort {
+			t.Fatal("must not abort when there is no deploy state to read")
+		}
+	})
+}
+
 func TestNewDeployStatePreservesCodexWhenNotRequested(t *testing.T) {
 	dir := t.TempDir()
 	binPath := filepath.Join(dir, "cc-clip")
@@ -405,6 +449,72 @@ func TestReleaseVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyArchiveChecksum(t *testing.T) {
+	content := []byte("hello cc-clip")
+	archiveName := "cc-clip_0.6.0_linux_amd64.tar.gz"
+
+	// Compute the real digest for the fixture so the test is self-contained.
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, archiveName)
+	if err := os.WriteFile(archivePath, content, 0o600); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	realSum := sha256Hex(t, content)
+
+	otherName := "cc-clip_0.6.0_darwin_arm64.tar.gz"
+
+	tests := []struct {
+		name        string
+		checksums   string
+		archiveName string
+		wantErr     bool
+	}{
+		{
+			name: "matching checksum passes",
+			checksums: realSum + "  " + archiveName + "\n" +
+				"0000000000000000000000000000000000000000000000000000000000000000  " + otherName + "\n",
+			archiveName: archiveName,
+			wantErr:     false,
+		},
+		{
+			name:        "mismatched checksum fails",
+			checksums:   "deadbeef00000000000000000000000000000000000000000000000000000000  " + archiveName + "\n",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+		{
+			name:        "missing entry fails",
+			checksums:   realSum + "  " + otherName + "\n",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+		{
+			name:        "empty checksums fails",
+			checksums:   "",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifyArchiveChecksum(archivePath, tt.checksums, tt.archiveName)
+			if tt.wantErr && err == nil {
+				t.Fatalf("verifyArchiveChecksum() = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("verifyArchiveChecksum() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func sha256Hex(t *testing.T, b []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func TestNotifyFromCodexParsesLastAssistantMessage(t *testing.T) {

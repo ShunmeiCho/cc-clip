@@ -196,7 +196,9 @@ The install script does not support Windows. Upgrade is manual.
 - **Remote cache says "unchanged":** `cc-clip connect` tracks the remote
   binary hash in `~/.cache/cc-clip/deploy.json` on the remote. If that
   file claims the binary is already current, `connect` will skip the upload.
-  Use `--force` on upgrade runs.
+  Use `--force` on upgrade runs. (`deploy.json` also carries a
+  `schema_version` that drives the forward-downgrade guard — see
+  [Rollback](#rollback).)
 - **Token vs binary upgrade:** If you only rotated the daemon token and did
   not change the binary, run `cc-clip connect myserver --token-only`
   instead — it syncs the token without a full redeploy.
@@ -207,20 +209,117 @@ The install script does not support Windows. Upgrade is manual.
 
 ## Rollback
 
-cc-clip version upgrades are reversible — just install an older version the
-same way.
+There are two flavours of rollback, and they are **not** equally safe:
+
+- **Same-generation rollback** (for example `v0.9.1 -> v0.9.0`): the normal,
+  lossless path. Both binaries speak the same deploy-state schema and know the
+  same deployment targets (`--codex`, `--opencode`, `--agy`), so re-running
+  `connect --force` simply re-syncs the older binary. This is what the runbook
+  below covers.
+- **Cross-v0.9 downgrade** (to a pre-`v0.9.0` binary): **not lossless** — see
+  the [Cross-v0.9 downgrade](#cross-v09-downgrade-pre-v090) subsection before
+  you attempt it.
+
+### Pin a version (forward or backward)
 
 - **`cc-clip update --to v0.5.0`** (cc-clip 0.6.2+): same semantics as a
   forward upgrade — checksum-verify, swap, restart, verify — but against
   the pinned release tag instead of `/latest`.
 
-- **Via install script, pinned to a specific tag:** `install.sh` always
-  fetches `/releases/latest`. To install a specific older version
-  manually, use the Option C commands above with `V=` set to the version
-  you want (for example `V=0.5.0` downgrades to `v0.5.0`).
+- **Via install script, pinned with `CC_CLIP_VERSION`** (curl-install rollback
+  channel, mirrors `cc-clip update --to`): `install.sh` fetches
+  `/releases/latest` by default, but if `CC_CLIP_VERSION` is set it installs
+  that exact tag instead. This is the recommended one-liner for machines that
+  do not yet have `cc-clip update`:
 
-- **After downgrading, re-run `cc-clip connect <host> --force`** for each
-  remote you use, so the remote side also goes back in sync.
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh \
+      | CC_CLIP_VERSION=v0.5.0 sh
+    ```
+
+    The env var must be set on the **right-hand side of the pipe** (the `sh` that
+    runs the script), not on `curl`. `CC_CLIP_VERSION=v0.5.0 curl ... | sh` would
+    export the pin only into the `curl` process and the piped `sh` would still
+    install `/latest`.
+
+  The value must be a full tag (for example `v0.5.0`); a missing `v` prefix is
+  accepted. An invalid value aborts the install with an actionable error.
+
+- **Via install script, the manual way:** you can also skip `CC_CLIP_VERSION`
+  and use the Option C manual-download commands above with `V=` set to the
+  version you want (for example `V=0.5.0` downgrades to `v0.5.0`).
+
+### Rollback runbook
+
+For a **same-generation** rollback, after the local binary is replaced:
+
+1. **Restart the daemon** (`cc-clip service uninstall && cc-clip service
+   install`) so launchd stops holding the old binary — same as a forward
+   upgrade.
+
+2. **List the remotes that need re-syncing.** The local host registry knows
+   every machine you have deployed to and the version it last received:
+
+    ```sh
+    cc-clip hosts list
+    # HOST      VERSION  CODEX  LAST CONNECTED
+    # myserver  0.9.1    no     2026-06-01T10:22:04+09:00
+    # venus     0.9.1    yes    2026-05-30T18:05:11+09:00
+    ```
+
+3. **Re-run `cc-clip connect <host> --force`** for each remote in that list, so
+   the remote side goes back in sync with the downgraded local binary. `--force`
+   bypasses the hash-based "binary unchanged, skipping" optimization.
+
+    Note the new guard (v0.9.0+): if the remote's `deploy.json` was last written
+    by a **newer** cc-clip than the one you just rolled back to, `connect`
+    **refuses** to overwrite it and tells you to upgrade this cc-clip or pass
+    `--force`. This protects you from a stale local binary silently clobbering a
+    remote that a newer machine deployed. It is a *forward* guard only — see the
+    caveat below for what it does and does not cover.
+
+### Cross-v0.9 downgrade (pre-v0.9.0)
+
+Downgrading a remote to a **pre-`v0.9.0`** binary is **not lossless**, and there
+is no automatic guard that will stop you. Two things go wrong:
+
+- A pre-`v0.9.0` binary does not understand the v0.9 deployment-target model
+  (`--opencode`, `--agy`, and the per-adapter `Notify.Adapters` map in
+  `deploy.json`). It only knows the original Claude-Code shim + hook layout.
+- Being a *pre-guard* binary, it has no `schema_version` awareness. The
+  forward-downgrade guard described above only exists in binaries that **ship**
+  it (v0.9.0 and later). An older binary will happily **overwrite**
+  `~/.cache/cc-clip/deploy.json` on the remote, dropping the `Adapters` map and
+  the `agy-notify` / `opencode-notify` entries.
+
+So do **not** rely on a fail-closed here — the protection is forward-only by
+design. If you must cross the v0.9 boundary downward, expect to clean up and
+redeploy those adapters by hand:
+
+1. **Manually tear down the v0.9-only adapters** on the remote you are about to
+   downgrade, so no orphaned plugin / hook entries are left behind. There is **no**
+   `cc-clip uninstall <host> --opencode` / `--agy` command today — symmetric
+   uninstall for those targets is not yet implemented (`cc-clip uninstall`
+   currently supports only `--codex` and `--host`). Clean them up over SSH by hand,
+   only for whichever adapters you actually enabled:
+
+    ```sh
+    # opencode notify plugin (the dropped .js is removed by hand):
+    ssh <host> 'rm -f "$HOME/.config/opencode/plugins/cc-clip-notify.js"'
+
+    # Antigravity (agy) notify plugin (use agy's own uninstall on the remote;
+    # agy's managed plugins dir is version-specific, so let the CLI find it):
+    ssh <host> 'agy plugin uninstall cc-clip-notify'
+    ```
+
+    (Future cc-clip versions may add `cc-clip uninstall --opencode` / `--agy` to
+    automate this; until then the manual cleanup above is the supported path.)
+2. Roll the remote back by deploying the pre-v0.9 binary from the older local
+   cc-clip (`connect --force`), accepting that `deploy.json` will be rewritten
+   in the old format.
+3. When you later move forward across v0.9 again, re-enable the adapters you
+   want (`connect <host> --opencode` / `--agy` / `--all`); v0.9.0+ will
+   re-stamp `deploy.json` with the current `schema_version`.
 
 If a release was published in error by the maintainer, they will mark it
 `prerelease` on GitHub. `install.sh` will then skip it automatically and
