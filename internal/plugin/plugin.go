@@ -12,6 +12,7 @@ const (
 	AdapterClaudeNotify      = "claude-notify"
 	AdapterCodexNotify       = "codex-notify"
 	AdapterAntigravityNotify = "agy-notify"
+	AdapterOpencodeNotify    = "opencode-notify" // MUST equal shim.AdapterOpencodeNotify
 )
 
 // Run dispatches to the named adapter handler. stdin/stdout are injected for
@@ -25,6 +26,8 @@ func Run(name string, port int, stdin io.Reader, stdout io.Writer) error {
 		return runCodexNotify(port, stdin)
 	case AdapterAntigravityNotify:
 		return runAntigravityNotify(port, stdin, stdout)
+	case AdapterOpencodeNotify:
+		return runOpencodeNotify(port, stdin)
 	default:
 		return fmt.Errorf("unknown plugin adapter: %q", name)
 	}
@@ -79,5 +82,22 @@ func runAntigravityNotify(port int, stdin io.Reader, stdout io.Writer) error {
 	if perr == nil {
 		_ = PostNotification(port, parsed)
 	}
+	return nil
+}
+
+// runOpencodeNotify reads the opencode event JSON from stdin, parses it into a
+// generic message, and posts it. It mirrors runCodexNotify: a read error, parse
+// error, or POST failure must NOT propagate, since the opencode plugin's `event`
+// hook is fire-and-forget and a notify failure must never disrupt opencode.
+func runOpencodeNotify(port int, stdin io.Reader) error {
+	b, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil // fail-soft
+	}
+	parsed, perr := parseOpencodeNotifyPayload(string(b))
+	if perr != nil {
+		return nil // fail-soft: invalid payload must not block opencode
+	}
+	_ = PostNotification(port, parsed)
 	return nil
 }

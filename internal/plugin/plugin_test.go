@@ -405,6 +405,30 @@ func TestRunAntigravityNotifyWritesDecisionOnPostFailure(t *testing.T) {
 	}
 }
 
+// TestRunOpencodeNotifyParsesAndPosts asserts Run("opencode-notify") parses the
+// opencode event envelope from stdin and posts it as a generic notification with
+// title "opencode".
+func TestRunOpencodeNotifyParsesAndPosts(t *testing.T) {
+	port, srv := newNotifyServerWithChannel(t)
+
+	stdin := strings.NewReader(`{"event":{"type":"session.idle"}}`)
+	var stdout strings.Builder
+	if err := Run(AdapterOpencodeNotify, port, stdin, &stdout); err != nil {
+		t.Fatalf("Run opencode-notify failed: %v", err)
+	}
+
+	env := drainOne(t, srv.NotifyChannel())
+	if env.GenericMessage == nil {
+		t.Fatal("expected GenericMessage payload")
+	}
+	if env.GenericMessage.Title != "opencode" {
+		t.Fatalf("title = %q, want opencode", env.GenericMessage.Title)
+	}
+	if env.GenericMessage.Body != "Session idle - awaiting input" {
+		t.Fatalf("body = %q, want %q", env.GenericMessage.Body, "Session idle - awaiting input")
+	}
+}
+
 func TestRunUnknownAdapter(t *testing.T) {
 	var stdout strings.Builder
 	err := Run("does-not-exist", 18339, strings.NewReader(""), &stdout)

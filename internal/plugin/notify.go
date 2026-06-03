@@ -196,6 +196,41 @@ func parseAntigravityNotifyPayload(payload string) (daemon.GenericMessagePayload
 	}, nil
 }
 
+// parseOpencodeNotifyPayload maps the JS plugin's {"event": {...}} envelope to a
+// GenericMessagePayload. The JS plugin sends JSON.stringify({ event }), so the
+// opencode event object is nested under "event". The title is "opencode"; the
+// body is derived from the event type via opencodeBody. Like codex/agy, it sets
+// Verified=true (the daemon Trusted flag) because the source is a trusted plugin.
+func parseOpencodeNotifyPayload(payload string) (daemon.GenericMessagePayload, error) {
+	var raw struct {
+		Event struct {
+			Type       string                 `json:"type"`
+			Properties map[string]interface{} `json:"properties"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return daemon.GenericMessagePayload{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	return daemon.GenericMessagePayload{
+		Title:    "opencode",
+		Body:     opencodeBody(raw.Event.Type),
+		Urgency:  1,
+		Verified: true,
+	}, nil
+}
+
+// opencodeBody maps an opencode event type to a human-readable body. Only
+// session.idle (turn-complete) has a friendly string; any other type echoes the
+// type so unmapped events still produce a non-misleading body.
+func opencodeBody(eventType string) string {
+	switch eventType {
+	case "session.idle":
+		return "Session idle - awaiting input"
+	default:
+		return eventType
+	}
+}
+
 // antigravityStopBody composes a human-readable body from the Antigravity Stop
 // payload, preferring an error, then the termination reason, with the idle
 // state as a fallback so the notification body is never empty.
