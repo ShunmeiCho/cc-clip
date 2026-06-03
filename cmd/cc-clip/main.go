@@ -1611,6 +1611,8 @@ func connectSuccessSummary(t DeployTargets) string {
 		return "Setup complete. Ctrl+V in remote opencode will paste images from your local clipboard."
 	case t.Codex:
 		return "Setup complete. Codex CLI clipboard support is configured below."
+	case t.Antigravity:
+		return "Setup complete. Antigravity notifications configured; clipboard transport is pending."
 	default:
 		return "Setup complete."
 	}

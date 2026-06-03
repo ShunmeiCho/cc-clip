@@ -7,9 +7,10 @@ import (
 )
 
 // antigravityPluginName is the bundled agy plugin's directory and manifest name.
-// `agy plugin install <dir>` stages the bundle under
-// ~/.gemini/antigravity-cli/plugins/<name>/, so this MUST stay stable across
-// versions or `agy plugin uninstall cc-clip-notify` would not find it.
+// `agy plugin install <dir>` copies the bundle into agy's managed plugins
+// directory (the exact path is agy-version-specific) keyed by this manifest
+// name, so it MUST stay stable across versions or `agy plugin uninstall
+// cc-clip-notify` would not find it.
 const antigravityPluginName = "cc-clip-notify"
 
 // antigravityPluginVersion is the bundled plugin manifest version. It tracks the
@@ -93,10 +94,10 @@ func antigravityHooksJSON(port int) string {
 // bundle into a fresh temp source dir and hands it to agy.
 //
 // Why stage to a throwaway source dir (not write into the final plugins dir
-// then install): `agy plugin install <dir>` copies the bundle into
-// ~/.gemini/antigravity-cli/plugins/<name>/ and records it in
-// import_manifest.json. Pointing install at the final dir risks a self-copy and
-// a polluted manifest, so the source MUST be a temp dir.
+// then install): `agy plugin install <dir>` copies the bundle into agy's
+// managed plugins directory and records it in agy's plugin manifest. Pointing
+// install at that final dir risks a self-copy and a polluted manifest, so the
+// source MUST be a temp dir.
 //
 // `set -e` plus validate-before-install means a rejected layout aborts before
 // install ever runs. The EXIT trap removes the temp source whether the script

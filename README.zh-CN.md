@@ -408,6 +408,7 @@ cc-clip 支持**任何在 Linux 上通过 `xclip` 或 `wl-paste` 读取剪贴板
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ 开箱可用（xclip / wl-paste shim） | ✅ 通过 managed `Stop` / `Notification` hooks 中的 `cc-clip-hook` |
 | [Codex CLI](https://github.com/openai/codex) | ✅ 开箱可用（Xvfb + x11-bridge；需要 `--codex`） | ✅ 选择 Codex 目标（`--codex` 或 `--all`）且远程存在 `~/.codex/` 时，会在 `cc-clip connect` 时自动配置 |
 | [opencode](https://opencode.ai) | ✅ 开箱可用（X11 上 xclip shim，Wayland 上 wl-paste shim） | ⚠️ 不会自动配置 — 如有需要可自行接入 notifier |
+| [Antigravity (agy)](https://antigravity.google) | ⏳ 待实现 — 剪贴板传输尚未实现（目前仅通知） | ✅ 选择 Antigravity 目标（`--agy` 或 `--all`）且远程已安装 `agy` 时，会在 `cc-clip connect` 时自动配置 |
 | 任何其他 `xclip`/`wl-paste` consumer | ✅ 应该可以直接工作；如果不行，请[开启 discussion](https://github.com/ShunmeiCho/cc-clip/discussions) | — |
 
 `cc-clip setup HOST` 会安装 xclip 和 wl-paste shim，不管你使用哪个 CLI；opencode 下一次读取剪贴板时会自动用上它们。

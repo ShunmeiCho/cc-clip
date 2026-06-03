@@ -365,7 +365,7 @@ func TestConnectSuccessSummary(t *testing.T) {
 		{"all mentions Claude Code (codex line printed separately)", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, "remote Claude Code"},
 		{"opencode mentions opencode", DeployTargets{Opencode: true}, "remote opencode"},
 		{"pure codex does not claim the Claude shim", DeployTargets{Codex: true}, "Codex CLI clipboard support"},
-		{"agy only is neutral", DeployTargets{Antigravity: true}, "Setup complete."},
+		{"agy mentions notifications + pending clipboard", DeployTargets{Antigravity: true}, "Antigravity notifications configured"},
 	}
 	for _, tt := range tests {
 		tt := tt
