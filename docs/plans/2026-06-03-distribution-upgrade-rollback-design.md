@@ -1,86 +1,101 @@
 # Distribution, Upgrade & Rollback — Process & Design
 
-> **Status: DESIGN / ANALYSIS (for review).** No implementation here. Grounded in a file:line audit of the current machinery (see "Current state").
+> **Status: DESIGN / ANALYSIS (for review, rev 2 after review).** No implementation here. Grounded in a file:line audit of the current machinery.
 > **Branch:** `docs/dist-upgrade-rollback-design` (off `main` @ `3c96a18`).
-> **Why now:** v0.9.0 did a large deployment refactor (target split, settings-first hooks, per-adapter deploy-state, `--codex` breaking change). **v0.9.0 has not been publicly tagged yet** — this is the golden window to add the migration/rollback affordances below *before* any user deploys a state file that lacks them.
+> **Why now:** v0.9.0 did a large deployment refactor (target split, settings-first hooks, per-adapter deploy-state, `--codex` breaking change). **v0.9.0 has not been publicly tagged yet** — golden window to add the migration/rollback affordances below *before* any user deploys state that lacks them.
 
 ---
 
 ## Current state (what already EXISTS — do NOT reinvent)
 
-The machinery is more complete than a fresh design would assume:
+- **Upgrade:** `docs/upgrading.md` (version discovery, per-machine matrix, 3 install paths, daemon/port checks, rollback section). `cc-clip update [--to vX.Y.Z]` (`update.go`) with checksum-verify → `.bak` → swap → `/health` verify → **auto-rollback on failure** (`update.go:157-332`). Idempotent settings-first hook migration keyed off the permanent `CC_CLIP_MANAGED=1` prefix (`settings.go:13-30,225-227`). Legacy `~/.local/bin/claude` wrapper auto-removal restoring `.cc-clip-real` (`ssh.go:693-705`). deploy-state legacy→per-adapter migration on read (`deploy.go:121-141`). Hash-based re-deploy (`deploy.go:217-237`) + actual-remote-file re-verify (`main.go:872-914`). `--auto-recover` for the v0.7.0 wrapper hazard (`main.go:725-791`).
+- **Rollback:** `cc-clip update --to vX.Y.Z` pins any tag with full local rollback. GitHub Releases immutable per-tag (`cc-clip_{version}_{os}_{arch}.tar.gz` + `checksums.txt`, `.goreleaser.yaml:21-37`). Hosts registry persists `LastDeployedVersion` (`hosts/registry.go:45`). "Never uninstall an existing shim" (`main.go:894-898`).
+- **Distribution:** `scripts/install.sh` (os/arch detect, checksum verify `:50-75`, Gatekeeper re-sign). Asset-naming contract triplicated across goreleaser/install.sh/update.go, guarded by `make release-preflight` + `release.yml:25-44`.
+- **Process:** tag → goreleaser (`release.yml`), PR CI (build/vet/test-race/staticcheck/govulncheck, `ci.yml`), cross-arch connect delivery (`main.go:1696-1817`).
 
-- **Upgrade:** `docs/upgrading.md` (228 lines: version discovery, per-machine matrix, 3 install paths, daemon-restart/port checks, rollback section). `cc-clip update [--to vX.Y.Z]` self-update (`cmd/cc-clip/update.go`) with checksum-verify → `.bak` backup → swap → `/health` verify → **auto-rollback on failure** (`update.go:157-332`). Idempotent settings-first hook migration keyed off the permanent `CC_CLIP_MANAGED=1` prefix (`internal/shim/settings.go:13-30,225-227`). Legacy `~/.local/bin/claude` wrapper auto-removal restoring the `.cc-clip-real` sidecar (`ssh.go:693-705`). deploy-state legacy→per-adapter migration on read (`deploy.go:121-141`). Hash-based re-deploy (`deploy.go:217-237`) + actual-remote-file re-verify (`main.go:872-914`). `--auto-recover` for the v0.7.0 wrapper-corruption hazard (tri-state, fail-closed, TOCTOU-guarded; `main.go:725-791`, `ssh.go:625-639`).
-- **Rollback:** `cc-clip update --to vX.Y.Z` pins any tag with full local rollback. GitHub Releases are immutable per-tag (`cc-clip_{version}_{os}_{arch}.tar.gz` + `checksums.txt`, `.goreleaser.yaml:21-37`, `draft:false`). Hosts registry persists `LastDeployedVersion` per host (`internal/hosts/registry.go:45`) for redeploy fan-out. "Never uninstall an existing shim" (`main.go:894-898`).
-- **Distribution:** `scripts/install.sh` (os/arch detect `:10-26`, checksum verify `:50-75`, install dir `${CC_CLIP_INSTALL_DIR:-$HOME/.local/bin}`, macOS Gatekeeper re-sign `:115-118`). Asset-naming contract is the load-bearing constant, triplicated across goreleaser / install.sh / update.go and guarded by `make release-preflight` + `.github/workflows/release.yml:25-44`.
-- **Process:** tag → goreleaser (`release.yml`), PR CI (build/vet/test-race/staticcheck/govulncheck), cross-arch connect delivery (`main.go:1696-1817`).
+## Gaps (file:line)
 
-## Gaps the four concerns map to
-
-| Concern | Gap (file:line) |
+| Concern | Gap |
 |---|---|
-| Upgrade migration | deploy-state has **no schema-version field** (only `BinaryVersion`); migration is structural inference (`Adapters==nil`⇒legacy, `deploy.go:121-141`). NEW state read by OLD binary is **lossy-silent** (drops unknown fields); **no guard** stops an older local binary clobbering a newer remote state. `deploy.json` overwritten with **no backup** (`deploy.go:181-196`). |
-| Rollback | `install.sh` **cannot pin a version** (always `/latest`, `:78`) — install.sh rollback is manual Option-C curl. **No remote-side binary backup** — `~/.local/bin/cc-clip` overwritten in place (`main.go:886`); remote rollback requires a local downgrade first (manual, doc-driven). |
-| npm/npx | **Zero scaffolding** (no `package.json`/`bin/`). install.sh has **no Windows** support and no version pinning — both required for `npx cc-clip@x.y.z`. |
-| Process | **No migration/convergence gate in CI** — only asset-naming drift is checked; `migrateNotifyState` round-trip + downgrade-protection are unit-tested only, not release-gated. |
+| Upgrade migration | deploy-state has **no schema-version field** (`deploy.go:73`); migration is structural inference. `deploy.json` overwritten with **no backup** (`deploy.go:180`). |
+| Rollback | `install.sh` **cannot pin a version** (always `/latest`, `:77`). **No remote-side binary/state backup** — `~/.local/bin/cc-clip` overwritten in place (`main.go:886`). **A pre-v0.9.0 binary cannot be made to fail-closed** on a newer state (it predates any guard). |
+| Supply chain | cross-arch connect's `downloadReleaseBinary` does `curl + tar` with **NO checksum verification** (`main.go:1798-1804`) — weaker than install.sh/update. Checksums are same-origin (transport integrity, not provenance). |
+| npm/npx | **Zero scaffolding**. install.sh has **no Windows** + no pinning. |
+| Process | release gate `release.yml` runs only `make test` + contract grep (`:23`); **weaker than PR CI** (`ci.yml:25`). No migration/downgrade fixture as a release gate. |
 
 ---
 
-## Concern 1 — Upgrade / migration (old deployment → v0.9.0+)
+## Concern 1 — Upgrade / migration (old → v0.9.0+)
 
-**Mostly already works:** re-running `cc-clip connect <host> --force` from a new local binary converges an old remote — hash-mismatch re-upload, idempotent hook merge, wrapper auto-removal, deploy-state migration. The one true hazard is v0.7.0 NonRecoverable wrapper state (handled by `--auto-recover` + fail-closed manual reinstall).
+**Mostly works:** `cc-clip connect <host> --force` from a new local binary converges an old remote (hash re-upload, idempotent hook merge, wrapper auto-removal, deploy-state migration). True hazard: v0.7.0 NonRecoverable wrapper state (handled by `--auto-recover`).
 
-**Recommended addition (P0 — golden window):**
-- Add `SchemaVersion int` to `DeployState` (`deploy.go`). NEW binary writes the current schema number. This makes future migrations explicit instead of structural-inference-only, and enables the downgrade guard below.
-
-**Process (document in upgrading.md):**
-- Old → v0.9.0: `cc-clip update` (or install.sh) to get the new local binary → `cc-clip connect <host> --force` per host (the `--force` is the documented belt-and-suspenders against hash-skip). The hook/wrapper/state migration is automatic and idempotent.
-- Surface the v0.7.0 hazard + `--auto-recover` prominently in the upgrade doc.
+**P0 — TWO parts (the guard alone is insufficient):**
+1. Add `DeployState.SchemaVersion int` (`deploy.go`). A v0.9.0+ binary writes/reads it and can refuse to clobber a *newer* state (forward downgrade protection — only for binaries that ship WITH the guard).
+2. **Explicit cross-v0.9 downgrade runbook + cleanup** in `docs/upgrading.md`. `SchemaVersion` CANNOT make an already-released v0.8.x binary "understand and refuse" v0.9.0 state — that old binary has no guard and will whole-file-overwrite `deploy.json`, dropping `Adapters` / `agy-notify` / `opencode-notify`. So the runbook must tell cross-v0.9 downgraders to expect/clean per-adapter state, not rely on a fail-closed.
 
 ## Concern 2 — Rollback (buggy new version → known-good)
 
-**Backbone already exists:** `cc-clip update --to vOLD` (local, full auto-rollback) + immutable GitHub tags. Gaps are install.sh pinning and remote independence.
+**Backbone exists:** `update --to vOLD` (local auto-rollback) + immutable tags.
 
-**Recommended additions:**
-- **P0:** `install.sh` version pinning — honor `CC_CLIP_VERSION=vX.Y.Z` (and/or `--version`) to fetch a specific tag, not just `/latest`. Mirrors `update --to`; makes the curl-install path a first-class rollback channel. MUST keep the asset-naming contract.
-- **P1:** remote `deploy.json` one-deep backup (`deploy.json.bak`) on `WriteRemoteState` — lets a botched connect's prior state be inspected/restored without a full re-derive.
-- **P1 (optional):** evaluate a remote binary sidecar (`cc-clip.bak`) mirroring the local `.bak` pattern, so a bad remote binary can be reverted in place. Trade-off: disk + complexity vs. the current "re-run connect from older local binary" path. Likely defer unless remote-only rollback is a real need.
+**P0 additions:**
+- `install.sh` version pinning — honor `CC_CLIP_VERSION=vX.Y.Z` (and/or `--version`) to fetch a specific tag, not just `/latest`. Mirrors `update --to`; first-class curl-install rollback channel. MUST keep the asset-naming contract.
+- Fix `docs/upgrading.md` rollback section: (a) the stale `deploy-state.json` → `deploy.json` (corrected on PR #88; ensure it lands), and (b) **stop framing "downgrade then `connect --force`" as universally lossless** — same-generation rollback is the normal path, but cross-v0.9 rollback needs the cleanup from Concern 1.
 
-**Rollback RUNBOOK (document in upgrading.md):**
-1. Local: `cc-clip update --to vGOOD` (auto-verifies + rolls back on failure) — or `CC_CLIP_VERSION=vGOOD` install.sh once P0 lands.
-2. Per host: `cc-clip connect <host> --force` (re-uploads the good binary; idempotent hook merge + owner-prefix union cleanly replace the bad managed command). Use `cc-clip hosts list` (`LastDeployedVersion`) to drive the fan-out.
-3. Verify: `cc-clip doctor <host>` / `/health`.
+**P1 additions:**
+- Remote `deploy.json` one-deep backup (`deploy.json.bak`) on `WriteRemoteState`.
+- (Optional) remote binary sidecar (`cc-clip.bak`) mirroring the local `.bak`. Evaluate need vs. complexity; likely defer.
 
-## Concern 3 — npm / npx distribution prep ("leave room")
+**Rollback RUNBOOK (document):**
+1. Local: `cc-clip update --to vGOOD` (auto-verifies + rolls back) — or `CC_CLIP_VERSION=vGOOD` install.sh once P0 lands.
+2. Per host: `cc-clip connect <host> --force` (re-uploads good binary; owner-prefix union cleanly replaces the bad managed command). `cc-clip hosts list` (`LastDeployedVersion`) drives fan-out.
+3. **Cross-v0.9 caveat:** an older binary does NOT understand `--opencode`/`--agy`/per-adapter state; clean/redeploy those before relying on it.
+4. Verify: `cc-clip doctor <host>` / `/health`.
 
-Goal: future `npm i -g cc-clip` / `npx cc-clip@x.y.z` without a second source of truth.
+## Concern 3 — npm / npx distribution (REVISED main approach)
 
-**Design (scaffold now, publish later):**
-- `package.json` with a `bin` entry → a Node bootstrap (`postinstall` or lazy on first `bin` run) that **reuses the existing contract**: GitHub Releases URL + `cc-clip_{version}_{os}_{arch}.tar.gz` + `checksums.txt` verify. The npm semver maps to the GitHub tag (`npx cc-clip@0.9.0` → tag `v0.9.0`); pinning is intrinsic to npm (unlike install.sh's `/latest`).
-- **Reuse:** os/arch normalization, checksum verify, macOS Gatekeeper re-sign (port install.sh's logic to Node). **Add:** Windows os/arch (install.sh omits it; npm's main value is cross-platform install — `.goreleaser.yaml` already builds a zip for windows per the release-contract grep).
-- **Leave-room measures (do these even before publishing):**
-  - Treat the asset-naming string as the ONE contract; when the npm bootstrap lands, **add its asset-name reference to the `make release-preflight` + `release.yml` contract grep** so goreleaser ↔ install.sh ↔ update.go ↔ npm stay in lockstep.
-  - Ensure Windows assets are first-class in goreleaser naming so the npm wrapper can target them.
-  - Keep the binary `--version` / checksum behavior stable (the npm bootstrap depends on both).
+**Main approach = entry package + per-platform binary packages (NOT bootstrap-download).** Follow the esbuild/@swc/turbo pattern:
+- An entry package (`cc-clip`) with `optionalDependencies` on per-platform packages (`@cc-clip/darwin-arm64`, `@cc-clip/linux-amd64`, `@cc-clip/win32-x64`, …), each declaring `os`/`cpu` so npm installs ONLY the matching platform binary. The entry `bin` resolves to the installed platform package's binary. npm pinning is intrinsic (`npm i -g cc-clip@0.9.0` / `npx cc-clip@0.9.0` → the matching version).
+- **GitHub-Release bootstrap-download is a FALLBACK/rescue path only** (e.g. unsupported platform or a `postinstall` that fetches+verifies the asset). Not the primary mechanism.
+- `npx` = one-shot / version-pinned rescue (it is `npm exec`; remote packages carry prompt/cache semantics). `npm i -g` = long-term install.
+- **dist-tags:** stable → `latest`; prereleases → `next`/`beta` (never publish a prerelease as `latest`). **Bad version → `npm deprecate`, NOT unpublish** (unpublish breaks reproducibility/lockfiles).
+- Map npm semver ↔ GitHub tag; the per-platform packages carry the same binary goreleaser produces.
 
-## Concern 4 — Process / 流程对策 (emphasis)
+**Leave-room measures (before publishing):**
+- Asset-naming string stays the ONE contract; when npm lands, add its references to `make release-preflight` + `release.yml` grep so goreleaser ↔ install.sh ↔ update.go ↔ npm stay in lockstep.
+- Make Windows assets first-class in goreleaser naming (install.sh omits Windows; npm's main value is cross-platform incl. Windows).
+- Keep binary `--version`/checksum stable.
 
-- **Upgrade runbook + Rollback runbook** in `docs/upgrading.md` (per Concerns 1–2 above), including the per-host fan-out via the hosts registry and the v0.7.0 hazard.
-- **CI release gate — migration convergence:** add a release-gated test (beyond the existing unit tests) that (a) a legacy boolean-only `deploy.json` → NEW binary read → `migrateNotifyState` round-trips, and (b) **downgrade protection**: a binary with `SchemaVersion < remote` refuses to clobber (warn/abort or require `--force-downgrade`). This is the safety net for "new version is buggy."
-- **Release sequencing:** land P0 (deploy-state `SchemaVersion` + install.sh pinning) **before** the first public v0.9.0 tag — once users deploy a state file without the version field, downgrade protection can only be best-effort.
-- **release-preflight** stays the single contract guard; extend it as npm lands.
+## Concern 4 — Supply-chain integrity (P1)
+
+- **Fix the cross-arch gap:** `downloadReleaseBinary` (`main.go:1798-1804`) must verify `checksums.txt` like install.sh/update do — currently it does not, so the cross-arch connect path trusts an unverified tarball.
+- **Beyond checksum (same-origin):** plan provenance, not just integrity — npm **trusted publishing / provenance** when npm lands; GitHub Release **signing / build attestation** (e.g. `gh attestation` / cosign) so the binary's origin is verifiable, not just its transport.
+
+## Concern 5 — Process / 流程对策
+
+- **Runbooks** in `docs/upgrading.md`: upgrade + rollback (per Concerns 1–2), per-host fan-out via hosts registry, the v0.7.0 hazard, and the cross-v0.9 caveat.
+- **Sync the release gate to PR-CI level:** `release.yml` currently runs only `make test` + contract grep; before v0.9.0 it should also run build/vet/test-race/staticcheck/govulncheck (match `ci.yml`), **plus** a state-migration + downgrade-protection fixture (legacy `deploy.json` → new binary round-trip; newer-state-vs-older-binary guard).
+- **Release sequencing:** land P0 (`SchemaVersion`, install.sh pinning, upgrading.md runbook fixes) **before** the first public v0.9.0 tag.
+- **release-notes requirement (if promising rollback):** v0.9.0 notes MUST state — same-generation rollback is a normal path; **cross-v0.9 downgrade requires cleanup/redeploy** because the older binary does not understand `--opencode`/`--agy`/per-adapter state.
+- `make release-preflight` stays the single contract guard; extend as npm lands.
 
 ---
 
 ## Prioritized recommendations
 
-- **P0 (before public v0.9.0 tag):** (1) `DeployState.SchemaVersion` + downgrade-protection guard; (2) `install.sh` version pinning via `CC_CLIP_VERSION`; (3) upgrade + rollback runbooks in `upgrading.md`.
-- **P1:** remote `deploy.json.bak`; CI migration-convergence + downgrade-protection gate; document the v0.7.0 hazard prominently.
-- **P2:** npm/npx package scaffolding (bin bootstrap reusing the asset contract + Windows + checksum/Gatekeeper) — publish when ready; wire its naming into release-preflight. Optional remote binary sidecar (evaluate need first).
+- **P0 (before public v0.9.0 tag):** (1) `DeployState.SchemaVersion` + forward downgrade guard; (2) `install.sh` `CC_CLIP_VERSION` pinning; (3) `docs/upgrading.md` — fix `deploy.json` name + cross-v0.9 rollback runbook (no false "lossless `--force`" promise).
+- **P1:** cross-arch `downloadReleaseBinary` checksum verify; sync `release.yml` to PR-CI gate + add migration/downgrade fixture; remote `deploy.json.bak`; document v0.7.0 hazard prominently.
+- **P2:** npm/npx — entry+platform-packages design (optionalDependencies, os/cpu), bootstrap as fallback, dist-tags + deprecate policy, provenance; publish when ready; wire naming into release-preflight. Optional remote binary sidecar (evaluate first).
 
 ## Out of scope / non-goals
 
-- A bespoke updater protocol — `update --to` + immutable GitHub tags already cover versioned forward/back.
+- A bespoke updater protocol — `update --to` + immutable tags cover versioned forward/back.
 - Auto-downgrade on bug detection — rollback stays an explicit operator action.
-- Changing the asset-naming contract — it is load-bearing; only ADD channels that match it.
+- Changing the asset-naming contract — load-bearing; only ADD channels that match it.
 - Migrating away from the SSH/RemoteForward model.
+
+## Recommended execution order
+
+1. **P0 (immediate, pre-tag):** `SchemaVersion`, install.sh pinning, upgrading.md runbook + `deploy.json` fix.
+2. **P1:** cross-arch checksum verify, release-gate sync + migration/downgrade fixture, `deploy.json.bak`.
+3. **npm/npx:** revise to entry+platform-packages design first; implement later.
+4. Do NOT advance multi-target or npm code implementation ahead of P0.
