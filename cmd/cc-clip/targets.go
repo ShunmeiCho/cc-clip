@@ -104,7 +104,7 @@ func flagInArgs(args []string, name string) bool {
 const targetMenu = `Select deployment target:
   1) claude       clipboard shim + claude-notify
   2) codex        X11 bridge + codex-notify
-  3) opencode     clipboard shim only (no Claude/Codex config changes)
+  3) opencode     clipboard shim + opencode-notify
   4) agy          Antigravity (agy-notify plugin; clipboard transport pending)
   5) all          everything above (Antigravity clipboard excluded until resolved)
 `

@@ -20,7 +20,7 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | `cc-clip connect <host>` | Deploy to remote (incremental; default target: Claude) |
 | `cc-clip connect <host> --claude` | Claude Code: clipboard shim + claude-notify (default) |
 | `cc-clip connect <host> --codex` | Codex CLI **only**: Xvfb + x11-bridge + codex-notify, no Claude shim (v0.9.0 breaking; use `--all` for both) |
-| `cc-clip connect <host> --opencode` | opencode: clipboard shim only |
+| `cc-clip connect <host> --opencode` | opencode: clipboard shim + opencode-notify |
 | `cc-clip connect <host> --agy` | Antigravity: agy-notify (alias `--antigravity`) |
 | `cc-clip connect <host> --all` | Every target (Claude + Codex + opencode + agy) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |

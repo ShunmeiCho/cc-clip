@@ -156,7 +156,7 @@ Deploy (local -> remote):
 Deployment targets (connect/setup; choose at most one selector):
     --claude         Claude Code: clipboard shim + claude-notify (default)
     --codex          Codex CLI ONLY: Xvfb + x11-bridge + codex-notify (no Claude shim)
-    --opencode       opencode: clipboard shim only (no Claude/Codex config)
+    --opencode       opencode: clipboard shim + session.idle notify plugin
     --agy            Antigravity: agy-notify (alias --antigravity)
     --all            Everything above
   With no selector: interactive menu on a TTY, or the {Claude} default on a
@@ -188,7 +188,7 @@ Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
     --display        X11 display (default: $DISPLAY)
     --port           cc-clip daemon port (default: 18339)
-  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | agy-notify)
+  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | agy-notify | opencode-notify)
                      reads agent hook JSON from stdin`)
 }
 

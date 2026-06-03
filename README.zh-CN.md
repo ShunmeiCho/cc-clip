@@ -11,7 +11,7 @@
 </p>
 <h1 align="center">cc-clip</h1>
 <p align="center">
-  <b>为 Claude Code、Codex CLI 和 opencode 通过 SSH 粘贴图片，并为 Claude Code 和 Codex CLI 提供桌面通知。</b>
+  <b>为 Claude Code、Codex CLI 和 opencode 通过 SSH 粘贴图片，并为 Claude Code、Codex CLI 和 opencode 提供桌面通知。</b>
 </p>
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
@@ -76,7 +76,7 @@
   Codex notify     → cc-clip notify             → SSH tunnel → local daemon → macOS/cmux notification
 ```
 
-一个工具即可。无需修改 Claude Code、Codex 或 opencode。三者都能使用剪贴板；通知已为 Claude Code 和 Codex CLI 接好。
+一个工具即可。无需修改 Claude Code、Codex 或 opencode。三者都能使用剪贴板；通知已为 Claude Code、Codex CLI 和 opencode 接好。
 
 ## 前置条件
 
@@ -162,7 +162,7 @@ cc-clip setup myserver
 | 只用 Claude Code | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不需要 |
 | Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **加上**远程的 Xvfb + x11-bridge（见下文） | ✅ **需要** — 用于 `apt`/`dnf install xvfb` 的 passwordless `sudo`，或先手动安装 |
 | 只用 Codex CLI | `cc-clip setup myserver --codex` | 仅 Xvfb + x11-bridge — **不装** Claude shim | ✅ **需要** — 同上 Xvfb `sudo` |
-| 只用 opencode | `cc-clip setup myserver` | 仅 shim — opencode 通过和 Claude Code 相同的 xclip / wl-paste 路径读取剪贴板，因此不需要 `--codex` | ❌ 不需要 |
+| 只用 opencode | `cc-clip setup myserver --opencode` | 剪贴板 shim + opencode-notify（转发 session.idle）；opencode 通过和 Claude Code 相同的 xclip / wl-paste 路径读取剪贴板 | ❌ 不需要 |
 | 只用 Antigravity (agy) | `cc-clip setup myserver --agy` | agy 通知插件（`cc-clip-notify`）— 目前仅通知，剪贴板粘贴待实现；需要远程已安装 `agy` | ❌ 不需要 |
 | Windows 本地机器 | 见 [Windows Quick Start](docs/windows-quickstart.md) | 不同的工作流 — 不要使用 `--codex` | ❌ 不需要 |
 
@@ -322,7 +322,7 @@ graph LR
 |-----|----------------------------------------|
 | Codex CLI | ✅ 如果远程存在 `~/.codex/` |
 | Claude Code | ✅ 自动管理 `~/.claude/settings.json` hooks |
-| opencode | ❌ 尚未开箱支持 |
+| opencode | ✅ 若远程已安装 `opencode` 且选择了 opencode 目标（`--opencode`/`--all`） |
 
 完整设置、Claude Code hooks、nonce 注册和故障排查见：**[docs/notifications.md](docs/notifications.md)**。
 

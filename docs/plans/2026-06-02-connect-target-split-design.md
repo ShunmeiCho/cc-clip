@@ -60,7 +60,7 @@
 |---|---|---|---|
 | `--claude` | shim | claude-notify | |
 | `--codex` | x11 | codex-notify | breaking：不再含 shim |
-| `--opencode` | shim | **无** | 仅 shim；不碰 `~/.claude/settings.json`、`~/.codex/config.toml`；opencode-notify 步骤 4 引入 |
+| `--opencode` | shim | **opencode-notify** | shim + opencode 通知插件（session.idle）；不碰 `~/.claude/settings.json`、`~/.codex/config.toml`；步骤 7 已落地 |
 | `--antigravity` | **pending(probe)** | antigravity-notify | notify 可先做（bundled plugin）；clipboard 待远端 strace |
 | `--all` | shim + x11 (+antigravity-notify) | claude-notify + codex-notify + antigravity-notify | **不含** antigravity clipboard（未定性前） |
 | 无参 (TTY) | 菜单 | | connect 默认未触发；菜单见 §5 |
@@ -90,7 +90,7 @@ func parseDeployTargets(args []string) (t DeployTargets, explicit bool, err erro
 Select deployment target:
   1) claude       clipboard shim + claude-notify
   2) codex        X11 bridge + codex-notify
-  3) opencode     clipboard shim only (no Claude/Codex config changes)
+  3) opencode     clipboard shim + opencode-notify
   4) antigravity  antigravity-notify plugin (clipboard transport pending)
   5) all          everything above (antigravity clipboard excluded until resolved)
 >
@@ -128,7 +128,7 @@ Legend: ALLOWED / ERROR(exit 2) / NO-OP(warn)
 | claude-notify | `~/.claude/settings.json` hooks → `cc-clip-hook`（或直接 runner） | hook JSON in；**exit 0，fire-and-forget**，无 stdout 要求（CLAUDE.md 现有原则） |
 | codex-notify | `~/.codex/config.toml` `notify=["cc-clip","notify",...]` | codex stdin；exit 0 |
 | antigravity-notify | `agy` Stop hook（plugin `hooks.json`） | hook JSON in；**必须 stdout 吐合法放行 JSON 如 `{"decision":""}`**，否则可能阻止 agy 停止——与 fire-and-forget 相反 |
-| opencode-notify（步骤4） | `~/.opencode/plugins/cc-clip-notify.js` 真 plugin 事件回调 | JS 反向调 cc-clip |
+| opencode-notify（步骤7,已落地） | `~/.config/opencode/plugins/cc-clip-notify.js` 真 plugin 事件回调（session.idle） | JS 子进程 stdin 喂 JSON 反向调 cc-clip |
 
 ```go
 type PluginAdapter interface {
@@ -228,7 +228,7 @@ type NotifyDeployState struct {
 
 - **读时迁移** `migrateNotifyState`（在 `ReadRemoteState` unmarshal 后调用）：`HookInstalled→claude-notify`、`CodexInjected→codex-notify`（Source=config）；清空旧指针使下次 Write 只持久化新 schema；`Adapters!=nil` 守卫幂等。
 - per-adapter 谓词：`NeedsAdapterInstall/NeedsAdapterVerify/AdapterInstalled`；`NeedsNotifySetup` 保留为 master-switch shim 减少 call-site 改动。
-- **opencode-notify source 未定**：v0.9.0 不装（`--opencode`=仅 shim），Source 值留步骤 4 决定。
+- **opencode-notify source = config**：步骤 7 已落地，`--opencode`/`--all` 安装 opencode notify 插件；`applyAdapterState` 记 Source=config、Verified=false。
 - **状态是 cache、`Verify()` 是权威（关键原则，来自复核）**：`WriteRemoteState` 失败仅 warning（`main.go:938`）、doctor 仅报告缺失（`doctor/remote.go:198`），故远端 `deploy.json` 可能缺失/陈旧。per-adapter 真实状态**必须由 `Verify()` 检查远端实际 plugin/config 文件**得出；state 缺失时**不得**盲目反复 marketplace 安装——先 `Verify()` 再决定是否装。
 
 ## 12. setup 入口收口
