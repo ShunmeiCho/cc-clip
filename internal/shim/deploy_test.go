@@ -1079,6 +1079,30 @@ func TestStampSchemaVersionNeverLowers(t *testing.T) {
 	}
 }
 
+// TestStampSchemaVersionForceDiscardWritesCurrent documents the `connect --force`
+// outcome at the unit level. The --force branch in cmdConnect sets remoteState=nil
+// and builds a FRESH DeployState (SchemaVersion=0, the zero value) — it does NOT
+// preserve the newer remote's schema. WriteRemoteState then stamps that fresh
+// state to currentDeploySchemaVersion. This is the honest, by-design downgrade:
+// --force discards the newer remote's deploy-state fields and rewrites deploy.json
+// with THIS binary's schema. The never-lower clause in stampSchemaVersion does NOT
+// rescue this path because there is no preserved older->newer value to compare
+// against — the fresh state starts at 0.
+func TestStampSchemaVersionForceDiscardWritesCurrent(t *testing.T) {
+	// Mirror the --force build: newDeployState(..., remoteState=nil) yields a
+	// state whose SchemaVersion is the zero value, regardless of what the remote
+	// (possibly newer) actually carried.
+	fresh := &DeployState{BinaryHash: "sha256:force"}
+	if fresh.SchemaVersion != 0 {
+		t.Fatalf("precondition: fresh --force-derived state SchemaVersion = %d, want 0", fresh.SchemaVersion)
+	}
+
+	stampSchemaVersion(fresh)
+	if fresh.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("--force write stamped SchemaVersion = %d, want current %d", fresh.SchemaVersion, currentDeploySchemaVersion)
+	}
+}
+
 // TestSchemaVersionOmittedWhenZero verifies the omitempty tag keeps legacy
 // JSON byte-clean: a state that was never stamped writes no schema_version key.
 func TestSchemaVersionOmittedWhenZero(t *testing.T) {

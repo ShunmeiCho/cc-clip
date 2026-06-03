@@ -849,8 +849,8 @@ remote has a valid claude binary installed.
 	// operator explicitly passes --force. Runs before any remote mutation.
 	if remoteState.IsNewerSchema() {
 		if force {
-			log.Printf("      warning: remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); --force given, overwriting anyway.",
-				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
+			log.Printf("      warning: remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); --force DISCARDS the newer remote's deploy-state fields and rewrites deploy.json with this older binary's schema v%d (data loss) — upgrade this cc-clip instead to preserve them.",
+				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion(), shim.CurrentDeploySchemaVersion())
 		} else {
 			log.Fatalf("      remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); refusing to overwrite it.\n      Upgrade this cc-clip, or pass --force to override.",
 				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())

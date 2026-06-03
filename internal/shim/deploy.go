@@ -114,12 +114,19 @@ func stampSchemaVersion(state *DeployState) {
 	if state == nil {
 		return
 	}
-	// Never LOWER an existing schema version. An older binary re-writing a
-	// state deployed by a NEWER cc-clip (e.g. `uninstall --codex`, or
-	// `connect --force`) must not silently downgrade schema_version — that
-	// would mask the very newer-schema condition IsNewerSchema/the connect
-	// guard exist to surface. Stamp forward only when the existing value is
-	// older than this binary's.
+	// Never LOWER an existing schema version. This clause only protects write
+	// paths that PRESERVE an existing remoteState (e.g. `uninstall --codex`,
+	// which reads the remote state and rewrites it in place): an older binary
+	// re-writing a state deployed by a NEWER cc-clip must not silently downgrade
+	// schema_version, since that would mask the newer-schema condition
+	// IsNewerSchema/the connect guard exist to surface.
+	//
+	// It does NOT cover `connect --force`. That path intentionally sets
+	// remoteState=nil and builds a FRESH state (SchemaVersion=0), so there is no
+	// preserved newer value to keep — --force is an explicit operator override
+	// that DISCARDS the remote's deploy-state and rewrites deploy.json with this
+	// binary's schema by design. The fresh state stamps forward from 0 to
+	// currentDeploySchemaVersion here, which is the honest --force outcome.
 	if state.SchemaVersion < currentDeploySchemaVersion {
 		state.SchemaVersion = currentDeploySchemaVersion
 	}
