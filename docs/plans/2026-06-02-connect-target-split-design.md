@@ -270,13 +270,15 @@ grep -E 'xclip|wl-paste|xsel|wl-copy|osc52|tmux|uploaded_media' /tmp/agy.execve
 
 ## 15. 实施顺序（含 critic 指出的 schema→flag 依赖）
 
-1. **DeployState per-adapter schema + 迁移**（§11）——是 flag 矩阵 adapter 级断言的**前置**，先落。
-2. 抽 `internal/plugin` 接口 + `cc-clip plugin run <name>` runner，旧入口降级薄封装，**零行为变更**（含 antigravity-notify 的 Stop-JSON 契约分支）。
-3. 迁移 claude-notify / codex-notify adapters。
-4. `internal/install` InstallSourceChain + 规范 AdapterSource + 失败分类 + consent gate + 新 exitcode。
-5. 引入 `--claude/--codex/--opencode/--antigravity/--all` + 菜单 + `parseDeployTargets`(判别器) + 矩阵；connect/setup 同步 breaking。
-6. **Antigravity**：antigravity-notify bundled adapter + hook-fire smoke（装 probe plugin 跑 `agy` 确认 Stop hook 触发）；clipboard 待 strace。
-7. opencode-notify 真 plugin（步骤 4），剪贴板仍 shim。
+> **进度**（截至 `5d0883f`，分支 `fix/issue-84-settings-hooks` / PR #86）：✅ 完成 · ⏳ 待办。步骤 1–5 已落地并经对抗式审查（每步两轮：security + go-idiom + 约束合规 → 综合 → 怀疑者反驳，零 confirmed CRITICAL/HIGH）；6–7 待办。
+
+1. ✅ **DeployState per-adapter schema + 迁移**（§11）——是 flag 矩阵 adapter 级断言的**前置**，先落。`d43c779`(step 1)。
+2. ✅ 抽 `internal/plugin` 接口 + `cc-clip plugin run <name>` runner，旧入口降级薄封装，**零行为变更**（含 antigravity-notify 的 Stop-JSON 契约分支）。`786cc50`(step 2)。
+3. ✅ 迁移 claude-notify / codex-notify adapters。`a5a822d`(3a/3b)、`0f608be`(3c)。
+4. ✅ `internal/install` InstallSourceChain + 规范 AdapterSource + 失败分类 + consent gate + 新 exitcode。`dd30531`(step 4/7)。
+5. ✅ 引入 `--claude/--codex/--opencode/--antigravity/--all` + 菜单 + `parseDeployTargets`(判别器) + 矩阵；connect/setup 同步 breaking。`25d5947`(5.1 parser)、`5b86477`(5.2 菜单/非TTY)、`0286f83`(5.3a 容错 host 解析)、`5a1e269`+`d453a38`(5.3b 目标解析接线 + exit-2 矩阵 + legacy `--codex` 提示)、`489eea2`+`7d2ce09`+`5d0883f`(5.3c per-target 门控 + 非对称适配器测试 + 措辞修复)。**Option A 已拍板**：纯 `--codex`/`--agy` 跳过 shim 安装、绝不卸载既有 shim。
+6. ⏳ **Antigravity**：antigravity-notify bundled adapter + hook-fire smoke（装 probe plugin 跑 `agy` 确认 Stop hook 触发）；clipboard 待 strace。**（下一步）**
+7. ⏳ opencode-notify 真 plugin（步骤 4），剪贴板仍 shim。**（agy 之后）**
 
 ## 16. 需协调修改的文件
 
@@ -305,7 +307,7 @@ grep -E 'xclip|wl-paste|xsel|wl-copy|osc52|tmux|uploaded_media' /tmp/agy.execve
 2. ~~HealthVerified 迁移~~ → **锁定：迁移为 per-adapter `Verified=false`，强制重验**（旧全局 probe 不足以证明每 adapter 健康）。
 3. ~~legacy *bool 保留期~~ → **锁定：保留至 v1.0（整个 v0.x）**，远端状态文件长寿，保留成本低。
 4. **Antigravity clipboard**（仍待你远端 `strace`，§13）；media-file 若走 PUSH 还需定触发器 UX。
-5. **legacy 提示可否 env 抑制**（`CC_CLIP_NO_DEPRECATION_NOTICE`）供脚本化 `--codex`？
+5. ~~legacy 提示可否 env 抑制~~ → **锁定并实现：`CC_CLIP_NO_DEPRECATION_NOTICE` 仅抑制 stderr 提示、不改 `--codex` 安装语义**（5.3b `maybeLegacyCodexNotice`，`5a1e269`）。
 
 ## 19. 风险
 
