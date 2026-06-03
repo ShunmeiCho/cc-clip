@@ -71,9 +71,10 @@
   Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb   → Codex CLI
   opencode:              Mac clipboard     → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
 
-通知 (Claude Code + Codex CLI):
+通知 (Claude Code + Codex CLI + opencode):
   Claude Code hook → cc-clip-hook → SSH tunnel → local daemon → macOS/cmux notification
   Codex notify     → cc-clip notify             → SSH tunnel → local daemon → macOS/cmux notification
+  opencode idle    → cc-clip plugin run opencode-notify → SSH tunnel → local daemon → macOS/cmux notification
 ```
 
 一个工具即可。无需修改 Claude Code、Codex 或 opencode。三者都能使用剪贴板；通知已为 Claude Code、Codex CLI 和 opencode 接好。
@@ -320,7 +321,7 @@ graph LR
 
 | CLI | 是否由 `cc-clip connect` 自动配置？ |
 |-----|----------------------------------------|
-| Codex CLI | ✅ 如果远程存在 `~/.codex/` |
+| Codex CLI | ✅ 若选择了 Codex 目标（`--codex`/`--all`）且远程存在 `~/.codex/` |
 | Claude Code | ✅ 自动管理 `~/.claude/settings.json` hooks |
 | opencode | ✅ 若远程已安装 `opencode` 且选择了 opencode 目标（`--opencode`/`--all`） |
 

@@ -65,9 +65,10 @@ Image paste:
   Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb   → Codex CLI
   opencode:              Mac clipboard     → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
 
-Notifications (Claude Code + Codex CLI):
+Notifications (Claude Code + Codex CLI + opencode):
   Claude Code hook → cc-clip-hook → SSH tunnel → local daemon → macOS/cmux notification
   Codex notify     → cc-clip notify             → SSH tunnel → local daemon → macOS/cmux notification
+  opencode idle    → cc-clip plugin run opencode-notify → SSH tunnel → local daemon → macOS/cmux notification
 ```
 
 One tool. No changes to Claude Code, Codex, or opencode. Clipboard works for all three; notifications are wired for Claude Code, Codex CLI, and opencode.
@@ -317,7 +318,7 @@ Remote hook events (Claude finishing, tool approval requests, image paste events
 
 | CLI | Auto-configured by `cc-clip connect`? |
 |-----|----------------------------------------|
-| Codex CLI | ✅ If `~/.codex/` exists on the remote |
+| Codex CLI | ✅ If a Codex target (`--codex`/`--all`) is selected and `~/.codex/` exists |
 | Claude Code | ✅ Managed hooks in `~/.claude/settings.json` |
 | opencode | ✅ If `opencode` is installed and an opencode target (`--opencode`/`--all`) is selected |
 

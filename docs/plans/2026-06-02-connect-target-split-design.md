@@ -36,7 +36,7 @@
    media-file (SPECULATIVE) → Antigravity 候选之一，未定（见 §9）
 
 轴 B integration adapter（通知，cc-clip 管生命周期；CLI 配置只是启动器）
-   claude-notify / codex-notify / opencode-notify(步骤4) / antigravity-notify
+   claude-notify / codex-notify / opencode-notify / antigravity-notify
 
 轴 C install source（每 adapter 的安装来源，InstallSourceChain 按失败分类决策）
    marketplace(git源钉版, consent-gated) → bundled(cc-clip 上传) → config(legacy 直写)
@@ -62,7 +62,7 @@
 | `--codex` | x11 | codex-notify | breaking：不再含 shim |
 | `--opencode` | shim | **opencode-notify** | shim + opencode 通知插件（session.idle）；不碰 `~/.claude/settings.json`、`~/.codex/config.toml`；步骤 7 已落地 |
 | `--antigravity` | **pending(probe)** | antigravity-notify | notify 可先做（bundled plugin）；clipboard 待远端 strace |
-| `--all` | shim + x11 (+antigravity-notify) | claude-notify + codex-notify + antigravity-notify | **不含** antigravity clipboard（未定性前） |
+| `--all` | shim + x11 (+antigravity-notify) | claude-notify + codex-notify + opencode-notify + antigravity-notify | **不含** antigravity clipboard（未定性前） |
 | 无参 (TTY) | 菜单 | | connect 默认未触发；菜单见 §5 |
 | 无参 (非 TTY) | connect=shim / setup=shim | | connect→claude+告警；setup→claude+告警（v0.9.0：与 connect 一致回退 {Claude}，绝不静默 all/sudo） |
 | 修饰：`--token-only`/`--no-hooks`/`--hooks`/`--no-notify`/`--yes`/`--no-plugin-marketplace`/`--force` | | | 见 §6 矩阵 |

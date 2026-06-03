@@ -25,7 +25,7 @@ Image paste notifications help you track what was pasted without leaving your wo
 | CLI | Auto-configured by `cc-clip connect`? | How |
 |-----|----------------------------------------|-----|
 | Claude Code | ✅ Managed hooks in `~/.claude/settings.json` | Wired during `cc-clip connect` |
-| Codex CLI | ✅ If `~/.codex/` exists on the remote | Wired during `cc-clip connect` |
+| Codex CLI | ✅ If a Codex target (`--codex`/`--all`) is selected and `~/.codex/` exists | Wired during `cc-clip connect` |
 | opencode | ✅ Plugin dropped into `~/.config/opencode/plugins/` if `opencode` is installed | Wired during `cc-clip connect` when an opencode target (`--opencode`/`--all`) is selected |
 
 ## Setup (Claude Code)
