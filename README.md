@@ -168,7 +168,7 @@ Pick the row that matches your remote workflow. These are the only decisions you
 >
 > If your remote permits neither passwordless `sudo` nor a one-off manual install, stick with `cc-clip setup myserver` (without `--codex`). Clipboard paste still works for Claude Code and opencode; only the Codex CLI path needs Xvfb.
 
-> **Rule of thumb:** Use `--codex` **only** if you actually run Codex CLI on the remote. It is otherwise unnecessary overhead.
+> **Rule of thumb:** `--codex` installs Codex support **only** (Xvfb + x11-bridge, no Claude shim). Use it if you run Codex CLI and not Claude Code on this host; use `--all` if you run **both**; plain `setup` (or `--claude`) covers Claude Code and opencode.
 
 ### Step 3 (Codex CLI only): what `--codex` adds
 
@@ -238,12 +238,12 @@ If any step fails, the most common fix is `cc-clip connect myserver --codex --fo
 
 ### `setup` vs `connect` — which to run when
 
-You only need to know these three moves. Append `--codex` to the `setup` or `connect` commands below if you use Codex CLI on the remote; otherwise omit it.
+You only need to know these three moves. The right-hand column is for hosts running **both** Claude Code and Codex CLI (use `--all`); if you run **only** Codex CLI, use `--codex` in its place. The left column (plain commands) covers Claude Code and opencode.
 
-| Situation | Command (Claude Code only) | Command (also running Codex CLI) |
+| Situation | Command (Claude Code only) | Command (Claude Code + Codex CLI) |
 |---|---|---|
-| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --codex` |
-| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --codex --force` |
+| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --all` |
+| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --all --force` |
 | **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
 
 `setup` is the first-time path (deps + SSH config + daemon + deploy). `connect` is the repair/redeploy path — same deploy steps, but it assumes SSH config and the local daemon are already in place.
@@ -369,7 +369,7 @@ The 10 you'll actually use:
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
-| `cc-clip setup <host> --codex` | Full setup with Codex CLI support |
+| `cc-clip setup <host> --all` | Full setup for Claude Code + Codex (`--codex` alone = Codex only) |
 | `cc-clip connect <host> --force` | Repair/redeploy (when DISPLAY, x11-bridge, or tunnel is stuck) |
 | `cc-clip connect <host> --token-only` | Sync rotated token without redeploying binaries |
 | `cc-clip doctor --host <host>` | End-to-end health check |

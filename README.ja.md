@@ -171,7 +171,7 @@ cc-clip setup myserver
 >
 > リモートで passwordless `sudo` も一度きりの手動インストールも許可されていない場合は、`cc-clip setup myserver`（`--codex` なし）を使ってください。Claude Code と opencode のクリップボード貼り付けはそのまま動きます。Xvfb が必要なのは Codex CLI 経路だけです。
 
-> **目安:** リモートで本当に Codex CLI を動かす場合だけ `--codex` を使ってください。それ以外では不要なオーバーヘッドです。
+> **目安:** `--codex` は Codex サポート**のみ**（Xvfb + x11-bridge、Claude shim は入りません）をインストールします。この host で Codex CLI を使い Claude Code は使わない場合に指定してください。**両方**を使う場合は `--all`、通常の `setup`（または `--claude`）は Claude Code と opencode をカバーします。
 
 ### Step 3（Codex CLI のみ）: `--codex` が追加するもの
 
@@ -241,12 +241,12 @@ xclip -selection clipboard -t TARGETS -o    # 期待値: image/png
 
 ### `setup` と `connect` — いつどちらを使うか
 
-覚えるべき操作は 3 つだけです。リモートで Codex CLI を使う場合は、下の `setup` または `connect` コマンドに `--codex` を追加してください。使わない場合は省略します。
+覚えるべき操作は 3 つだけです。右の列は **Claude Code と Codex CLI の両方**を動かす host 向けです（`--all` を使用）。Codex CLI **のみ**の場合は代わりに `--codex` を使ってください。左の列（通常のコマンド）は Claude Code と opencode をカバーします。
 
-| 状況 | コマンド（Claude Code のみ） | コマンド（Codex CLI も使う場合） |
+| 状況 | コマンド（Claude Code のみ） | コマンド（Claude Code + Codex CLI） |
 |---|---|---|
-| **この host で初回インストール** | `cc-clip setup myserver` | `cc-clip setup myserver --codex` |
-| **状態が壊れている**（DISPLAY が空、x11-bridge がない、tunnel の probe が通らない） | `cc-clip connect myserver --force` | `cc-clip connect myserver --codex --force` |
+| **この host で初回インストール** | `cc-clip setup myserver` | `cc-clip setup myserver --all` |
+| **状態が壊れている**（DISPLAY が空、x11-bridge がない、tunnel の probe が通らない） | `cc-clip connect myserver --force` | `cc-clip connect myserver --all --force` |
 | **Daemon が token をローテートし、リモートが古い token のまま** | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
 
 `setup` は初回パスです（依存関係 + SSH config + daemon + deploy）。`connect` は修復/再デプロイ用のパスです。deploy 手順は同じですが、SSH config とローカル daemon はすでにあるものとして扱います。
@@ -370,7 +370,7 @@ Windows ワークフローは専用の remote-paste hotkey（デフォルト: `A
 | コマンド | 説明 |
 |---------|-------------|
 | `cc-clip setup <host>` | **完全セットアップ**: deps、SSH config、daemon、deploy |
-| `cc-clip setup <host> --codex` | Codex CLI support を含む完全セットアップ |
+| `cc-clip setup <host> --all` | Claude Code + Codex 向けの完全セットアップ（`--codex` 単独 = Codex のみ） |
 | `cc-clip connect <host> --force` | 修復/再デプロイ（DISPLAY、x11-bridge、tunnel が詰まった場合） |
 | `cc-clip connect <host> --token-only` | バイナリを再デプロイせず、ローテート済み token だけを同期 |
 | `cc-clip doctor --host <host>` | エンドツーエンド health check |
