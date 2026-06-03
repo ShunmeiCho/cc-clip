@@ -38,6 +38,31 @@ get_latest_version() {
     fi
 }
 
+# Resolve the release tag to install.
+#
+# Default: fetch the latest published release (/releases/latest).
+# Override: if CC_CLIP_VERSION is set and non-empty, pin that tag instead
+# (rollback channel). Accepts both "0.9.0" and "v0.9.0"; normalizes to a
+# leading "v" and validates a semver-like shape before use. Garbage is
+# rejected with a clear error rather than silently falling back to latest.
+#
+# Diagnostics go to stderr so the resolved tag stays clean on stdout.
+resolve_version() {
+    if [ -n "${CC_CLIP_VERSION:-}" ]; then
+        ver="v${CC_CLIP_VERSION#v}"
+        # vMAJOR.MINOR.PATCH with an optional prerelease/build suffix.
+        if ! echo "$ver" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "Error: CC_CLIP_VERSION='${CC_CLIP_VERSION}' is not a valid version tag (expected e.g. v0.9.0)" >&2
+            exit 1
+        fi
+        echo "Installing cc-clip ${ver} (pinned via CC_CLIP_VERSION)" >&2
+        echo "$ver"
+        return
+    fi
+
+    get_latest_version
+}
+
 download() {
     local url="$1" dest="$2"
     if command -v curl >/dev/null 2>&1; then
@@ -76,7 +101,7 @@ verify_checksum() {
 
 main() {
     PLATFORM=$(detect_platform)
-    VERSION=$(get_latest_version)
+    VERSION=$(resolve_version)
 
     if [ -z "$VERSION" ]; then
         echo "Error: could not determine latest version"
