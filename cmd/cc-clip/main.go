@@ -998,7 +998,14 @@ remote has a valid claude binary installed.
 		}
 		if !codexOk {
 			fmt.Println()
-			fmt.Println("Claude shim is ready, but Codex support failed.")
+			// Only claim the shim is ready when this run actually targeted it;
+			// pure --codex skips shim install (Step 5), so "Claude shim is ready"
+			// would be inaccurate there.
+			if shimTargeted(opts.targets) {
+				fmt.Println("Claude shim is ready, but Codex support failed.")
+			} else {
+				fmt.Println("Codex support failed.")
+			}
 			fmt.Println("Fix the issues above and re-run: cc-clip connect", host, "--codex")
 			os.Exit(1)
 		}
