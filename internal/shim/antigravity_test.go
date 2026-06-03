@@ -172,6 +172,13 @@ func TestBuildAntigravityPluginScript(t *testing.T) {
 	if strings.Contains(script, "plugin install --help") || strings.Contains(script, "plugin validate --help") {
 		t.Fatalf("script must not pass `--help` to agy plugin subcommands:\n%s", script)
 	}
+	// Lock the port plumbing all the way into the heredoc'd hooks.json: a
+	// regression that hardcoded the default port inside the script wrapper would
+	// pass every other test but silently break non-default-port deploys.
+	nonDefault := buildAntigravityPluginScript(9999)
+	if !strings.Contains(nonDefault, "env CC_CLIP_PORT=9999 cc-clip plugin run agy-notify") {
+		t.Fatalf("non-default port must be plumbed into the hooks.json command in the script:\n%s", nonDefault)
+	}
 }
 
 func TestEnsureRemoteAntigravityPluginSurfacesExecError(t *testing.T) {

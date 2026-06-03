@@ -313,4 +313,29 @@ func TestMergeNotifyDeployStateAgyAdapter(t *testing.T) {
 			t.Fatalf("un-targeted connect must preserve existing agy adapter: %+v", a)
 		}
 	})
+	// Locks the downgrade clause: a connect that targets agy but fails to install
+	// must downgrade a prior installed entry (not leave it claiming installed, and
+	// not drop it). Starting from nil never exercises this branch, so it is asserted
+	// against a seeded entry.
+	t.Run("attempted but not installed -> downgrades existing agy entry", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterAntigravityNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			agyAttempted:        true,
+			agyInstalled:        false,
+		})
+		a := state.Notify.Adapters[shim.AdapterAntigravityNotify]
+		if a == nil {
+			t.Fatal("downgrade must keep the entry, not drop it")
+		}
+		if a.Installed || a.Verified {
+			t.Fatalf("stale agy adapter must be downgraded to Installed=false, Verified=false: %+v", a)
+		}
+	})
 }
