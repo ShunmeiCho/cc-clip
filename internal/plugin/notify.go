@@ -177,3 +177,37 @@ func parseCodexNotifyPayload(payload string) (daemon.GenericMessagePayload, erro
 		Verified: true,
 	}, nil
 }
+
+// parseAntigravityNotifyPayload extracts a GenericMessagePayload from an
+// Antigravity (agy) Stop hook payload. Unlike Codex, the Antigravity Stop hook
+// stdin carries {"terminationReason": "...", "fullyIdle": bool, "error": "..."}
+// (no last-assistant-message), so it has its own parser and the title
+// "Antigravity"; the body is composed from those fields and is never empty.
+func parseAntigravityNotifyPayload(payload string) (daemon.GenericMessagePayload, error) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return daemon.GenericMessagePayload{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	return daemon.GenericMessagePayload{
+		Title:    "Antigravity",
+		Body:     antigravityStopBody(raw),
+		Urgency:  1,
+		Verified: true,
+	}, nil
+}
+
+// antigravityStopBody composes a human-readable body from the Antigravity Stop
+// payload, preferring an error, then the termination reason, with the idle
+// state as a fallback so the notification body is never empty.
+func antigravityStopBody(raw map[string]interface{}) string {
+	if e, _ := raw["error"].(string); strings.TrimSpace(e) != "" {
+		return "Error: " + e
+	}
+	if r, _ := raw["terminationReason"].(string); strings.TrimSpace(r) != "" {
+		return r
+	}
+	if idle, _ := raw["fullyIdle"].(bool); idle {
+		return "Idle"
+	}
+	return "Stopped"
+}

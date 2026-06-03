@@ -63,17 +63,19 @@ func runCodexNotify(port int, stdin io.Reader) error {
 	return nil
 }
 
-// runAntigravityNotify parses stdin as a codex-style payload and posts the
-// notification, but ALWAYS writes {"decision":""} to stdout on every exit path
-// (success or POST failure) and returns nil regardless of POST outcome, so the
-// dispatcher never blocks 'agy' from stopping.
+// runAntigravityNotify parses stdin as an Antigravity Stop payload
+// (terminationReason/fullyIdle/error) and posts the notification, but ALWAYS
+// writes {"decision":""} to stdout on every exit path (success or POST failure)
+// and returns nil regardless of POST outcome, so the dispatcher never blocks
+// 'agy' from stopping. {"decision":""} is the "other than continue" value that
+// allows the Stop to proceed.
 func runAntigravityNotify(port int, stdin io.Reader, stdout io.Writer) error {
 	defer func() { _, _ = io.WriteString(stdout, "{\"decision\":\"\"}\n") }()
 	b, err := io.ReadAll(stdin)
 	if err != nil {
 		return nil // stdout already guaranteed by defer
 	}
-	parsed, perr := parseCodexNotifyPayload(string(b))
+	parsed, perr := parseAntigravityNotifyPayload(string(b))
 	if perr == nil {
 		_ = PostNotification(port, parsed)
 	}

@@ -358,11 +358,13 @@ func TestRunCodexNotifyParsesAndPosts(t *testing.T) {
 }
 
 // TestRunAntigravityNotifyAlwaysWritesDecision asserts the antigravity adapter
-// writes {"decision":""} to stdout on success and posts the notification.
+// writes {"decision":""} to stdout on success and posts a notification parsed
+// from the Antigravity Stop payload (terminationReason/fullyIdle/error), with
+// the title "Antigravity" — NOT the codex last-assistant-message shape.
 func TestRunAntigravityNotifyAlwaysWritesDecision(t *testing.T) {
 	port, srv := newNotifyServerWithChannel(t)
 
-	stdin := strings.NewReader(`{"last-assistant-message":"agy says hi"}`)
+	stdin := strings.NewReader(`{"terminationReason":"completed","fullyIdle":true}`)
 	var stdout strings.Builder
 	if err := Run(AdapterAntigravityNotify, port, stdin, &stdout); err != nil {
 		t.Fatalf("Run antigravity-notify returned error: %v", err)
@@ -372,8 +374,11 @@ func TestRunAntigravityNotifyAlwaysWritesDecision(t *testing.T) {
 	}
 
 	env := drainOne(t, srv.NotifyChannel())
-	if env.GenericMessage == nil || env.GenericMessage.Title != "Codex" {
-		t.Fatalf("expected codex-style parse, got %+v", env.GenericMessage)
+	if env.GenericMessage == nil || env.GenericMessage.Title != "Antigravity" {
+		t.Fatalf("expected Antigravity-style parse with title %q, got %+v", "Antigravity", env.GenericMessage)
+	}
+	if env.GenericMessage.Body != "completed" {
+		t.Fatalf("body = %q, want %q (from terminationReason)", env.GenericMessage.Body, "completed")
 	}
 }
 
@@ -390,7 +395,7 @@ func TestRunAntigravityNotifyWritesDecisionOnPostFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
 
 	// Use a port unlikely to be serving; the missing nonce alone forces failure.
-	stdin := strings.NewReader(`{"last-assistant-message":"agy"}`)
+	stdin := strings.NewReader(`{"terminationReason":"user_cancelled"}`)
 	var stdout strings.Builder
 	if err := Run(AdapterAntigravityNotify, 1, stdin, &stdout); err != nil {
 		t.Fatalf("antigravity Run must return nil even on POST failure, got %v", err)
