@@ -70,9 +70,17 @@ type ClaudeWrapperState struct {
 	OriginTarget string `json:"origin_target,omitempty"` // resolved path when OriginKind=="symlink"
 }
 
+// currentDeploySchemaVersion is the deploy-state schema version this binary
+// writes. v1 is the v0.9.0 per-adapter Notify schema. A state stamped with a
+// HIGHER version was written by a newer cc-clip; the connect path refuses to
+// overwrite it (see DeployState.IsNewerSchema). A state with SchemaVersion==0
+// (legacy / pre-guard) is NOT newer — it migrates normally via migrateNotifyState.
+const currentDeploySchemaVersion = 1
+
 // DeployState represents the state of a cc-clip deployment on a remote host.
 // It is stored as ~/.cache/cc-clip/deploy.json on the remote.
 type DeployState struct {
+	SchemaVersion int                 `json:"schema_version,omitempty"`
 	BinaryHash    string              `json:"binary_hash"`
 	BinaryVersion string              `json:"binary_version"`
 	ShimInstalled bool                `json:"shim_installed"`
@@ -81,6 +89,32 @@ type DeployState struct {
 	Notify        *NotifyDeployState  `json:"notify,omitempty"`
 	Codex         *CodexDeployState   `json:"codex,omitempty"`
 	ClaudeWrapper *ClaudeWrapperState `json:"claude_wrapper,omitempty"`
+}
+
+// CurrentDeploySchemaVersion returns the deploy-state schema version this
+// binary writes. Exposed so the connect path can render an actionable
+// "this binary's vN" message in the forward-downgrade guard.
+func CurrentDeploySchemaVersion() int { return currentDeploySchemaVersion }
+
+// IsNewerSchema reports whether this state was written by a cc-clip with a
+// HIGHER deploy-state schema version than the running binary. Only
+// SchemaVersion strictly greater than currentDeploySchemaVersion counts as
+// newer; SchemaVersion==0 (legacy / pre-guard) is treated as older and
+// migrates normally. The connect path uses this to refuse clobbering a remote
+// deployed by a newer cc-clip unless --force is given. A nil receiver is safe
+// and reports false.
+func (s *DeployState) IsNewerSchema() bool {
+	return s != nil && s.SchemaVersion > currentDeploySchemaVersion
+}
+
+// stampSchemaVersion sets state.SchemaVersion to the version this binary
+// writes. Applied by WriteRemoteState before marshaling so every state this
+// binary persists carries its schema version forward.
+func stampSchemaVersion(state *DeployState) {
+	if state == nil {
+		return
+	}
+	state.SchemaVersion = currentDeploySchemaVersion
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
@@ -179,6 +213,8 @@ func AdapterInstalled(remote *DeployState, id AdapterID) bool {
 
 // WriteRemoteState writes the deploy state to the remote host via the SSH session.
 func WriteRemoteState(session *SSHSession, state *DeployState) error {
+	stampSchemaVersion(state)
+
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal deploy state: %w", err)

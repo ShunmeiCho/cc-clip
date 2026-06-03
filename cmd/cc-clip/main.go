@@ -844,6 +844,18 @@ remote has a valid claude binary installed.
 			log.Fatalf("      failed to read remote state: %v\n      Re-run with --force only if you intend to ignore deploy.json.", err)
 		}
 	}
+	// Forward downgrade guard: if the remote was deployed by a newer cc-clip
+	// (deploy-state schema > this binary's), refuse to overwrite it unless the
+	// operator explicitly passes --force. Runs before any remote mutation.
+	if remoteState.IsNewerSchema() {
+		if force {
+			log.Printf("      warning: remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); --force given, overwriting anyway.",
+				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
+		} else {
+			log.Fatalf("      remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); refusing to overwrite it.\n      Upgrade this cc-clip, or pass --force to override.",
+				host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
+		}
+	}
 	if remoteState != nil && !force {
 		fmt.Printf("      remote state: binary=%s shim=%v\n", remoteState.BinaryVersion, remoteState.ShimInstalled)
 	} else if force {
