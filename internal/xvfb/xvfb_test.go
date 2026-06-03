@@ -297,6 +297,36 @@ func TestStartRemote_SocketWaitDoesNotSleepViaExecutor(t *testing.T) {
 	}
 }
 
+// TestStartRemote_EmptyDisplaySurfacesLog reproduces the CI flake (xvfb
+// "empty display file content") where Xvfb has not written its -displayfd output
+// before the wait loop gives up. When the display file parses empty, StartRemote
+// must surface Xvfb's own log tail so the failure is diagnosable instead of a
+// bare "empty display file content".
+func TestStartRemote_EmptyDisplaySurfacesLog(t *testing.T) {
+	stateDir := "/tmp/test-xvfb"
+
+	m := newMockExecutor()
+	m.on("which Xvfb", "/usr/bin/Xvfb", nil)
+	// Force IsHealthy to report not-healthy so StartRemote takes the start path.
+	m.on("cat "+stateDir+"/xvfb.pid 2>/dev/null", "", fmt.Errorf("no pid"))
+	m.on("rm -f", "", nil)
+	// The start script returns an EMPTY display (the flaky scenario).
+	m.on("mkdir -p", "", nil)
+	// Xvfb's own log explains why; StartRemote must include it in the error.
+	m.on("tail -n 20 "+stateDir+"/xvfb.log", "Fatal server error:\nCannot establish any listening sockets", nil)
+
+	_, err := StartRemote(m, stateDir)
+	if err == nil {
+		t.Fatal("expected error when display file is empty")
+	}
+	if !strings.Contains(err.Error(), "empty display file content") {
+		t.Fatalf("error should explain the empty display, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Cannot establish any listening sockets") {
+		t.Fatalf("error should surface the xvfb.log tail for CI diagnosis, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration tests (require Xvfb)
 // ---------------------------------------------------------------------------
