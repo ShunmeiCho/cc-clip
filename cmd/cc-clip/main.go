@@ -589,8 +589,7 @@ type connectOpts struct {
 	port        int
 	force       bool
 	tokenOnly   bool
-	codex       bool          // bridge for 5.3b; 5.3c derives this from targets membership
-	targets     DeployTargets // resolved deployment target set (parse + TTY menu)
+	targets     DeployTargets // resolved deployment target set (parse + TTY menu); codex/claude/shim phases gate on its membership
 	noNotify    bool
 	noHooks     bool
 	hooks       bool
@@ -676,7 +675,6 @@ func cmdConnect() {
 		port:        getPort(),
 		force:       hasFlag("force"),
 		tokenOnly:   tokenOnly,
-		codex:       targets.Codex, // bridge: 5.3c converts opts.codex call sites to targets membership
 		targets:     targets,
 		noNotify:    hasFlag("no-notify"),
 		noHooks:     noHooks,
@@ -819,9 +817,10 @@ remote has a valid claude binary installed.
 
 		// Record this host even on the --token-only path so `hosts list` and
 		// per-host update reminders reflect the most recent successful sync.
-		// Codex flag is sticky in the registry, so passing opts.codex here
-		// (which is false for plain --token-only) won't downgrade an entry.
-		recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
+		// Codex flag is sticky in the registry, so passing codexTargeted here
+		// (false for a plain --token-only run that resolves to {Claude}) won't
+		// downgrade a previously recorded Codex=true entry.
+		recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
 		return
 	}
 
@@ -883,39 +882,48 @@ remote has a valid claude binary installed.
 		fmt.Println("[4/7] Binary up to date, skipping upload")
 	}
 
-	// Step 5: Install shim (skip if already installed and not forced)
-	needsShim := force || shim.NeedsShimInstall(remoteState)
-	if !needsShim {
-		// Verify the shim file actually exists — cached state can be stale.
-		shimTarget := "xclip"
-		if remoteState != nil && remoteState.ShimTarget != "" {
-			shimTarget = remoteState.ShimTarget
-		}
-		checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
-		if _, err := session.Exec(checkCmd); err != nil {
-			fmt.Println("      shim missing despite cached state, will reinstall")
-			needsShim = true
-		}
-	}
+	// Step 5: Install shim — only for targets that use the clipboard shim
+	// (Claude / opencode). Pure --codex / --agy read X11 directly or are
+	// notify-only and need no shim, so install is SKIPPED; an existing shim is
+	// NEVER uninstalled here (design §3 + Option A: --codex no longer installs
+	// the Claude shim, but must not remove one a prior run left behind).
 	var installOut string
-	if needsShim {
-		fmt.Printf("[5/7] Installing shim...\n")
-		installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
-		out, err := session.Exec(installCmd)
-		if err != nil {
-			// Shim might already exist, try uninstall then install
-			if uninstallOut, uninstallErr := session.Exec(fmt.Sprintf("%s uninstall", remoteBin)); uninstallErr != nil {
-				log.Printf("      warning: cleanup before install retry failed: %s: %v", uninstallOut, uninstallErr)
+	var needsShim bool
+	if shimTargeted(opts.targets) {
+		needsShim = force || shim.NeedsShimInstall(remoteState)
+		if !needsShim {
+			// Verify the shim file actually exists — cached state can be stale.
+			shimTarget := "xclip"
+			if remoteState != nil && remoteState.ShimTarget != "" {
+				shimTarget = remoteState.ShimTarget
 			}
-			out, err = session.Exec(installCmd)
-			if err != nil {
-				log.Fatalf("      remote install failed: %s: %v", out, err)
+			checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
+			if _, err := session.Exec(checkCmd); err != nil {
+				fmt.Println("      shim missing despite cached state, will reinstall")
+				needsShim = true
 			}
 		}
-		installOut = out
-		fmt.Printf("      %s\n", out)
+		if needsShim {
+			fmt.Printf("[5/7] Installing shim...\n")
+			installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
+			out, err := session.Exec(installCmd)
+			if err != nil {
+				// Shim might already exist, try uninstall then install
+				if uninstallOut, uninstallErr := session.Exec(fmt.Sprintf("%s uninstall", remoteBin)); uninstallErr != nil {
+					log.Printf("      warning: cleanup before install retry failed: %s: %v", uninstallOut, uninstallErr)
+				}
+				out, err = session.Exec(installCmd)
+				if err != nil {
+					log.Fatalf("      remote install failed: %s: %v", out, err)
+				}
+			}
+			installOut = out
+			fmt.Printf("      %s\n", out)
+		} else {
+			fmt.Println("[5/7] Shim already installed, skipping")
+		}
 	} else {
-		fmt.Println("[5/7] Shim already installed, skipping")
+		fmt.Println("[5/7] Skipping shim install (target needs no clipboard shim)")
 	}
 
 	// Step 5b: Fix PATH if needed — always re-check, don't trust cached state
@@ -963,7 +971,7 @@ remote has a valid claude binary installed.
 	} else if remoteState != nil && remoteState.ShimTarget != "" {
 		shimTarget = remoteState.ShimTarget
 	}
-	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.codex)
+	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.targets)
 	if err != nil {
 		log.Fatalf("      failed to prepare remote deploy state: %v", err)
 	}
@@ -982,8 +990,8 @@ remote has a valid claude binary installed.
 		}
 	}
 
-	// Steps 8-11: Codex support (only if --codex flag is set)
-	if opts.codex {
+	// Steps 8-11: Codex support (only if Codex is among the resolved targets)
+	if codexTargeted(opts.targets) {
 		codexOk := runConnectCodex(session, opts, needsUpload, newState)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not update deploy state: %v", err)
@@ -1001,10 +1009,10 @@ remote has a valid claude binary installed.
 	// (any error above exits via log.Fatal / os.Exit). Codex flag is sticky
 	// inside the registry, so a plain connect won't downgrade a previously
 	// recorded Codex=true.
-	recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
+	recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
 }
 
-func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, codexRequested bool) (*shim.DeployState, error) {
+func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, targets DeployTargets) (*shim.DeployState, error) {
 	localHash, err := shim.LocalBinaryHash(localBin)
 	if err != nil {
 		return nil, err
@@ -1013,16 +1021,27 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 	state := &shim.DeployState{
 		BinaryHash:    localHash,
 		BinaryVersion: binaryVersion,
-		ShimInstalled: true,
+		// Only claim a shim when this run targeted it (Claude/opencode). A
+		// shim-less target (pure --codex/--agy) preserves any prior shim below
+		// and never fabricates one on a fresh host.
+		ShimInstalled: shimTargeted(targets),
 		ShimTarget:    shimTarget,
 		PathFixed:     pathFixed,
 	}
 	if remoteState != nil {
 		state.Notify = remoteState.Notify
 		state.ClaudeWrapper = remoteState.ClaudeWrapper
-		// Preserve existing codex state when not using --codex.
-		if remoteState.Codex != nil && !codexRequested {
+		// Preserve existing Codex transport state when this run did not target Codex.
+		if remoteState.Codex != nil && !codexTargeted(targets) {
 			state.Codex = remoteState.Codex
+		}
+		// Preserve an existing shim when this run did not target it (pure
+		// --codex/--agy): never downgrade or overwrite a shim we did not touch.
+		if !shimTargeted(targets) {
+			state.ShimInstalled = remoteState.ShimInstalled
+			if remoteState.ShimTarget != "" {
+				state.ShimTarget = remoteState.ShimTarget
+			}
 		}
 	}
 	return state, nil
@@ -1058,26 +1077,39 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 
 	hookInstalled := true
 
-	// Step N4: Install Claude Code hooks in durable settings.json first.
-	// The wrapper remains only as a fallback for settings merge failures.
-	fmt.Println("  [N4] Configuring Claude Code hooks...")
-	claudeHooks := configureRemoteClaudeHooks(session, port, opts)
+	// Step N4: Install Claude Code hooks in durable settings.json first — only
+	// when Claude is targeted. The wrapper remains only as a fallback for
+	// settings merge failures. 5.3c: --codex/--opencode/--agy must NOT write
+	// ~/.claude/settings.json, so an untargeted run skips N4 entirely and
+	// preserves any existing claude-notify adapter (applyAdapterState).
+	var claudeHooks claudeHooksResult
+	if claudeTargeted(opts.targets) {
+		fmt.Println("  [N4] Configuring Claude Code hooks...")
+		claudeHooks = configureRemoteClaudeHooks(session, port, opts)
+	} else {
+		fmt.Println("  [N4] Skipping Claude hooks (Claude not targeted)")
+	}
 
-	// Step N5: Detect and configure Codex notify
+	// Step N5: Detect and configure Codex notify — only when Codex is targeted.
+	// 5.3c: --claude/--opencode/--agy must NOT write ~/.codex/config.toml.
 	codexInjected := false
-	hasCodex, err := shim.RemoteHasCodex(session)
-	if err != nil {
-		log.Printf("      warning: codex detection failed: %v", err)
-	} else if hasCodex {
-		fmt.Println("  [N5] Codex detected, injecting notify config...")
-		if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
-			log.Printf("      warning: codex config injection failed: %v", err)
+	if codexTargeted(opts.targets) {
+		hasCodex, err := shim.RemoteHasCodex(session)
+		if err != nil {
+			log.Printf("      warning: codex detection failed: %v", err)
+		} else if hasCodex {
+			fmt.Println("  [N5] Codex detected, injecting notify config...")
+			if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
+				log.Printf("      warning: codex config injection failed: %v", err)
+			} else {
+				codexInjected = true
+				fmt.Println("      ~/.codex/config.toml updated")
+			}
 		} else {
-			codexInjected = true
-			fmt.Println("      ~/.codex/config.toml updated")
+			fmt.Println("  [N5] Codex not detected, skipping config injection")
 		}
 	} else {
-		fmt.Println("  [N5] Codex not detected, skipping config injection")
+		fmt.Println("  [N5] Skipping Codex notify (Codex not targeted)")
 	}
 
 	// Step N6: Health probe
@@ -1099,9 +1131,9 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	// attempted on DeployTargets so un-targeted adapters are preserved instead.
 	mergeNotifyDeployState(state, notifyOutcome{
 		hookScriptInstalled: hookInstalled,
-		claudeAttempted:     true,
+		claudeAttempted:     claudeTargeted(opts.targets),
 		claudeWired:         claudeHooks.adapterInstalled,
-		codexAttempted:      true,
+		codexAttempted:      codexTargeted(opts.targets),
 		codexInjected:       codexInjected,
 		healthVerified:      healthVerified,
 	})
@@ -1460,7 +1492,6 @@ func cmdSetup() {
 	runConnect(connectOpts{
 		host:        host,
 		port:        port,
-		codex:       targets.Codex, // bridge: 5.3c converts opts.codex call sites to targets membership
 		targets:     targets,
 		autoRecover: autoRecover,
 	})

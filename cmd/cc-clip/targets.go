@@ -264,3 +264,19 @@ func maybeLegacyCodexNotice(errOut io.Writer, args []string, t DeployTargets) {
 		fmt.Fprintln(errOut, legacyCodexNotice)
 	}
 }
+
+// claudeTargeted reports whether the Claude integration (clipboard shim +
+// claude-notify in ~/.claude/settings.json) is selected. Under --all this is
+// true because parseDeployTargets/menuSelection set every field.
+func claudeTargeted(t DeployTargets) bool { return t.Claude }
+
+// codexTargeted reports whether the Codex integration (Xvfb + x11-bridge +
+// codex-notify in ~/.codex/config.toml) is selected.
+func codexTargeted(t DeployTargets) bool { return t.Codex }
+
+// shimTargeted reports whether this run should install the clipboard shim. The
+// xclip/wl-paste shim serves Claude Code AND opencode (both terminal tools that
+// shell out to the real binary); Codex reads X11 directly and agy is notify-only,
+// so neither needs the shim. A run that does not target the shim SKIPS install
+// but must never uninstall an existing shim (design §3 + Option A).
+func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode }
