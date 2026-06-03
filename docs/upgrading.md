@@ -30,7 +30,7 @@ new binary:
 |---|---|---|
 | Your local Mac or Linux laptop | Runs the HTTP daemon, hosts the clipboard | Always |
 | Your Windows laptop | Runs the hotkey listener, sends files over SSH | Always |
-| Each remote host you use with cc-clip | Hosts the xclip/wl-paste shim, the claude wrapper, and optionally x11-bridge/Xvfb | Whenever the local binary is updated (the remote side and local side share a protocol) |
+| Each remote host you use with cc-clip | Hosts the xclip/wl-paste shim, Claude Code hook config, and optionally x11-bridge/Xvfb | Whenever the local binary is updated (the remote side and local side share a protocol) |
 
 The remote update is driven from your local machine via
 `cc-clip connect <host>`. You do not SSH in and upgrade remotely by hand.
@@ -133,9 +133,10 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
    binary to the remote and rebuilds the shim / hooks / x11-bridge entries:
 
     ```sh
+    # Claude Code only (default):
     cc-clip connect myserver --force
-    # add --codex if you use Codex CLI on that host
-    cc-clip connect myserver --codex --force
+    # Claude Code + Codex CLI on that host (v0.9.0: --codex alone is Codex-only):
+    cc-clip connect myserver --all --force
     ```
 
     `--force` is important when upgrading: it bypasses the hash-based

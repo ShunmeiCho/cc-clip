@@ -231,20 +231,89 @@ func TestSetRemoteClaudeHooksEnabledTogglesMarker(t *testing.T) {
 	}
 }
 
+func TestUninstallRemoteClaudeWrapperIfPresentSkipsNonWrapper(t *testing.T) {
+	home := t.TempDir()
+	s := &localSession{home: home}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	claudePath := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(claudePath, []byte("#!/bin/sh\necho real\n"), 0755); err != nil {
+		t.Fatalf("write real claude: %v", err)
+	}
+
+	removed, err := UninstallRemoteClaudeWrapperIfPresent(s)
+	if err != nil {
+		t.Fatalf("UninstallRemoteClaudeWrapperIfPresent returned error: %v", err)
+	}
+	if removed {
+		t.Fatal("non-wrapper claude should not be removed")
+	}
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read claude: %v", err)
+	}
+	if !strings.Contains(string(data), "echo real") {
+		t.Fatalf("real claude was modified:\n%s", data)
+	}
+}
+
+func TestUninstallRemoteClaudeWrapperIfPresentRestoresSidecar(t *testing.T) {
+	home := t.TempDir()
+	s := &localSession{home: home}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	claudePath := filepath.Join(binDir, "claude")
+	sidecarPath := filepath.Join(binDir, "claude.cc-clip-real")
+	if err := os.WriteFile(claudePath, []byte("# cc-clip claude wrapper\n"), 0755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	if err := os.WriteFile(sidecarPath, []byte("#!/bin/sh\necho restored\n"), 0755); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+
+	removed, err := UninstallRemoteClaudeWrapperIfPresent(s)
+	if err != nil {
+		t.Fatalf("UninstallRemoteClaudeWrapperIfPresent returned error: %v", err)
+	}
+	if !removed {
+		t.Fatal("cc-clip wrapper should be removed")
+	}
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read restored claude: %v", err)
+	}
+	if !strings.Contains(string(data), "echo restored") {
+		t.Fatalf("sidecar was not restored:\n%s", data)
+	}
+	if _, err := os.Stat(sidecarPath); !os.IsNotExist(err) {
+		t.Fatalf("sidecar should be consumed, got err=%v", err)
+	}
+}
+
 func TestCodexNotifyManagedBlockUsesConfigArray(t *testing.T) {
 	block := codexNotifyManagedBlock("start", "end", 18339)
-	if !strings.Contains(block, `notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]`) {
-		t.Fatalf("expected notify array config, got %q", block)
+	if !strings.Contains(block, `notify = ["cc-clip", "plugin", "run", "codex-notify"]`) {
+		t.Fatalf("expected runner notify array config, got %q", block)
 	}
 	if strings.Contains(block, "[notify]") {
 		t.Fatalf("unexpected legacy [notify] table in %q", block)
+	}
+	if strings.Contains(block, "--from-codex-stdin") {
+		t.Fatalf("default-port managed block must use the runner form, not the legacy --from-codex-stdin form: %q", block)
 	}
 }
 
 func TestCodexNotifyManagedBlockNonDefaultPort(t *testing.T) {
 	block := codexNotifyManagedBlock("start", "end", 9999)
-	if !strings.Contains(block, "CC_CLIP_PORT=9999") {
-		t.Fatalf("expected CC_CLIP_PORT=9999 for non-default port, got %q", block)
+	if !strings.Contains(block, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "plugin", "run", "codex-notify"]`) {
+		t.Fatalf("expected runner notify array with CC_CLIP_PORT=9999 for non-default port, got %q", block)
+	}
+	if strings.Contains(block, "--from-codex-stdin") {
+		t.Fatalf("non-default-port managed block must use the runner form: %q", block)
 	}
 }
 
@@ -286,8 +355,40 @@ func TestEnsureRemoteCodexNotifyConfigAppendsManagedBlock(t *testing.T) {
 	}
 
 	config := readTestCodexConfig(t, s.home)
-	if !strings.Contains(config, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "notify", "--trusted", "--from-codex-stdin"]`) {
-		t.Fatalf("config missing managed notify block: %q", config)
+	if !strings.Contains(config, `notify = ["env", "CC_CLIP_PORT=9999", "cc-clip", "plugin", "run", "codex-notify"]`) {
+		t.Fatalf("config missing managed runner notify block: %q", config)
+	}
+}
+
+// TestEnsureRemoteCodexNotifyConfigMigratesLegacyStdinBlock asserts forward
+// migration: a config carrying the legacy `--from-codex-stdin` managed block is
+// rebuilt into exactly one runner-form managed block (no append, no duplicate,
+// legacy command gone), preserving surrounding user content.
+func TestEnsureRemoteCodexNotifyConfigMigratesLegacyStdinBlock(t *testing.T) {
+	s := &localSession{home: t.TempDir()}
+	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
+	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
+	legacyBlock := markerStart + "\n" +
+		`notify = ["cc-clip", "notify", "--trusted", "--from-codex-stdin"]` + "\n" +
+		markerEnd
+	writeTestCodexConfig(t, s.home, "model = \"gpt-5\"\n"+legacyBlock+"\n[tui.foo]\n\"gpt-5\" = 4\n")
+
+	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err != nil {
+		t.Fatalf("EnsureRemoteCodexNotifyConfig returned error: %v", err)
+	}
+
+	config := readTestCodexConfig(t, s.home)
+	if strings.Contains(config, "--from-codex-stdin") {
+		t.Fatalf("legacy --from-codex-stdin block must be removed after migration:\n%s", config)
+	}
+	if !strings.Contains(config, `notify = ["cc-clip", "plugin", "run", "codex-notify"]`) {
+		t.Fatalf("migrated config must contain the runner notify block:\n%s", config)
+	}
+	if got := strings.Count(config, markerStart); got != 1 {
+		t.Fatalf("expected exactly one managed block after migration, got %d:\n%s", got, config)
+	}
+	if !strings.Contains(config, "[tui.foo]") || !strings.Contains(config, `model = "gpt-5"`) {
+		t.Fatalf("user content must be preserved after migration:\n%s", config)
 	}
 }
 

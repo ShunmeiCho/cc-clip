@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/shunmei/cc-clip/internal/install"
 )
 
 // CodexDeployState represents the Codex-specific deployment state.
@@ -18,12 +20,44 @@ type CodexDeployState struct {
 	DisplayFixed bool   `json:"display_fixed"`
 }
 
+// AdapterID identifies a notification adapter within the deploy state.
+type AdapterID string
+
+const (
+	// AdapterClaudeNotify is the Claude Code notification adapter.
+	AdapterClaudeNotify AdapterID = "claude-notify"
+	// AdapterCodexNotify is the Codex CLI notification adapter.
+	AdapterCodexNotify AdapterID = "codex-notify"
+	// AdapterOpencodeNotify is the opencode notification adapter.
+	AdapterOpencodeNotify AdapterID = "opencode-notify"
+	// AdapterAntigravityNotify is the Antigravity (agy CLI) notification adapter.
+	// The string MUST match plugin.AdapterAntigravityNotify (the runner dispatcher
+	// key) so connect records deploy-state under the key the runner actually uses.
+	AdapterAntigravityNotify AdapterID = "agy-notify"
+)
+
+// AdapterState records the per-adapter installation/verification status.
+type AdapterState struct {
+	Installed bool                  `json:"installed"`
+	Source    install.AdapterSource `json:"source,omitempty"`
+	Version   string                `json:"version,omitempty"`
+	Verified  bool                  `json:"verified"`
+	LastError string                `json:"last_error,omitempty"`
+}
+
 // NotifyDeployState represents the notification bridge deployment state.
+//
+// The legacy boolean fields (Enabled/HookInstalled/CodexInjected/HealthVerified)
+// are retained through v0.x for backward read-compat. Per-adapter state lives in
+// Adapters, populated either directly by newer writers or via migrateNotifyState
+// for state files written by older versions.
 type NotifyDeployState struct {
 	Enabled        bool `json:"enabled"`
 	HookInstalled  bool `json:"hook_installed"`
 	CodexInjected  bool `json:"codex_injected"`
 	HealthVerified bool `json:"health_verified"`
+
+	Adapters map[AdapterID]*AdapterState `json:"adapters,omitempty"`
 }
 
 // ClaudeWrapperState records what InstallRemoteClaudeWrapper replaced at
@@ -74,7 +108,73 @@ func ReadRemoteState(session RemoteExecutor) (*DeployState, error) {
 		return nil, fmt.Errorf("remote deploy state is malformed: %w", err)
 	}
 
+	migrateNotifyState(state.Notify)
+
 	return &state, nil
+}
+
+// migrateNotifyState upgrades a legacy boolean-only NotifyDeployState to the
+// per-adapter schema. It is a no-op when n is nil or already carries an Adapters
+// map (i.e. written by a newer version). Legacy boolean fields are deliberately
+// left intact for backward read-compat. Verified is migrated as false to force
+// re-verification regardless of the legacy HealthVerified value.
+func migrateNotifyState(n *NotifyDeployState) {
+	if n == nil || n.Adapters != nil {
+		return
+	}
+
+	n.Adapters = make(map[AdapterID]*AdapterState)
+	if n.HookInstalled {
+		n.Adapters[AdapterClaudeNotify] = &AdapterState{
+			Installed: true,
+			Source:    install.SourceConfig,
+			Verified:  false,
+		}
+	}
+	if n.CodexInjected {
+		n.Adapters[AdapterCodexNotify] = &AdapterState{
+			Installed: true,
+			Source:    install.SourceConfig,
+			Verified:  false,
+		}
+	}
+}
+
+// adapterState returns the AdapterState for id, or nil if any level (remote,
+// Notify, Adapters, or the entry) is absent.
+func adapterState(remote *DeployState, id AdapterID) *AdapterState {
+	if remote == nil || remote.Notify == nil || remote.Notify.Adapters == nil {
+		return nil
+	}
+	return remote.Notify.Adapters[id]
+}
+
+// NeedsAdapterInstall reports whether adapter id must be (re-)installed: true
+// when the entry is absent or its Installed flag is false.
+func NeedsAdapterInstall(remote *DeployState, id AdapterID) bool {
+	st := adapterState(remote, id)
+	if st == nil {
+		return true
+	}
+	return !st.Installed
+}
+
+// NeedsAdapterVerify reports whether adapter id is installed but not yet verified.
+func NeedsAdapterVerify(remote *DeployState, id AdapterID) bool {
+	st := adapterState(remote, id)
+	if st == nil {
+		return false
+	}
+	return st.Installed && !st.Verified
+}
+
+// AdapterInstalled reports whether adapter id is present and marked installed.
+func AdapterInstalled(remote *DeployState, id AdapterID) bool {
+	st := adapterState(remote, id)
+	if st == nil {
+		return false
+	}
+	return st.Installed
 }
 
 // WriteRemoteState writes the deploy state to the remote host via the SSH session.

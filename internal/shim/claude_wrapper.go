@@ -1,7 +1,7 @@
 package shim
 
 const claudeWrapperTemplate = `#!/usr/bin/env bash
-# cc-clip claude wrapper — auto-inject notification hooks
+# cc-clip claude wrapper — fallback notification hook injector
 # Installed by: cc-clip connect
 # Remove with:  cc-clip uninstall --host <this-host>
 
@@ -50,11 +50,10 @@ exec "$_REAL_CLAUDE" --settings '{
 }' "$@"
 `
 
-// ClaudeWrapperScript returns the claude wrapper bash script with the
-// given port baked in. This script is installed to ~/.local/bin/claude
-// on the remote. It injects Stop and Notification hooks via --settings so
-// users don't need to manually configure hooks in ~/.claude/settings.json.
-// The hook script itself is fail-soft when the tunnel is unavailable.
+// ClaudeWrapperScript returns the fallback claude wrapper bash script. New
+// installs prefer durable hooks in ~/.claude/settings.json; this wrapper is
+// retained only for settings merge failures and older deployments. The hook
+// script itself is fail-soft when the tunnel is unavailable.
 func ClaudeWrapperScript(port int) string {
 	_ = port
 	return claudeWrapperTemplate

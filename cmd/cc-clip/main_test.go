@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
+	"github.com/shunmei/cc-clip/internal/install"
 	"github.com/shunmei/cc-clip/internal/session"
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
@@ -140,8 +142,144 @@ func TestManualFlagParsingRejectsExplicitFalseBool(t *testing.T) {
 	}
 }
 
+type testRemoteSession struct {
+	home string
+}
+
+func (s *testRemoteSession) Exec(cmd string) (string, error) {
+	c := exec.Command("bash", "-c", cmd)
+	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	out, err := c.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func (s *testRemoteSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
+	c := exec.Command("bash", "-c", cmd)
+	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	c.Stdin = stdin
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
+func TestConfigureRemoteClaudeHooksInstallsSettingsWithoutWrapper(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if strings.Count(settings, "env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify") != 2 {
+		t.Fatalf("settings should contain two managed runner hooks, got:\n%s", settings)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".local", "bin", "claude")); !os.IsNotExist(err) {
+		t.Fatalf("settings-first install should not create wrapper, got err=%v", err)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksRemovesLegacyWrapperAfterSettingsInstall(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	writeTestClaudeWrapper(t, s.home)
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if !strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify") {
+		t.Fatalf("settings missing managed runner hook:\n%s", settings)
+	}
+	claude, err := os.ReadFile(filepath.Join(s.home, ".local", "bin", "claude"))
+	if err != nil {
+		t.Fatalf("claude should be restored from sidecar: %v", err)
+	}
+	if !strings.Contains(string(claude), "echo restored") {
+		t.Fatalf("legacy wrapper was not restored from sidecar:\n%s", claude)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksHonorsExistingNoHooksMarker(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	marker := filepath.Join(s.home, ".cache", "cc-clip", "no-hooks")
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	if err := os.WriteFile(marker, nil, 0600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{})
+
+	if _, err := os.Stat(filepath.Join(s.home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("opt-out marker should prevent settings install, got err=%v", err)
+	}
+}
+
+func TestConfigureRemoteClaudeHooksNoHooksRemovesManagedSettingsAndWrapper(t *testing.T) {
+	s := &testRemoteSession{home: t.TempDir()}
+	settingsPath := filepath.Join(s.home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		t.Fatalf("mkdir settings dir: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "env CC_CLIP_MANAGED=1 cc-clip-hook"},
+          {"type": "command", "command": "cc-clip-hook"}
+        ]
+      }
+    ]
+  }
+}`), 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	writeTestClaudeWrapper(t, s.home)
+
+	configureRemoteClaudeHooks(s, 18339, connectOpts{noHooks: true})
+
+	settings := readTestClaudeSettings(t, s.home)
+	if strings.Contains(settings, "env CC_CLIP_MANAGED=1 cc-clip-hook") {
+		t.Fatalf("managed hook should be removed:\n%s", settings)
+	}
+	if !strings.Contains(settings, `"cc-clip-hook"`) {
+		t.Fatalf("user-managed hook should remain:\n%s", settings)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, ".cache", "cc-clip", "no-hooks")); err != nil {
+		t.Fatalf("no-hooks marker should exist: %v", err)
+	}
+	claude, err := os.ReadFile(filepath.Join(s.home, ".local", "bin", "claude"))
+	if err != nil {
+		t.Fatalf("claude should be restored from sidecar: %v", err)
+	}
+	if !strings.Contains(string(claude), "echo restored") {
+		t.Fatalf("legacy wrapper was not restored from sidecar:\n%s", claude)
+	}
+}
+
+func readTestClaudeSettings(t *testing.T, home string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("read Claude settings: %v", err)
+	}
+	return string(data)
+}
+
+func writeTestClaudeWrapper(t *testing.T, home string) {
+	t.Helper()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("# cc-clip claude wrapper\n"), 0755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude.cc-clip-real"), []byte("#!/bin/sh\necho restored\n"), 0755); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+}
+
 func TestNewDeployStateReturnsHashError(t *testing.T) {
-	_, err := newDeployState("/nonexistent/cc-clip", "v0.7.2", "xclip", true, nil, false)
+	_, err := newDeployState("/nonexistent/cc-clip", "v0.7.2", "xclip", true, nil, DeployTargets{Claude: true})
 	if err == nil {
 		t.Fatal("newDeployState should return an error when local binary hashing fails")
 	}
@@ -173,7 +311,7 @@ func TestNewDeployStatePreservesCodexWhenNotRequested(t *testing.T) {
 		Codex:         existingCodex,
 		Notify:        existingNotify,
 		ClaudeWrapper: existingWrapper,
-	}, false)
+	}, DeployTargets{Claude: true})
 	if err != nil {
 		t.Fatalf("newDeployState returned error: %v", err)
 	}
@@ -204,12 +342,43 @@ func TestNewDeployStateDoesNotPreserveCodexWhenRequested(t *testing.T) {
 			Mode:         "x11-bridge",
 			DisplayFixed: true,
 		},
-	}, true)
+	}, DeployTargets{Codex: true})
 	if err != nil {
 		t.Fatalf("newDeployState returned error: %v", err)
 	}
 	if state.Codex != nil {
 		t.Fatal("newDeployState should let --codex rebuild Codex state")
+	}
+}
+
+// TestConnectSuccessSummary verifies the post-connect summary is target-aware:
+// a non-Claude target (pure --codex / --agy) must never claim the Claude shim
+// is ready, since the shim is not installed for those targets (5.3c).
+func TestConnectSuccessSummary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		targets DeployTargets
+		want    string
+	}{
+		{"claude mentions Claude Code", DeployTargets{Claude: true}, "remote Claude Code"},
+		{"all mentions Claude Code (codex line printed separately)", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, "remote Claude Code"},
+		{"opencode mentions opencode", DeployTargets{Opencode: true}, "remote opencode"},
+		{"pure codex does not claim the Claude shim", DeployTargets{Codex: true}, "Codex CLI clipboard support"},
+		{"agy mentions notifications + pending clipboard", DeployTargets{Antigravity: true}, "Antigravity notifications configured"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := connectSuccessSummary(tt.targets)
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("connectSuccessSummary(%+v) = %q, want substring %q", tt.targets, got, tt.want)
+			}
+			if !tt.targets.Claude && strings.Contains(got, "Claude Code") {
+				t.Fatalf("non-Claude target must not claim Claude Code: %q", got)
+			}
+		})
 	}
 }
 
@@ -293,6 +462,274 @@ func TestParseCodexNotifyPayloadReturnType(t *testing.T) {
 	}
 	// Verify the return type is GenericMessagePayload
 	var _ daemon.GenericMessagePayload = msg
+}
+
+// codexParseGolden is the cross-check contract for the duplicated
+// parseCodexNotifyPayload copies (package main here + internal/plugin). The
+// golden values represent main.parseCodexNotifyPayload's output. The IDENTICAL
+// table is driven against the plugin copy in
+// internal/plugin/plugin_test.go:TestCodexNotifyParseMatchesMainParser. If
+// either copy drifts, its test fails. KEEP THESE TWO TABLES IN SYNC.
+var codexParseGolden = []struct {
+	name      string
+	input     string
+	wantErr   bool
+	wantTitle string
+	wantBody  string
+	wantUrg   int
+	wantVer   bool
+}{
+	{name: "valid", input: `{"last-assistant-message":"hello world"}`, wantTitle: "Codex", wantBody: "hello world", wantUrg: 1, wantVer: true},
+	{name: "empty message", input: `{"last-assistant-message":""}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "missing field", input: `{"some-other-field":"value"}`, wantTitle: "Codex", wantBody: "", wantUrg: 1, wantVer: true},
+	{name: "invalid json", input: `{invalid`, wantErr: true},
+}
+
+// TestParseCodexNotifyPayloadGolden pins main.parseCodexNotifyPayload's output
+// against the shared golden table. It is the main-side half of the cross-check
+// contract (the plugin-side half lives in internal/plugin/plugin_test.go).
+func TestParseCodexNotifyPayloadGolden(t *testing.T) {
+	for _, tt := range codexParseGolden {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := parseCodexNotifyPayload(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if msg.Title != tt.wantTitle {
+				t.Fatalf("title = %q, want %q", msg.Title, tt.wantTitle)
+			}
+			if msg.Body != tt.wantBody {
+				t.Fatalf("body = %q, want %q", msg.Body, tt.wantBody)
+			}
+			if msg.Urgency != tt.wantUrg {
+				t.Fatalf("urgency = %d, want %d", msg.Urgency, tt.wantUrg)
+			}
+			if msg.Verified != tt.wantVer {
+				t.Fatalf("verified = %v, want %v", msg.Verified, tt.wantVer)
+			}
+		})
+	}
+}
+
+// TestMergeNotifyDeployStatePreservesAdapters is the 3a merge-contract test: the
+// connect writer must preserve a migrated/prior Adapters map while refreshing the
+// legacy boolean fields, instead of hard-replacing state.Notify with a
+// legacy-only struct (which dropped Adapters).
+func TestMergeNotifyDeployStatePreservesAdapters(t *testing.T) {
+	t.Run("preserves existing Adapters map", func(t *testing.T) {
+		adapters := map[shim.AdapterID]*shim.AdapterState{
+			shim.AdapterClaudeNotify: {Installed: true, Verified: false},
+		}
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Enabled:       false,
+				HookInstalled: false,
+				Adapters:      adapters,
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: true,
+			healthVerified: true,
+		})
+
+		if state.Notify == nil {
+			t.Fatal("Notify must not be nil after merge")
+		}
+		if !state.Notify.Enabled || !state.Notify.HookInstalled || !state.Notify.CodexInjected || !state.Notify.HealthVerified {
+			t.Fatalf("legacy bools not refreshed: %+v", state.Notify)
+		}
+		if state.Notify.Adapters == nil {
+			t.Fatal("Adapters dropped by merge (regression)")
+		}
+		// Same map identity: merge must not reallocate or rebuild it.
+		if got := state.Notify.Adapters[shim.AdapterClaudeNotify]; got == nil || !got.Installed {
+			t.Fatalf("claude adapter not preserved: %+v", got)
+		}
+	})
+
+	t.Run("allocates struct and populates claude adapter on nil Notify", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
+
+		if state.Notify == nil {
+			t.Fatal("Notify must be allocated when nil")
+		}
+		if !state.Notify.Enabled || !state.Notify.HookInstalled {
+			t.Fatalf("legacy bools not set: %+v", state.Notify)
+		}
+		if state.Notify.CodexInjected || state.Notify.HealthVerified {
+			t.Fatalf("false bools should stay false: %+v", state.Notify)
+		}
+		// claudeWired=true populates the claude adapter; codex attempted but not
+		// injected leaves the codex adapter absent (no stale entry to downgrade).
+		// hookScriptInstalled=true sets the legacy HookInstalled bool but does NOT
+		// by itself populate the adapter (P3).
+		if state.Notify.Adapters == nil {
+			t.Fatal("Adapters must be allocated when an adapter succeeded")
+		}
+		claude := state.Notify.Adapters[shim.AdapterClaudeNotify]
+		if claude == nil || !claude.Installed || claude.Verified || claude.Source != install.SourceConfig {
+			t.Fatalf("claude adapter not populated correctly: %+v", claude)
+		}
+		if _, ok := state.Notify.Adapters[shim.AdapterCodexNotify]; ok {
+			t.Fatalf("codex adapter must be absent when codexInjected=false: %+v", state.Notify.Adapters)
+		}
+	})
+
+	// 3c: both adapters succeeded -> both populated with Installed=true,
+	// Verified=false (forces N6 re-verify), Source=config.
+	t.Run("populates both adapters when both succeed", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: true, codexInjected: true,
+			healthVerified: true,
+		})
+
+		if state.Notify == nil || state.Notify.Adapters == nil {
+			t.Fatal("Adapters must be populated when both adapters succeed")
+		}
+		for _, id := range []shim.AdapterID{shim.AdapterClaudeNotify, shim.AdapterCodexNotify} {
+			st := state.Notify.Adapters[id]
+			if st == nil {
+				t.Fatalf("adapter %q missing", id)
+			}
+			if !st.Installed {
+				t.Fatalf("adapter %q must be Installed=true: %+v", id, st)
+			}
+			if st.Verified {
+				t.Fatalf("adapter %q must be Verified=false to force N6 re-verify: %+v", id, st)
+			}
+			if st.Source != install.SourceConfig {
+				t.Fatalf("adapter %q Source = %q, want %q", id, st.Source, install.SourceConfig)
+			}
+		}
+	})
+
+	// 3c first-connect parity: when neither adapter succeeds, the map stays nil
+	// so omitempty keeps wire output byte-identical to the legacy hard-assignment.
+	t.Run("nil Adapters when neither adapter succeeds", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
+
+		if state.Notify == nil {
+			t.Fatal("Notify must be allocated when nil")
+		}
+		if state.Notify.Adapters != nil {
+			t.Fatalf("expected nil Adapters when nothing installed, got %+v", state.Notify.Adapters)
+		}
+	})
+
+	// P3: when the managed runner is NOT wired this connect (opt-out / user-bare /
+	// wrapper fallback) but a prior connect recorded claude-notify installed, the
+	// stale entry must be downgraded to Installed=false so the state does not
+	// over-claim. The cc-clip-hook script may still be on disk (hookScript=true).
+	t.Run("downgrades stale claude adapter when runner not wired", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterClaudeNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
+
+		claude := state.Notify.Adapters[shim.AdapterClaudeNotify]
+		if claude == nil {
+			t.Fatal("stale claude adapter entry should remain (downgraded, not deleted)")
+		}
+		if claude.Installed || claude.Verified {
+			t.Fatalf("stale claude adapter must be downgraded to Installed=false/Verified=false: %+v", claude)
+		}
+	})
+
+	// Codex symmetry: when Codex is attempted (pre-Step-5 it always is) but the
+	// config.toml injection did not succeed, a stale codex-notify entry from a
+	// prior connect must be downgraded so NeedsAdapterInstall does not wrongly
+	// skip a re-attempt.
+	t.Run("codex attempted but not injected downgrades stale adapter", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterCodexNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: false,
+			codexAttempted: true, codexInjected: false,
+			healthVerified: false,
+		})
+
+		codex := state.Notify.Adapters[shim.AdapterCodexNotify]
+		if codex == nil {
+			t.Fatal("stale codex adapter entry should remain (downgraded, not deleted)")
+		}
+		if codex.Installed || codex.Verified {
+			t.Fatalf("stale codex adapter must be downgraded to Installed=false/Verified=false: %+v", codex)
+		}
+	})
+
+	// Target-aware preservation (Step 5 semantics, exercised now): when Codex is
+	// NOT attempted this connect (e.g. only --claude requested), a prior
+	// codex-notify entry must be PRESERVED untouched — not downgraded — because
+	// this connect did not target Codex. The legacy CodexInjected is likewise kept.
+	t.Run("codex target not requested preserves existing adapter", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				CodexInjected: true,
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterCodexNotify: {Installed: true, Verified: true, Source: install.SourceConfig},
+				},
+			},
+		}
+
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true, claudeWired: true,
+			codexAttempted: false, codexInjected: false,
+			healthVerified: true,
+		})
+
+		codex := state.Notify.Adapters[shim.AdapterCodexNotify]
+		if codex == nil || !codex.Installed || !codex.Verified {
+			t.Fatalf("un-attempted codex adapter must be preserved untouched: %+v", codex)
+		}
+		if !state.Notify.CodexInjected {
+			t.Fatalf("legacy CodexInjected must be preserved when codex not attempted: %+v", state.Notify)
+		}
+	})
 }
 
 func TestRegisterNonceWithDaemonIntegration(t *testing.T) {

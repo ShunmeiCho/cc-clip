@@ -24,7 +24,7 @@ Image paste notifications help you track what was pasted without leaving your wo
 
 | CLI | Auto-configured by `cc-clip connect`? | How |
 |-----|----------------------------------------|-----|
-| Claude Code | ⚠️ Manual — add `cc-clip-hook` to `Stop` / `Notification` hooks in `~/.claude/settings.json` | See setup below |
+| Claude Code | ✅ Managed hooks in `~/.claude/settings.json` | Wired during `cc-clip connect` |
 | Codex CLI | ✅ If `~/.codex/` exists on the remote | Wired during `cc-clip connect` |
 | opencode | ❌ Not yet supported out of the box | You can wire your own notifier using the `/notify` endpoint |
 
@@ -40,17 +40,20 @@ cc-clip service install     # launchd auto-start
 
 ### Step 2: Configure remote Claude Code hooks
 
-The easiest way is to **ask Claude Code itself to do it**. SSH into your server, start Claude Code, and paste this prompt:
+Run `cc-clip connect <host>`. It installs `cc-clip-hook` and merges managed
+Stop/Notification hooks into the remote `~/.claude/settings.json` without
+overwriting your existing hooks.
 
+Use `--no-hooks` to persistently opt out, and `--hooks` to re-enable managed
+hook installation:
+
+```bash
+cc-clip connect myserver --no-hooks
+cc-clip connect myserver --hooks
 ```
-Please add cc-clip-hook to my Claude Code hooks configuration. Add it to both Stop and Notification hooks in ~/.claude/settings.json. The command is just "cc-clip-hook" (it's already in PATH at ~/.local/bin/). Keep any existing hooks (like ralph-wiggum) — just append cc-clip-hook alongside them. Show me the diff before and after.
-```
 
-Claude Code will read your current `settings.json`, add the hooks correctly, and show you the changes.
-
-### Step 2 (manual alternative)
-
-Edit `~/.claude/settings.json` on the **remote server** and add `cc-clip-hook` to the `Stop` and `Notification` hook arrays:
+If automatic settings merge fails, cc-clip prints a fallback config you can add
+manually. The hook shape is:
 
 ```json
 {
@@ -73,7 +76,8 @@ Edit `~/.claude/settings.json` on the **remote server** and add `cc-clip-hook` t
 }
 ```
 
-If you already have hooks (e.g., `ralph-wiggum-stop.sh`), add a new entry to the array — don't replace existing ones.
+If you already have hooks (e.g., `ralph-wiggum-stop.sh`), keep them and add a
+new entry to the array.
 
 **Restart Claude Code** after editing (hooks are read at startup).
 

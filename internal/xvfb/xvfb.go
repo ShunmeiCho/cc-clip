@@ -172,6 +172,17 @@ func TryInstall(session RemoteExecutor) error {
 	return fmt.Errorf("no supported package manager found (tried apt-get, dnf, yum, pacman)")
 }
 
+// readLogTail returns the last lines of the Xvfb log under stateDir for
+// diagnostics. Best-effort: any error yields an empty string so it never masks
+// the original failure that prompted the read.
+func readLogTail(session RemoteExecutor, stateDir string) string {
+	out, err := session.Exec(fmt.Sprintf("tail -n 20 %s/xvfb.log 2>/dev/null", stateDir))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // StartRemote starts a headless Xvfb instance on the remote host, or reuses
 // an existing healthy instance. State files are stored under stateDir.
 //
@@ -201,7 +212,7 @@ nohup Xvfb -displayfd 1 -screen 0 1x1x24 -listen tcp \
   2> %s/xvfb.log \
   < /dev/null &
 echo $! > %s/xvfb.pid
-for i in 1 2 3 4 5; do
+for i in $(seq 1 30); do
   [ -s %s/display ] && break
   sleep 0.2
 done
@@ -222,6 +233,12 @@ cat %s/display`,
 	// Step 5: Parse the display output
 	display, err := ParseDisplayFile(displayOut)
 	if err != nil {
+		// Surface Xvfb's own log so an empty/garbled display is diagnosable
+		// (e.g. the CI flake where Xvfb is slow to write -displayfd output under
+		// load), instead of failing with a bare parse error.
+		if logTail := readLogTail(session, stateDir); logTail != "" {
+			return nil, fmt.Errorf("failed to parse Xvfb display output: %w (xvfb.log tail: %s)", err, logTail)
+		}
 		return nil, fmt.Errorf("failed to parse Xvfb display output: %w", err)
 	}
 

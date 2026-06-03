@@ -67,7 +67,7 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 15. **deliver** (`internal/daemon/deliver.go`) — `DeliveryChain` tries adapters in priority order (cmux → platform-native). First success stops the chain. `BuildDeliveryChain()` constructs the default chain. Also implements `Notifier` interface for backward compat.
 16. **deliver_cmux** (`internal/daemon/deliver_cmux.go`) — Cross-platform tmux `display-message` adapter. Falls through if not in tmux.
 17. **notify_darwin** (`internal/daemon/notify_darwin.go`) — macOS-specific: terminal-notifier or osascript fallback.
-18. **claude wrapper** (`internal/shim/claude_wrapper.go`) — Bash script installed to `~/.local/bin/claude` on remote. Auto-injects `--settings` with Stop and Notification hooks when tunnel is alive. Falls through to real claude binary when tunnel is down.
+18. **claude settings hooks** (`internal/shim/settings.go`) — `connect` merges managed Stop and Notification hooks into remote `~/.claude/settings.json` and cleans up legacy wrappers to avoid double delivery. The `~/.local/bin/claude` wrapper remains only as a fallback when settings merge fails.
 19. **cc-clip-hook** (`internal/shim/hook_template.go`) — Bash script installed to `~/.local/bin/cc-clip-hook` on remote. Reads hook JSON from stdin, injects hostname, POSTs to `/notify` endpoint with nonce auth. Logs failures to `~/.cache/cc-clip/notify-health.log`.
 
 ### Key Design Decisions
@@ -84,7 +84,7 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 - **Token per-request in x11-bridge** — Token is read from file on every HTTP request, enabling `--token-only` rotation without restarting the bridge.
 - **DISPLAY injection is file-driven** — The DISPLAY marker block in shell rc reads from `~/.cache/cc-clip/codex/display` at shell startup, not a hardcoded value. This supports `-displayfd` dynamic allocation.
 - **Notification uses nonce auth, not session token** — `/notify` endpoint authenticates with a separate nonce (stored at `~/.cache/cc-clip/notify.nonce`), not the clipboard Bearer token. This allows independent rotation.
-- **Claude wrapper is conditional** — Only injects `--settings` hooks when the cc-clip tunnel is reachable (health check). When the tunnel is down, passes through transparently so Claude Code still works normally.
+- **Claude hooks are settings-first** — `cc-clip connect` prefers durable `~/.claude/settings.json` managed hooks. The legacy `~/.local/bin/claude` wrapper is fallback-only because Claude Code self-update can overwrite that symlink.
 - **DeliveryChain fallthrough** — Notification adapters are tried in priority order (cmux → platform-native). First success stops the chain. If all fail, the last error is returned but the hook script always exits 0 (non-blocking).
 - **Hook script is fire-and-forget** — `cc-clip-hook` always exits 0 to avoid blocking Claude Code. Failures are logged to a health file, not propagated.
 

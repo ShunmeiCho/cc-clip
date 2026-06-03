@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +21,8 @@ import (
 	"github.com/shunmei/cc-clip/internal/daemon"
 	"github.com/shunmei/cc-clip/internal/doctor"
 	"github.com/shunmei/cc-clip/internal/exitcode"
+	"github.com/shunmei/cc-clip/internal/install"
+	"github.com/shunmei/cc-clip/internal/plugin"
 	"github.com/shunmei/cc-clip/internal/service"
 	"github.com/shunmei/cc-clip/internal/session"
 	"github.com/shunmei/cc-clip/internal/setup"
@@ -71,6 +72,8 @@ func main() {
 		cmdUpdate()
 	case "notify":
 		cmdNotify()
+	case "plugin":
+		cmdPlugin()
 	case "x11-bridge":
 		cmdX11Bridge()
 	case "version", "--version", "-v":
@@ -104,7 +107,7 @@ Remote:
     --target         auto|xclip|wl-paste (default: auto)
     --path           Install directory (default: ~/.local/bin)
   uninstall          Remove shim
-    --host           Also clean up remote: claude wrapper restore + PATH marker
+    --host           Also clean up remote: Claude hooks/wrapper + PATH marker
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
   send [<host>] [<file>]
@@ -126,6 +129,7 @@ Remote:
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
+    --claude/--codex/--opencode/--agy/--all   Deployment target (see "Deployment targets" below)
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
 Known hosts (per-user registry):
@@ -145,13 +149,21 @@ Deploy (local -> remote):
     --local-bin      Path to pre-downloaded remote binary
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
-    --no-hooks       Persistently disable Claude wrapper hook injection
-    --hooks          Re-enable Claude wrapper hook injection
+    --no-hooks       Persistently disable Claude Code hook injection (Claude target only)
+    --hooks          Re-enable Claude Code hook injection (Claude target only)
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
-Codex support (extends connect/setup/uninstall):
-  connect <host> --codex   Deploy with Codex support (Xvfb + x11-bridge)
-  setup <host> --codex     Full setup including Codex support
+Deployment targets (connect/setup; choose at most one selector):
+    --claude         Claude Code: clipboard shim + claude-notify (default)
+    --codex          Codex CLI ONLY: Xvfb + x11-bridge + codex-notify (no Claude shim)
+    --opencode       opencode: clipboard shim only (no Claude/Codex config)
+    --agy            Antigravity: agy-notify (alias --antigravity)
+    --all            Everything above
+  With no selector: interactive menu on a TTY, or the {Claude} default on a
+  non-TTY. v0.9.0 BREAKING: --codex no longer installs the Claude shim; use
+  --all for the previous Claude+Codex behavior.
+
+Codex teardown:
   uninstall --codex        Remove Codex support only (local)
   uninstall --codex --host H  Remove Codex support on remote host
 
@@ -175,7 +187,9 @@ Notifications:
 Internal (used by deploy):
   x11-bridge         X11 clipboard bridge daemon (started by connect --codex)
     --display        X11 display (default: $DISPLAY)
-    --port           cc-clip daemon port (default: 18339)`)
+    --port           cc-clip daemon port (default: 18339)
+  plugin run <name>  Run a notify adapter (claude-notify | codex-notify | agy-notify)
+                     reads agent hook JSON from stdin`)
 }
 
 func getPort() int {
@@ -436,16 +450,26 @@ func cmdUninstall() {
 	}
 
 	if host != "" {
-		fmt.Printf("Restoring claude wrapper on remote %s...\n", host)
+		fmt.Printf("Removing Claude Code hooks on remote %s...\n", host)
 		session, err := shim.NewSSHSession(host)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open SSH session for wrapper restore: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: failed to open SSH session for Claude hook cleanup: %v\n", err)
 		} else {
 			defer session.Close()
-			if err := shim.UninstallRemoteClaudeWrapper(session); err != nil {
+			if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to remove managed Claude settings hooks: %v\n", err)
+			} else if changed {
+				fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+			}
+			if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to remove Claude no-hooks marker: %v\n", err)
+			}
+			if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to restore claude wrapper: %v\n", err)
-			} else {
+			} else if removed {
 				fmt.Println("      claude wrapper removed; original entry restored from sidecar")
+			} else {
+				fmt.Println("      no cc-clip claude wrapper installed")
 			}
 		}
 
@@ -574,7 +598,7 @@ type connectOpts struct {
 	port        int
 	force       bool
 	tokenOnly   bool
-	codex       bool
+	targets     DeployTargets // resolved deployment target set (parse + TTY menu); codex/claude/shim phases gate on its membership
 	noNotify    bool
 	noHooks     bool
 	hooks       bool
@@ -607,8 +631,8 @@ func rejectAutoRecoverWithTokenOnly(cmdName string, autoRecover, tokenOnly bool)
 func rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly bool) {
 	if tokenOnly && (noHooks || hooks) {
 		fmt.Fprintln(os.Stderr, `error: --no-hooks/--hooks cannot be combined with --token-only
-       --token-only only syncs remote credentials and does not reinstall or
-       update the Claude wrapper hook marker.
+       --token-only only syncs remote credentials and does not update remote
+       Claude Code hook settings or markers.
        Re-run without --token-only:
            cc-clip connect <host> --no-hooks
        Or re-enable hook injection with:
@@ -621,6 +645,10 @@ func cmdConnect() {
 	if len(os.Args) < 3 {
 		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
 	}
+	host, err := hostFromArgs(os.Args[2:])
+	if err != nil {
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
+	}
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
 	noHooks := hasFlag("no-hooks")
@@ -630,12 +658,33 @@ func cmdConnect() {
 	}
 	rejectAutoRecoverWithTokenOnly("connect", autoRecover, tokenOnly)
 	rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly)
+
+	// Resolve deployment targets BEFORE any SSH/daemon activity so the
+	// interactive menu (design §5) precedes the passphrase prompt. A multi-
+	// target conflict or a non-Claude hook-control combination fails fast with
+	// exit 2. On the non-TTY path resolveImplicitTargets falls back to {Claude}
+	// only — an unattended run never silently selects --all / Xvfb / sudo
+	// (constraint §6).
+	targets, explicit, terr := parseDeployTargets(os.Args[2:])
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, terr)
+		os.Exit(2)
+	}
+	if !explicit {
+		targets = resolveImplicitTargets(stdinIsTTY(), os.Stdin, os.Stdout, os.Stderr, DeployTargets{Claude: true}, "claude")
+	}
+	if herr := checkHookControlTargets(targets, noHooks, hooks); herr != nil {
+		fmt.Fprintln(os.Stderr, herr)
+		os.Exit(2)
+	}
+	maybeLegacyCodexNotice(os.Stderr, os.Args[2:], targets)
+
 	runConnect(connectOpts{
-		host:        os.Args[2],
+		host:        host,
 		port:        getPort(),
 		force:       hasFlag("force"),
 		tokenOnly:   tokenOnly,
-		codex:       hasFlag("codex"),
+		targets:     targets,
 		noNotify:    hasFlag("no-notify"),
 		noHooks:     noHooks,
 		hooks:       hooks,
@@ -773,13 +822,14 @@ remote has a valid claude binary installed.
 			}
 		}
 
-		connectVerifyTunnel(session, port, host)
+		connectVerifyTunnel(session, port, host, opts.targets)
 
 		// Record this host even on the --token-only path so `hosts list` and
 		// per-host update reminders reflect the most recent successful sync.
-		// Codex flag is sticky in the registry, so passing opts.codex here
-		// (which is false for plain --token-only) won't downgrade an entry.
-		recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
+		// Codex flag is sticky in the registry, so passing codexTargeted here
+		// (false for a plain --token-only run that resolves to {Claude}) won't
+		// downgrade a previously recorded Codex=true entry.
+		recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
 		return
 	}
 
@@ -841,39 +891,48 @@ remote has a valid claude binary installed.
 		fmt.Println("[4/7] Binary up to date, skipping upload")
 	}
 
-	// Step 5: Install shim (skip if already installed and not forced)
-	needsShim := force || shim.NeedsShimInstall(remoteState)
-	if !needsShim {
-		// Verify the shim file actually exists — cached state can be stale.
-		shimTarget := "xclip"
-		if remoteState != nil && remoteState.ShimTarget != "" {
-			shimTarget = remoteState.ShimTarget
-		}
-		checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
-		if _, err := session.Exec(checkCmd); err != nil {
-			fmt.Println("      shim missing despite cached state, will reinstall")
-			needsShim = true
-		}
-	}
+	// Step 5: Install shim — only for targets that use the clipboard shim
+	// (Claude / opencode). Pure --codex / --agy read X11 directly or are
+	// notify-only and need no shim, so install is SKIPPED; an existing shim is
+	// NEVER uninstalled here (design §3 + Option A: --codex no longer installs
+	// the Claude shim, but must not remove one a prior run left behind).
 	var installOut string
-	if needsShim {
-		fmt.Printf("[5/7] Installing shim...\n")
-		installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
-		out, err := session.Exec(installCmd)
-		if err != nil {
-			// Shim might already exist, try uninstall then install
-			if uninstallOut, uninstallErr := session.Exec(fmt.Sprintf("%s uninstall", remoteBin)); uninstallErr != nil {
-				log.Printf("      warning: cleanup before install retry failed: %s: %v", uninstallOut, uninstallErr)
+	var needsShim bool
+	if shimTargeted(opts.targets) {
+		needsShim = force || shim.NeedsShimInstall(remoteState)
+		if !needsShim {
+			// Verify the shim file actually exists — cached state can be stale.
+			shimTarget := "xclip"
+			if remoteState != nil && remoteState.ShimTarget != "" {
+				shimTarget = remoteState.ShimTarget
 			}
-			out, err = session.Exec(installCmd)
-			if err != nil {
-				log.Fatalf("      remote install failed: %s: %v", out, err)
+			checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
+			if _, err := session.Exec(checkCmd); err != nil {
+				fmt.Println("      shim missing despite cached state, will reinstall")
+				needsShim = true
 			}
 		}
-		installOut = out
-		fmt.Printf("      %s\n", out)
+		if needsShim {
+			fmt.Printf("[5/7] Installing shim...\n")
+			installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
+			out, err := session.Exec(installCmd)
+			if err != nil {
+				// Shim might already exist, try uninstall then install
+				if uninstallOut, uninstallErr := session.Exec(fmt.Sprintf("%s uninstall", remoteBin)); uninstallErr != nil {
+					log.Printf("      warning: cleanup before install retry failed: %s: %v", uninstallOut, uninstallErr)
+				}
+				out, err = session.Exec(installCmd)
+				if err != nil {
+					log.Fatalf("      remote install failed: %s: %v", out, err)
+				}
+			}
+			installOut = out
+			fmt.Printf("      %s\n", out)
+		} else {
+			fmt.Println("[5/7] Shim already installed, skipping")
+		}
 	} else {
-		fmt.Println("[5/7] Shim already installed, skipping")
+		fmt.Println("[5/7] Skipping shim install (target needs no clipboard shim)")
 	}
 
 	// Step 5b: Fix PATH if needed — always re-check, don't trust cached state
@@ -921,7 +980,7 @@ remote has a valid claude binary installed.
 	} else if remoteState != nil && remoteState.ShimTarget != "" {
 		shimTarget = remoteState.ShimTarget
 	}
-	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.codex)
+	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.targets)
 	if err != nil {
 		log.Fatalf("      failed to prepare remote deploy state: %v", err)
 	}
@@ -930,7 +989,7 @@ remote has a valid claude binary installed.
 	}
 
 	// Step 7: Verify tunnel
-	connectVerifyTunnel(session, port, host)
+	connectVerifyTunnel(session, port, host, opts.targets)
 
 	// Notification bridge setup (unless --no-notify)
 	if !opts.noNotify {
@@ -940,15 +999,22 @@ remote has a valid claude binary installed.
 		}
 	}
 
-	// Steps 8-11: Codex support (only if --codex flag is set)
-	if opts.codex {
+	// Steps 8-11: Codex support (only if Codex is among the resolved targets)
+	if codexTargeted(opts.targets) {
 		codexOk := runConnectCodex(session, opts, needsUpload, newState)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not update deploy state: %v", err)
 		}
 		if !codexOk {
 			fmt.Println()
-			fmt.Println("Claude shim is ready, but Codex support failed.")
+			// Only claim the shim is ready when this run actually targeted it;
+			// pure --codex skips shim install (Step 5), so "Claude shim is ready"
+			// would be inaccurate there.
+			if shimTargeted(opts.targets) {
+				fmt.Println("Claude shim is ready, but Codex support failed.")
+			} else {
+				fmt.Println("Codex support failed.")
+			}
 			fmt.Println("Fix the issues above and re-run: cc-clip connect", host, "--codex")
 			os.Exit(1)
 		}
@@ -959,10 +1025,10 @@ remote has a valid claude binary installed.
 	// (any error above exits via log.Fatal / os.Exit). Codex flag is sticky
 	// inside the registry, so a plain connect won't downgrade a previously
 	// recorded Codex=true.
-	recordHostConnect(host, registryVersionOrEmpty(), opts.codex)
+	recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
 }
 
-func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, codexRequested bool) (*shim.DeployState, error) {
+func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, targets DeployTargets) (*shim.DeployState, error) {
 	localHash, err := shim.LocalBinaryHash(localBin)
 	if err != nil {
 		return nil, err
@@ -971,27 +1037,107 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 	state := &shim.DeployState{
 		BinaryHash:    localHash,
 		BinaryVersion: binaryVersion,
-		ShimInstalled: true,
+		// Only claim a shim when this run targeted it (Claude/opencode). A
+		// shim-less target (pure --codex/--agy) preserves any prior shim below
+		// and never fabricates one on a fresh host.
+		ShimInstalled: shimTargeted(targets),
 		ShimTarget:    shimTarget,
 		PathFixed:     pathFixed,
 	}
 	if remoteState != nil {
 		state.Notify = remoteState.Notify
 		state.ClaudeWrapper = remoteState.ClaudeWrapper
-		// Preserve existing codex state when not using --codex.
-		if remoteState.Codex != nil && !codexRequested {
+		// Preserve existing Codex transport state when this run did not target Codex.
+		if remoteState.Codex != nil && !codexTargeted(targets) {
 			state.Codex = remoteState.Codex
+		}
+		// Preserve an existing shim when this run did not target it (pure
+		// --codex/--agy): never downgrade or overwrite a shim we did not touch.
+		if !shimTargeted(targets) {
+			state.ShimInstalled = remoteState.ShimInstalled
+			if remoteState.ShimTarget != "" {
+				state.ShimTarget = remoteState.ShimTarget
+			}
 		}
 	}
 	return state, nil
+}
+
+// adapterOutcome captures one detect-install adapter's per-connect result.
+// attempted means the adapter was targeted this connect (so its existing
+// deploy-state entry may be refreshed/downgraded); installed means the notify
+// integration was successfully written.
+type adapterOutcome struct {
+	attempted bool
+	installed bool
+}
+
+// detectInstallAdapter describes a notify adapter that follows the uniform
+// "binary-detected, then configured" shape: gate on a target predicate, probe
+// the remote for the agent, and install its notify integration if present.
+//
+// Claude is intentionally NOT modeled here — its settings.json merge, opt-out
+// marker, and wrapper fallback do not generalize (see configureRemoteClaudeHooks).
+// This table IS the extension seam for future notify CLIs (copilot, cursor, ...):
+// add a row with its predicate, detector, and installer; the deploy-state
+// recording is then one more applyAdapterState call in mergeNotifyDeployState.
+type detectInstallAdapter struct {
+	id       shim.AdapterID
+	label    string                                  // human label, e.g. "Codex", "Antigravity"
+	step     string                                  // step tag for the progress line, e.g. "N5", "N5.5"
+	fileNote string                                  // success line printed after install
+	targeted func(DeployTargets) bool                // gate predicate (5.3c: untargeted => skipped, config untouched)
+	detect   func(shim.RemoteExecutor) (bool, error) // remote presence probe
+	install  func(shim.RemoteExecutor, int) error    // notify integration writer
+}
+
+// run executes one adapter's detect-install flow and returns its outcome. A
+// non-targeted adapter is skipped entirely (attempted=false) so 5.3c gating
+// preserves its existing deploy-state entry. When targeted, attempted=true
+// regardless of detection so a stale installed entry can be downgraded if the
+// agent is no longer present or install fails.
+func (a detectInstallAdapter) run(session shim.RemoteExecutor, port int, targets DeployTargets) adapterOutcome {
+	if !a.targeted(targets) {
+		fmt.Printf("  [%s] Skipping %s notify (%s not targeted)\n", a.step, a.label, a.label)
+		return adapterOutcome{}
+	}
+	has, err := a.detect(session)
+	if err != nil {
+		log.Printf("      warning: %s detection failed: %v", a.label, err)
+		return adapterOutcome{attempted: true}
+	}
+	if !has {
+		fmt.Printf("  [%s] %s not detected, skipping notify setup\n", a.step, a.label)
+		return adapterOutcome{attempted: true}
+	}
+	fmt.Printf("  [%s] %s detected, configuring notify integration...\n", a.step, a.label)
+	if err := a.install(session, port); err != nil {
+		log.Printf("      warning: %s notify setup failed: %v", a.label, err)
+		return adapterOutcome{attempted: true}
+	}
+	fmt.Printf("      %s\n", a.fileNote)
+	return adapterOutcome{attempted: true, installed: true}
+}
+
+// runDetectInstallAdapters runs each detect-install adapter and collects the
+// per-adapter outcomes keyed by adapter id.
+func runDetectInstallAdapters(session shim.RemoteExecutor, port int, targets DeployTargets, adapters []detectInstallAdapter) map[shim.AdapterID]adapterOutcome {
+	outcomes := make(map[shim.AdapterID]adapterOutcome, len(adapters))
+	for _, a := range adapters {
+		outcomes[a.id] = a.run(session, port, targets)
+	}
+	return outcomes
 }
 
 // connectNotifySetup performs notification bridge setup:
 // 1. Generate nonce and register with local daemon
 // 2. Write nonce to remote
 // 3. Install hook script on remote
-// 4. Print Claude Code hook config
-// 5. Detect and configure Codex notify (if ~/.codex exists)
+// 4. Configure Claude Code hooks (if Claude targeted)
+// 5/5.5. Detect-install notify adapters (Codex, Antigravity) via the
+//
+//	detectInstallAdapter table, each gated on its target
+//
 // 6. Run health probe
 func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host string, state *shim.DeployState, opts connectOpts) {
 	fmt.Println()
@@ -1016,51 +1162,45 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 
 	hookInstalled := true
 
-	// Step N4: Install claude wrapper (auto-injects hooks via --settings
-	// unless the persistent no-hooks marker is present).
-	fmt.Println("  [N4] Installing claude wrapper...")
-	if opts.noHooks {
-		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
-			log.Printf("      warning: failed to disable claude wrapper hooks: %v", err)
-		} else {
-			fmt.Println("      claude wrapper hook injection disabled by ~/.cache/cc-clip/no-hooks")
-		}
+	// Step N4: Install Claude Code hooks in durable settings.json first — only
+	// when Claude is targeted. The wrapper remains only as a fallback for
+	// settings merge failures. 5.3c: --codex/--opencode/--agy must NOT write
+	// ~/.claude/settings.json, so an untargeted run skips N4 entirely and
+	// preserves any existing claude-notify adapter (applyAdapterState).
+	var claudeHooks claudeHooksResult
+	if claudeTargeted(opts.targets) {
+		fmt.Println("  [N4] Configuring Claude Code hooks...")
+		claudeHooks = configureRemoteClaudeHooks(session, port, opts)
 	} else {
-		if opts.hooks {
-			if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
-				log.Printf("      warning: failed to re-enable claude wrapper hooks: %v", err)
-			}
-		}
-	}
-	if err := shim.InstallRemoteClaudeWrapper(session, port); err != nil {
-		log.Printf("      warning: failed to install claude wrapper: %v", err)
-		fmt.Println("      Falling back to manual hook config:")
-		fmt.Println()
-		for _, line := range strings.Split(claudeHookConfigJSON(), "\n") {
-			fmt.Printf("      %s\n", line)
-		}
-		fmt.Println()
-	} else {
-		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
-		fmt.Println("      Hooks will be auto-injected unless disabled by ~/.cache/cc-clip/no-hooks")
+		fmt.Println("  [N4] Skipping Claude hooks (Claude not targeted)")
 	}
 
-	// Step N5: Detect and configure Codex notify
-	codexInjected := false
-	hasCodex, err := shim.RemoteHasCodex(session)
-	if err != nil {
-		log.Printf("      warning: codex detection failed: %v", err)
-	} else if hasCodex {
-		fmt.Println("  [N5] Codex detected, injecting notify config...")
-		if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
-			log.Printf("      warning: codex config injection failed: %v", err)
-		} else {
-			codexInjected = true
-			fmt.Println("      ~/.codex/config.toml updated")
-		}
-	} else {
-		fmt.Println("  [N5] Codex not detected, skipping config injection")
+	// Steps N5/N5.5: detect-install notify adapters. Each row is gated on its
+	// target predicate; 5.3c is preserved — an untargeted adapter is skipped
+	// entirely (its config file is never written) and its existing deploy-state
+	// entry is left untouched. Adding a future notify CLI = adding a row here
+	// plus its shim detector/installer.
+	notifyAdapters := []detectInstallAdapter{
+		{
+			id:       shim.AdapterCodexNotify,
+			label:    "Codex",
+			step:     "N5",
+			fileNote: "~/.codex/config.toml updated",
+			targeted: codexTargeted,
+			detect:   shim.RemoteHasCodex,
+			install:  shim.EnsureRemoteCodexNotifyConfig,
+		},
+		{
+			id:       shim.AdapterAntigravityNotify,
+			label:    "Antigravity",
+			step:     "N5.5",
+			fileNote: "cc-clip-notify agy plugin installed",
+			targeted: agyTargeted,
+			detect:   shim.RemoteHasAgy,
+			install:  shim.EnsureRemoteAntigravityPlugin,
+		},
 	}
+	adapterOutcomes := runDetectInstallAdapters(session, port, opts.targets, notifyAdapters)
 
 	// Step N6: Health probe
 	fmt.Println("  [N6] Running notification health probe...")
@@ -1072,13 +1212,189 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println("      health probe passed")
 	}
 
-	// Update deploy state
-	state.Notify = &shim.NotifyDeployState{
-		Enabled:        true,
-		HookInstalled:  hookInstalled,
-		CodexInjected:  codexInjected,
-		HealthVerified: healthVerified,
+	// Update deploy state: refresh the legacy boolean fields and record per-adapter
+	// truth. Each adapter is marked installed ONLY when genuinely wired this connect
+	// (claude-notify: managed runner in settings.json; codex-notify: config.toml
+	// injected) — not merely because the cc-clip-hook script exists. Both adapters
+	// are attempted on every pre-Step-5 connect (N4 Claude, N5 Codex), so a stale
+	// installed entry is downgraded when wiring did not succeed; Step 5 gates
+	// attempted on DeployTargets so un-targeted adapters are preserved instead.
+	codexOut := adapterOutcomes[shim.AdapterCodexNotify]
+	agyOut := adapterOutcomes[shim.AdapterAntigravityNotify]
+	mergeNotifyDeployState(state, notifyOutcome{
+		hookScriptInstalled: hookInstalled,
+		claudeAttempted:     claudeTargeted(opts.targets),
+		claudeWired:         claudeHooks.adapterInstalled,
+		codexAttempted:      codexOut.attempted,
+		codexInjected:       codexOut.installed,
+		agyAttempted:        agyOut.attempted,
+		agyInstalled:        agyOut.installed,
+		healthVerified:      healthVerified,
+	})
+}
+
+// notifyOutcome captures what this connect attempted and achieved for each notify
+// adapter so mergeNotifyDeployState can record per-adapter truth without
+// over-claiming. "attempted" means this connect targeted the adapter — pre-Step-5
+// both are always attempted (N4 configures Claude hooks, N5 probes Codex); Step 5
+// gates them on DeployTargets. When an adapter is NOT attempted, its existing
+// deploy-state entry is preserved untouched.
+type notifyOutcome struct {
+	hookScriptInstalled bool // cc-clip-hook fallback script installed on disk (N3)
+	claudeAttempted     bool // this connect configured Claude hooks (N4)
+	claudeWired         bool // managed runner genuinely wired in ~/.claude/settings.json
+	codexAttempted      bool // this connect probed/attempted Codex notify (N5)
+	codexInjected       bool // ~/.codex/config.toml notify successfully injected
+	agyAttempted        bool // this connect probed/attempted Antigravity notify (N5.5)
+	agyInstalled        bool // cc-clip-notify agy plugin installed via the agy CLI
+	healthVerified      bool // N6 health probe passed
+}
+
+// mergeNotifyDeployState refreshes the legacy boolean fields on state.Notify and
+// records per-adapter truth for this connect via applyAdapterState. The legacy
+// HookInstalled reflects the cc-clip-hook fallback SCRIPT on disk; the adapter
+// entries reflect ACTUAL wiring, decoupled from script presence so the state
+// never over-claims (P3). CodexInjected is refreshed ONLY when Codex was
+// attempted, so the legacy field never contradicts a preserved adapter entry.
+func mergeNotifyDeployState(state *shim.DeployState, o notifyOutcome) {
+	if state.Notify == nil {
+		state.Notify = &shim.NotifyDeployState{}
 	}
+	state.Notify.Enabled = true
+	state.Notify.HookInstalled = o.hookScriptInstalled
+	state.Notify.HealthVerified = o.healthVerified
+	if o.codexAttempted {
+		state.Notify.CodexInjected = o.codexInjected
+	}
+
+	applyAdapterState(state.Notify, shim.AdapterClaudeNotify, o.claudeAttempted, o.claudeWired)
+	applyAdapterState(state.Notify, shim.AdapterCodexNotify, o.codexAttempted, o.codexInjected)
+	// agy-notify has no legacy boolean mirror; it is tracked purely via the
+	// per-adapter map. Verified stays false (applyAdapterState) because a
+	// successful `agy plugin install` proves only that the layout was accepted,
+	// not that the Stop hook fires.
+	applyAdapterState(state.Notify, shim.AdapterAntigravityNotify, o.agyAttempted, o.agyInstalled)
+}
+
+// applyAdapterState records one adapter's per-connect truth without over-claiming:
+//   - !attempted          -> preserve any existing entry untouched (not targeted
+//     this connect; Step 5 gates attempted on DeployTargets).
+//   - attempted && wired  -> Installed=true, Source=config, Verified=false (the N6
+//     probe re-verifies the runner path next connect).
+//   - attempted && !wired -> downgrade a stale installed entry to Installed=false
+//     (attempted this connect but not wired); absence already means "not
+//     installed", so no entry is created.
+func applyAdapterState(notify *shim.NotifyDeployState, id shim.AdapterID, attempted, wired bool) {
+	if !attempted {
+		return
+	}
+	if wired {
+		if notify.Adapters == nil {
+			notify.Adapters = make(map[shim.AdapterID]*shim.AdapterState)
+		}
+		notify.Adapters[id] = &shim.AdapterState{
+			Installed: true, Source: install.SourceConfig, Verified: false,
+		}
+		return
+	}
+	if existing, ok := notify.Adapters[id]; ok {
+		existing.Installed = false
+		existing.Verified = false
+	}
+}
+
+// claudeHooksResult reports what configureRemoteClaudeHooks actually achieved so
+// the deploy state records the claude-notify adapter as installed ONLY when the
+// managed plugin runner is genuinely wired into ~/.claude/settings.json — not
+// merely because the cc-clip-hook fallback script exists on disk.
+type claudeHooksResult struct {
+	// adapterInstalled is true ONLY when the managed runner is present in
+	// settings.json after this call (freshly merged OR already present, with no
+	// per-event skip). It is false for: --no-hooks, the persistent opt-out
+	// marker, a user-bare hook that suppressed insertion (any merge warning), and
+	// the wrapper/manual fallback (the wrapper is not the plugin-runner adapter).
+	adapterInstalled bool
+	// usedFallback is true when settings merge failed and the legacy wrapper (or
+	// manual config) path was taken instead of the durable settings runner.
+	usedFallback bool
+}
+
+func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) claudeHooksResult {
+	if opts.noHooks {
+		if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+			log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
+		} else if changed {
+			fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+		}
+		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
+			log.Printf("      warning: failed to disable Claude hooks: %v", err)
+		} else {
+			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
+		}
+		if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+			log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+		} else if removed {
+			fmt.Println("      legacy claude wrapper removed; original entry restored")
+		}
+		return claudeHooksResult{}
+	}
+
+	if opts.hooks {
+		if err := shim.SetRemoteClaudeHooksEnabled(session, true); err != nil {
+			log.Printf("      warning: failed to re-enable Claude hooks: %v", err)
+		}
+	} else {
+		disabled, err := shim.RemoteClaudeHooksDisabled(session)
+		if err != nil {
+			log.Printf("      warning: failed to check Claude hook opt-out marker: %v", err)
+		} else if disabled {
+			if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+				log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
+			} else if changed {
+				fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+			}
+			if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+				log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+			} else if removed {
+				fmt.Println("      legacy claude wrapper removed; original entry restored")
+			}
+			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
+			return claudeHooksResult{}
+		}
+	}
+
+	changed, warnings, err := shim.MergeRemoteClaudeSettingsHooks(session)
+	if err == nil {
+		for _, w := range warnings {
+			log.Printf("      warning: %s", w)
+		}
+		if changed {
+			fmt.Println("      hooks installed in ~/.claude/settings.json")
+		} else {
+			fmt.Println("      hooks already present in ~/.claude/settings.json")
+		}
+		if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+			log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+		} else if removed {
+			fmt.Println("      legacy claude wrapper removed; original entry restored")
+		}
+		return claudeHooksResult{adapterInstalled: len(warnings) == 0}
+	}
+
+	log.Printf("      warning: failed to merge ~/.claude/settings.json hooks: %v", err)
+	fmt.Println("      Falling back to legacy claude wrapper (may be overwritten by Claude Code self-update)")
+	if err := shim.InstallRemoteClaudeWrapper(session, port); err != nil {
+		log.Printf("      warning: failed to install claude wrapper: %v", err)
+		fmt.Println("      Falling back to manual hook config:")
+		fmt.Println()
+		for _, line := range strings.Split(claudeHookConfigJSON(), "\n") {
+			fmt.Printf("      %s\n", line)
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("      claude wrapper installed to ~/.local/bin/claude")
+	}
+	return claudeHooksResult{usedFallback: true}
 }
 
 func syncNotificationNonce(session *shim.SSHSession, port int, daemonToken, host string) (string, error) {
@@ -1191,7 +1507,10 @@ func cmdSetup() {
 	if len(os.Args) < 3 {
 		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
 	}
-	host := os.Args[2]
+	host, err := hostFromArgs(os.Args[2:])
+	if err != nil {
+		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+	}
 	port := getPort()
 
 	// Reject conflicting flag combinations at parse time, before any
@@ -1200,6 +1519,21 @@ func cmdSetup() {
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
 	rejectAutoRecoverWithTokenOnly("setup", autoRecover, tokenOnly)
+
+	// Resolve deployment targets BEFORE any local dependency / daemon / SSH
+	// activity so the interactive menu (design §5) precedes any prompt, and a
+	// multi-target conflict fails fast with exit 2. setup defaults to {Claude}
+	// (design §4/§12: no-sudo contract) on the non-TTY path. setup exposes no
+	// --no-hooks/--hooks flags, so hook-control validation stays connect-only.
+	targets, explicit, terr := parseDeployTargets(os.Args[2:])
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, terr)
+		os.Exit(2)
+	}
+	if !explicit {
+		targets = resolveImplicitTargets(stdinIsTTY(), os.Stdin, os.Stdout, os.Stderr, DeployTargets{Claude: true}, "claude")
+	}
+	maybeLegacyCodexNotice(os.Stderr, os.Args[2:], targets)
 
 	// Step 1: Dependencies
 	fmt.Println("[1/4] Checking local dependencies...")
@@ -1259,13 +1593,33 @@ func cmdSetup() {
 	runConnect(connectOpts{
 		host:        host,
 		port:        port,
-		codex:       hasFlag("codex"),
+		targets:     targets,
 		autoRecover: autoRecover,
 	})
 }
 
+// connectSuccessSummary returns the post-connect summary line, tailored to the
+// resolved targets. The clipboard shim serves Claude Code / opencode; Codex
+// prints its own readiness line from runConnectCodex, so a Codex-only run must
+// not claim the Claude shim is ready (it is deliberately not installed under
+// pure --codex).
+func connectSuccessSummary(t DeployTargets) string {
+	switch {
+	case t.Claude:
+		return "Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard."
+	case t.Opencode:
+		return "Setup complete. Ctrl+V in remote opencode will paste images from your local clipboard."
+	case t.Codex:
+		return "Setup complete. Codex CLI clipboard support is configured below."
+	case t.Antigravity:
+		return "Setup complete. Antigravity notifications configured; clipboard transport is pending."
+	default:
+		return "Setup complete."
+	}
+}
+
 // connectVerifyTunnel verifies the SSH tunnel from the remote side.
-func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
+func connectVerifyTunnel(session *shim.SSHSession, port int, host string, targets DeployTargets) {
 	remoteBin := "~/.local/bin/cc-clip"
 
 	fmt.Printf("[7/7] Verifying tunnel from remote...\n")
@@ -1306,7 +1660,7 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 	fmt.Printf("      %s\n", shimOut)
 
 	fmt.Println()
-	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard.")
+	fmt.Println(connectSuccessSummary(targets))
 }
 
 // prepareBinaryLocal resolves the local binary path without performing remote operations.
@@ -1891,60 +2245,10 @@ func parseCodexNotifyPayload(payload string) (daemon.GenericMessagePayload, erro
 }
 
 // postGenericNotification sends a generic notification to the local cc-clip daemon.
-// It reads the notification nonce from ~/.cache/cc-clip/notify.nonce for auth.
+// It delegates to the shared plugin.PostNotification core so the wire bytes stay
+// identical across the notify subcommand and the plugin runner.
 func postGenericNotification(port int, msg daemon.GenericMessagePayload) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	nonceFile := filepath.Join(home, ".cache", "cc-clip", "notify.nonce")
-	nonceBytes, err := os.ReadFile(nonceFile)
-	if err != nil {
-		return fmt.Errorf("cannot read nonce file %s: %w", nonceFile, err)
-	}
-	nonce := strings.TrimSpace(string(nonceBytes))
-
-	payload := struct {
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		Urgency int    `json:"urgency"`
-		Sound   string `json:"sound,omitempty"`
-		Trusted bool   `json:"trusted,omitempty"`
-	}{
-		Title:   msg.Title,
-		Body:    msg.Body,
-		Urgency: msg.Urgency,
-		Sound:   msg.Sound,
-		Trusted: msg.Verified,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %w", err)
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/notify", port)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+nonce)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "cc-clip-notify/0.1")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send notification: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("daemon returned HTTP %d", resp.StatusCode)
-	}
-
-	return nil
+	return plugin.PostNotification(port, msg)
 }
 
 // cmdX11Bridge runs the X11 clipboard bridge daemon (internal command).

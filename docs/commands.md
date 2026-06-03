@@ -16,16 +16,19 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 
 | Command | Description |
 |---------|-------------|
-| `cc-clip setup <host>` | Full setup: deps, SSH config, daemon, deploy |
-| `cc-clip setup <host> --codex` | Full setup including Codex CLI support |
-| `cc-clip connect <host>` | Deploy to remote (incremental) |
-| `cc-clip connect <host> --codex` | Deploy with Codex support (Xvfb + x11-bridge) |
+| `cc-clip setup <host>` | Full setup: deps, SSH config, daemon, deploy (default target: Claude) |
+| `cc-clip connect <host>` | Deploy to remote (incremental; default target: Claude) |
+| `cc-clip connect <host> --claude` | Claude Code: clipboard shim + claude-notify (default) |
+| `cc-clip connect <host> --codex` | Codex CLI **only**: Xvfb + x11-bridge + codex-notify, no Claude shim (v0.9.0 breaking; use `--all` for both) |
+| `cc-clip connect <host> --opencode` | opencode: clipboard shim only |
+| `cc-clip connect <host> --agy` | Antigravity: agy-notify (alias `--antigravity`) |
+| `cc-clip connect <host> --all` | Every target (Claude + Codex + opencode + agy) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |
 | `cc-clip connect <host> --auto-recover` | Recover from v0.7.0 wrapper corruption + reinstall (mutex with --token-only) |
 | `cc-clip setup <host> --auto-recover` | Same recovery flow via setup path |
 | `cc-clip connect <host> --force` | Full redeploy ignoring cache |
 | `cc-clip uninstall` | Remove local xclip shim only |
-| `cc-clip uninstall --host <host>` | Remove from remote: claude wrapper, PATH marker (local shim best-effort) |
+| `cc-clip uninstall --host <host>` | Remove from remote: Claude managed hooks/wrapper, PATH marker (local shim best-effort) |
 | `cc-clip uninstall --codex` | Remove Codex support (local) |
 | `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
 
