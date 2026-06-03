@@ -97,6 +97,14 @@ func TestCLITargetMatrix(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected non-zero exit on target/flag conflict")
 			}
+			// Pin the exact exit code: the matrix is a fail-fast contract that
+			// must use os.Exit(2), not merely "some non-zero exit". `go run`
+			// itself exits 1 but surfaces the child's code as "exit status N" on
+			// stderr, so assert the child used os.Exit(2) — a regression that
+			// printed the same message with exit 1 must not pass.
+			if !strings.Contains(stderr.String(), "exit status 2") {
+				t.Fatalf("want child exit status 2 (fail-fast), stderr: %s", stderr.String())
+			}
 			if !strings.Contains(stderr.String(), tc.wantErr) {
 				t.Fatalf("missing target-matrix error in stderr: %s", stderr.String())
 			}
