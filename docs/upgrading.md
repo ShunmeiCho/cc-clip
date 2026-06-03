@@ -133,9 +133,10 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
    binary to the remote and rebuilds the shim / hooks / x11-bridge entries:
 
     ```sh
+    # Claude Code only (default):
     cc-clip connect myserver --force
-    # add --codex if you use Codex CLI on that host
-    cc-clip connect myserver --codex --force
+    # Claude Code + Codex CLI on that host (v0.9.0: --codex alone is Codex-only):
+    cc-clip connect myserver --all --force
     ```
 
     `--force` is important when upgrading: it bypasses the hash-based
