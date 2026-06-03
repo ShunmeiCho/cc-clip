@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <b>Beta available:</b> <a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">v0.9.0-beta.1</a> (opt-in prerelease) — multi-target setup (Claude / Codex / opencode / Antigravity) plus opencode &amp; Antigravity notifications. <a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">Release notes &amp; install →</a>
+  <b>Beta available:</b> <a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">v0.9.0-beta.1</a> (opt-in prerelease) — setup targets for Claude / Codex / opencode / Antigravity, plus opencode &amp; Antigravity notifications. <a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">Release notes &amp; install →</a>
 </p>
 
 ---
