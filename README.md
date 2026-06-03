@@ -321,6 +321,7 @@ Remote hook events (Claude finishing, tool approval requests, image paste events
 | Codex CLI | ✅ If a Codex target (`--codex`/`--all`) is selected and `~/.codex/` exists |
 | Claude Code | ✅ Managed hooks in `~/.claude/settings.json` |
 | opencode | ✅ If `opencode` is installed and an opencode target (`--opencode`/`--all`) is selected |
+| Antigravity (agy) | ✅ `agy-notify` plugin installed via the `agy` CLI when an Antigravity target (`--agy`/`--all`) is selected and `agy` is installed |
 
 Full setup, manual configuration for Claude Code, nonce registration, and troubleshooting: **[docs/notifications.md](docs/notifications.md)**.
 
@@ -371,7 +372,7 @@ The 10 you'll actually use:
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
-| `cc-clip setup <host> --all` | Full setup for Claude Code + Codex (`--codex` alone = Codex only) |
+| `cc-clip setup <host> --all` | Full setup for all targets (Claude + Codex + opencode + agy) (`--codex` alone = Codex only) |
 | `cc-clip connect <host> --force` | Repair/redeploy (when DISPLAY, x11-bridge, or tunnel is stuck) |
 | `cc-clip connect <host> --token-only` | Sync rotated token without redeploying binaries |
 | `cc-clip doctor --host <host>` | End-to-end health check |

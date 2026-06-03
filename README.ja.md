@@ -324,6 +324,7 @@ graph LR
 | Codex CLI | ✅ Codex ターゲット（`--codex`/`--all`）を選択し、リモートに `~/.codex/` がある場合 |
 | Claude Code | ✅ `~/.claude/settings.json` hooks を自動管理 |
 | opencode | ✅ リモートに `opencode` があり opencode ターゲット（`--opencode`/`--all`）を選択した場合 |
+| Antigravity (agy) | ✅ Antigravity ターゲット（`--agy`/`--all`）を選択し、リモートに `agy` がある場合、`agy` CLI 経由で `agy-notify` プラグインをインストール |
 
 完全なセットアップ、Claude Code hooks、nonce 登録、トラブルシューティングは **[docs/notifications.md](docs/notifications.md)** を参照してください。
 

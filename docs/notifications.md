@@ -27,6 +27,7 @@ Image paste notifications help you track what was pasted without leaving your wo
 | Claude Code | ✅ Managed hooks in `~/.claude/settings.json` | Wired during `cc-clip connect` |
 | Codex CLI | ✅ If a Codex target (`--codex`/`--all`) is selected and `~/.codex/` exists | Wired during `cc-clip connect` |
 | opencode | ✅ Plugin dropped into `~/.config/opencode/plugins/` if `opencode` is installed | Wired during `cc-clip connect` when an opencode target (`--opencode`/`--all`) is selected |
+| Antigravity (agy) | ✅ `agy-notify` plugin installed via the `agy` CLI if `agy` is installed | Wired during `cc-clip connect` when an Antigravity target (`--agy`/`--all`) is selected |
 
 ## Setup (Claude Code)
 
