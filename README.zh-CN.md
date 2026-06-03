@@ -167,7 +167,7 @@ cc-clip setup myserver
 
 > **v0.9.0 破坏性变更：** `--codex` 现在**只**安装 Codex 支持（Xvfb + x11-bridge），不装 Claude shim。要同时获得 Claude Code 与 Codex，请用 `--all`。默认（不带 flag）和 `--claude` 安装 Claude shim；`--opencode`、`--agy` 是另外的目标。legacy `--codex` 会打印一次性提示——可用 `CC_CLIP_NO_DEPRECATION_NOTICE=1` 静音。已存在的 shim 绝不会被移除。
 
-> **`--codex` 的前置条件**（上表唯一需要 `sudo` 的行）：远程必须已安装 Xvfb。`cc-clip setup --codex` 会尝试为你运行 `sudo apt install xvfb`（Debian/Ubuntu）或 `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）。但如果没有 passwordless `sudo`，它会中止并打印需要手动运行的准确命令。安装 Xvfb 后，再重新运行 `cc-clip setup myserver --codex`。
+> **Codex 目标（`--codex` 或 `--all`）的前置条件**（上表中需要 `sudo` 的行）：远程必须已安装 Xvfb。`cc-clip setup --codex`（或 `--all`）会尝试为你运行 `sudo apt install xvfb`（Debian/Ubuntu）或 `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）。但如果没有 passwordless `sudo`，它会中止并打印需要手动运行的准确命令。安装 Xvfb 后，再重新运行 `cc-clip setup myserver --codex`。
 >
 > 如果远程既不允许 passwordless `sudo`，也不能进行一次性手动安装，请使用 `cc-clip setup myserver`（不要加 `--codex`）。Claude Code 和 opencode 的剪贴板粘贴仍然可用；只有 Codex CLI 路径需要 Xvfb。
 
@@ -406,7 +406,7 @@ cc-clip 支持**任何在 Linux 上通过 `xclip` 或 `wl-paste` 读取剪贴板
 | CLI | 图片粘贴 | 通知 |
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ 开箱可用（xclip / wl-paste shim） | ✅ 通过 managed `Stop` / `Notification` hooks 中的 `cc-clip-hook` |
-| [Codex CLI](https://github.com/openai/codex) | ✅ 开箱可用（Xvfb + x11-bridge；需要 `--codex`） | ✅ 如果远程存在 `~/.codex/`，会在 `cc-clip connect` 时自动配置 |
+| [Codex CLI](https://github.com/openai/codex) | ✅ 开箱可用（Xvfb + x11-bridge；需要 `--codex`） | ✅ 选择 Codex 目标（`--codex` 或 `--all`）且远程存在 `~/.codex/` 时，会在 `cc-clip connect` 时自动配置 |
 | [opencode](https://opencode.ai) | ✅ 开箱可用（X11 上 xclip shim，Wayland 上 wl-paste shim） | ⚠️ 不会自动配置 — 如有需要可自行接入 notifier |
 | 任何其他 `xclip`/`wl-paste` consumer | ✅ 应该可以直接工作；如果不行，请[开启 discussion](https://github.com/ShunmeiCho/cc-clip/discussions) | — |
 

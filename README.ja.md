@@ -167,7 +167,7 @@ cc-clip setup myserver
 
 > **v0.9.0 破壊的変更:** `--codex` は現在 **Codex サポートのみ**（Xvfb + x11-bridge）をインストールし、Claude shim は入りません。Claude Code と Codex の両方が必要な場合は `--all` を使ってください。デフォルト（フラグなし）と `--claude` は Claude shim をインストールします。`--opencode`・`--agy` は他のターゲットです。legacy `--codex` では一度だけ通知が出ます — `CC_CLIP_NO_DEPRECATION_NOTICE=1` で抑制できます。既存の shim が削除されることはありません。
 
-> **`--codex` の前提条件**（上の表で唯一 `sudo` が必要な行）: リモートに Xvfb がインストールされている必要があります。`cc-clip setup --codex` は `sudo apt install xvfb`（Debian/Ubuntu）または `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）を自動実行しようとします。ただし passwordless `sudo` がない場合は中断し、手動で実行すべき正確なコマンドを表示します。Xvfb をインストールした後、`cc-clip setup myserver --codex` を再実行してください。
+> **Codex ターゲット（`--codex` または `--all`）の前提条件**（上の表で `sudo` が必要な行）: リモートに Xvfb がインストールされている必要があります。`cc-clip setup --codex`（または `--all`）は `sudo apt install xvfb`（Debian/Ubuntu）または `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）を自動実行しようとします。ただし passwordless `sudo` がない場合は中断し、手動で実行すべき正確なコマンドを表示します。Xvfb をインストールした後、`cc-clip setup myserver --codex` を再実行してください。
 >
 > リモートで passwordless `sudo` も一度きりの手動インストールも許可されていない場合は、`cc-clip setup myserver`（`--codex` なし）を使ってください。Claude Code と opencode のクリップボード貼り付けはそのまま動きます。Xvfb が必要なのは Codex CLI 経路だけです。
 
@@ -406,7 +406,7 @@ cc-clip は、Linux 上で `xclip` または `wl-paste` を使ってクリップ
 | CLI | 画像貼り付け | 通知 |
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box（xclip / wl-paste shim） | ✅ managed `Stop` / `Notification` hooks の `cc-clip-hook` 経由 |
-| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box（Xvfb + x11-bridge。`--codex` が必要） | ✅ リモートに `~/.codex/` がある場合、`cc-clip connect` 中に自動設定 |
+| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box（Xvfb + x11-bridge。`--codex` が必要） | ✅ Codex ターゲット（`--codex` または `--all`）を選び、リモートに `~/.codex/` がある場合、`cc-clip connect` 中に自動設定 |
 | [opencode](https://opencode.ai) | ✅ out of the box（X11 は xclip shim、Wayland は wl-paste shim） | ⚠️ 自動設定はされません — 必要なら自分で notifier を接続してください |
 | その他の `xclip`/`wl-paste` consumer | ✅ そのまま動くはずです。動かない場合は [discussion](https://github.com/ShunmeiCho/cc-clip/discussions) を開いてください | — |
 

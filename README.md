@@ -164,7 +164,7 @@ Pick the row that matches your remote workflow. These are the only decisions you
 
 > **v0.9.0 breaking change:** `--codex` now installs **only** Codex support (Xvfb + x11-bridge), no Claude shim. For Claude Code **and** Codex together, use `--all`. The default (no flag) and `--claude` install the Claude shim; `--opencode` and `--agy` are the other targets. A one-time notice prints on legacy `--codex` — silence it with `CC_CLIP_NO_DEPRECATION_NOTICE=1`. An existing shim is never removed.
 
-> **Prerequisite for `--codex`** (the only row in the table above that needs `sudo`): Xvfb must be installed on the remote. `cc-clip setup --codex` will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
+> **Prerequisite for Codex targets (`--codex` or `--all`)** — the rows in the table above that need `sudo`: Xvfb must be installed on the remote. `cc-clip setup --codex` (or `--all`) will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
 >
 > If your remote permits neither passwordless `sudo` nor a one-off manual install, stick with `cc-clip setup myserver` (without `--codex`). Clipboard paste still works for Claude Code and opencode; only the Codex CLI path needs Xvfb.
 
@@ -405,7 +405,7 @@ cc-clip works with **any coding agent that reads the clipboard via `xclip` or `w
 | CLI | Image paste | Notifications |
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box (xclip / wl-paste shim) | ✅ via `cc-clip-hook` in `Stop` / `Notification` hooks |
-| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured during `cc-clip connect` if `~/.codex/` exists |
+| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured when a Codex target is selected (`--codex` or `--all`) during `cc-clip connect` and `~/.codex/` exists |
 | [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ⚠️ not auto-configured — wire your own notifier if desired |
 | Any other `xclip`/`wl-paste` consumer | ✅ should just work — please [open a discussion](https://github.com/ShunmeiCho/cc-clip/discussions) if it doesn't | — |
 
