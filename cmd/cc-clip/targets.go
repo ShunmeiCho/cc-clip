@@ -280,3 +280,9 @@ func codexTargeted(t DeployTargets) bool { return t.Codex }
 // so neither needs the shim. A run that does not target the shim SKIPS install
 // but must never uninstall an existing shim (design §3 + Option A).
 func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode }
+
+// agyTargeted reports whether the Antigravity (agy CLI) integration is selected.
+// agy is notify-only: it installs a bundled agy plugin whose Stop hook runs
+// `cc-clip plugin run agy-notify`. It needs neither the clipboard shim nor X11
+// (clipboard transport is deferred), so it is gated independently of shimTargeted.
+func agyTargeted(t DeployTargets) bool { return t.Antigravity }

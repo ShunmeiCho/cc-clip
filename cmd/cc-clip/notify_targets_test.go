@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/shunmei/cc-clip/internal/install"
+	"github.com/shunmei/cc-clip/internal/plugin"
 	"github.com/shunmei/cc-clip/internal/shim"
 )
 
@@ -17,15 +18,15 @@ import (
 func TestTargetMembership(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                       string
-		targets                    DeployTargets
-		wantClaude, wantCx, wantSh bool
+		name                                string
+		targets                             DeployTargets
+		wantClaude, wantCx, wantSh, wantAgy bool
 	}{
-		{"claude only", DeployTargets{Claude: true}, true, false, true},
-		{"codex only", DeployTargets{Codex: true}, false, true, false},
-		{"opencode only", DeployTargets{Opencode: true}, false, false, true},
-		{"agy only", DeployTargets{Antigravity: true}, false, false, false},
-		{"all", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, true, true},
+		{"claude only", DeployTargets{Claude: true}, true, false, true, false},
+		{"codex only", DeployTargets{Codex: true}, false, true, false, false},
+		{"opencode only", DeployTargets{Opencode: true}, false, false, true, false},
+		{"agy only", DeployTargets{Antigravity: true}, false, false, false, true},
+		{"all", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, true, true, true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -40,7 +41,24 @@ func TestTargetMembership(t *testing.T) {
 			if got := shimTargeted(tt.targets); got != tt.wantSh {
 				t.Errorf("shimTargeted=%v want %v", got, tt.wantSh)
 			}
+			if got := agyTargeted(tt.targets); got != tt.wantAgy {
+				t.Errorf("agyTargeted=%v want %v", got, tt.wantAgy)
+			}
 		})
+	}
+}
+
+// TestAgyAdapterIDsMatch pins the shim deploy-state AdapterID for agy-notify to
+// the plugin dispatcher key: they live in separate packages but MUST be the same
+// string, or connect would record deploy-state under a key the runner never uses.
+func TestAgyAdapterIDsMatch(t *testing.T) {
+	t.Parallel()
+	if string(shim.AdapterAntigravityNotify) != string(plugin.AdapterAntigravityNotify) {
+		t.Fatalf("shim.AdapterAntigravityNotify=%q != plugin.AdapterAntigravityNotify=%q",
+			shim.AdapterAntigravityNotify, plugin.AdapterAntigravityNotify)
+	}
+	if shim.AdapterAntigravityNotify != "agy-notify" {
+		t.Fatalf("AdapterAntigravityNotify=%q want \"agy-notify\"", shim.AdapterAntigravityNotify)
 	}
 }
 

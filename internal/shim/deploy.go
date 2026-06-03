@@ -30,6 +30,10 @@ const (
 	AdapterCodexNotify AdapterID = "codex-notify"
 	// AdapterOpencodeNotify is the opencode notification adapter.
 	AdapterOpencodeNotify AdapterID = "opencode-notify"
+	// AdapterAntigravityNotify is the Antigravity (agy CLI) notification adapter.
+	// The string MUST match plugin.AdapterAntigravityNotify (the runner dispatcher
+	// key) so connect records deploy-state under the key the runner actually uses.
+	AdapterAntigravityNotify AdapterID = "agy-notify"
 )
 
 // AdapterState records the per-adapter installation/verification status.
