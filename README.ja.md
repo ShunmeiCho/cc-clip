@@ -160,9 +160,12 @@ cc-clip setup myserver
 | リモート CLI | コマンド | 追加されるもの | リモート `sudo` は必要？ |
 |---|---|---|---|
 | Claude Code のみ | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不要 |
-| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **に加えて**リモートの Xvfb + x11-bridge（下記参照） | ✅ **必要** — `apt`/`dnf install xvfb` 用の passwordless `sudo`、または事前に手動インストール |
+| Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **に加えて**リモートの Xvfb + x11-bridge（下記参照） | ✅ **必要** — `apt`/`dnf install xvfb` 用の passwordless `sudo`、または事前に手動インストール |
+| Codex CLI のみ | `cc-clip setup myserver --codex` | Xvfb + x11-bridge のみ — Claude shim は**入りません** | ✅ **必要** — 上記と同じ Xvfb `sudo` |
 | opencode のみ | `cc-clip setup myserver` | shim のみ — opencode は Claude Code と同じ xclip / wl-paste 経路でクリップボードを読むため、`--codex` は不要です |
 | Windows ローカルマシン | [Windows Quick Start](docs/windows-quickstart.md) を参照 | 別ワークフロー — `--codex` は使いません | ❌ 不要 |
+
+> **v0.9.0 破壊的変更:** `--codex` は現在 **Codex サポートのみ**（Xvfb + x11-bridge）をインストールし、Claude shim は入りません。Claude Code と Codex の両方が必要な場合は `--all` を使ってください。デフォルト（フラグなし）と `--claude` は Claude shim をインストールします。`--opencode`・`--agy` は他のターゲットです。legacy `--codex` では一度だけ通知が出ます — `CC_CLIP_NO_DEPRECATION_NOTICE=1` で抑制できます。既存の shim が削除されることはありません。
 
 > **`--codex` の前提条件**（上の表で唯一 `sudo` が必要な行）: リモートに Xvfb がインストールされている必要があります。`cc-clip setup --codex` は `sudo apt install xvfb`（Debian/Ubuntu）または `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）を自動実行しようとします。ただし passwordless `sudo` がない場合は中断し、手動で実行すべき正確なコマンドを表示します。Xvfb をインストールした後、`cc-clip setup myserver --codex` を再実行してください。
 >

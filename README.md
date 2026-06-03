@@ -157,9 +157,12 @@ Pick the row that matches your remote workflow. These are the only decisions you
 | Your remote CLI | Command | What it adds | Remote `sudo` needed? |
 |---|---|---|---|
 | Claude Code only | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ No |
-| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
+| Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
+| Codex CLI only | `cc-clip setup myserver --codex` | Xvfb + x11-bridge only — **no** Claude shim | ✅ **Yes** — same Xvfb `sudo` as above |
 | opencode only | `cc-clip setup myserver` | shim only — opencode reads the clipboard via the same xclip / wl-paste path as Claude Code, so it works without `--codex` | ❌ No |
 | Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` | ❌ No |
+
+> **v0.9.0 breaking change:** `--codex` now installs **only** Codex support (Xvfb + x11-bridge), no Claude shim. For Claude Code **and** Codex together, use `--all`. The default (no flag) and `--claude` install the Claude shim; `--opencode` and `--agy` are the other targets. A one-time notice prints on legacy `--codex` — silence it with `CC_CLIP_NO_DEPRECATION_NOTICE=1`. An existing shim is never removed.
 
 > **Prerequisite for `--codex`** (the only row in the table above that needs `sudo`): Xvfb must be installed on the remote. `cc-clip setup --codex` will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
 >

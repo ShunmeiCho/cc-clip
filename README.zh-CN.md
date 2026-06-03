@@ -160,9 +160,12 @@ cc-clip setup myserver
 | 远程 CLI | 命令 | 会增加什么 | 远程需要 `sudo` 吗？ |
 |---|---|---|---|
 | 只用 Claude Code | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不需要 |
-| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **加上**远程的 Xvfb + x11-bridge（见下文） | ✅ **需要** — 用于 `apt`/`dnf install xvfb` 的 passwordless `sudo`，或先手动安装 |
+| Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **加上**远程的 Xvfb + x11-bridge（见下文） | ✅ **需要** — 用于 `apt`/`dnf install xvfb` 的 passwordless `sudo`，或先手动安装 |
+| 只用 Codex CLI | `cc-clip setup myserver --codex` | 仅 Xvfb + x11-bridge — **不装** Claude shim | ✅ **需要** — 同上 Xvfb `sudo` |
 | 只用 opencode | `cc-clip setup myserver` | 仅 shim — opencode 通过和 Claude Code 相同的 xclip / wl-paste 路径读取剪贴板，因此不需要 `--codex` |
 | Windows 本地机器 | 见 [Windows Quick Start](docs/windows-quickstart.md) | 不同的工作流 — 不要使用 `--codex` | ❌ 不需要 |
+
+> **v0.9.0 破坏性变更：** `--codex` 现在**只**安装 Codex 支持（Xvfb + x11-bridge），不装 Claude shim。要同时获得 Claude Code 与 Codex，请用 `--all`。默认（不带 flag）和 `--claude` 安装 Claude shim；`--opencode`、`--agy` 是另外的目标。legacy `--codex` 会打印一次性提示——可用 `CC_CLIP_NO_DEPRECATION_NOTICE=1` 静音。已存在的 shim 绝不会被移除。
 
 > **`--codex` 的前置条件**（上表唯一需要 `sudo` 的行）：远程必须已安装 Xvfb。`cc-clip setup --codex` 会尝试为你运行 `sudo apt install xvfb`（Debian/Ubuntu）或 `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）。但如果没有 passwordless `sudo`，它会中止并打印需要手动运行的准确命令。安装 Xvfb 后，再重新运行 `cc-clip setup myserver --codex`。
 >
