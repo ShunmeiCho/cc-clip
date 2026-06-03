@@ -101,3 +101,27 @@ func TestRunOpencodeNotifyFailSoftOnPostFailure(t *testing.T) {
 		t.Fatalf("runOpencodeNotify must not propagate POST failure, got %v", err)
 	}
 }
+
+// TestAntigravityStopBody asserts the body-composition precedence: a non-blank
+// error wins over everything (including a present terminationReason), then
+// terminationReason, then a fullyIdle fallback, and finally "Stopped" for an
+// empty payload so the notification body is never empty.
+func TestAntigravityStopBody(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]interface{}
+		want string
+	}{
+		{name: "error wins over terminationReason", raw: map[string]interface{}{"error": "boom", "terminationReason": "completed"}, want: "Error: boom"},
+		{name: "terminationReason only", raw: map[string]interface{}{"terminationReason": "completed"}, want: "completed"},
+		{name: "fullyIdle fallback", raw: map[string]interface{}{"fullyIdle": true}, want: "Idle"},
+		{name: "empty payload", raw: map[string]interface{}{}, want: "Stopped"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := antigravityStopBody(tt.raw); got != tt.want {
+				t.Fatalf("antigravityStopBody(%v) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
