@@ -1063,12 +1063,81 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 	return state, nil
 }
 
+// adapterOutcome captures one detect-install adapter's per-connect result.
+// attempted means the adapter was targeted this connect (so its existing
+// deploy-state entry may be refreshed/downgraded); installed means the notify
+// integration was successfully written.
+type adapterOutcome struct {
+	attempted bool
+	installed bool
+}
+
+// detectInstallAdapter describes a notify adapter that follows the uniform
+// "binary-detected, then configured" shape: gate on a target predicate, probe
+// the remote for the agent, and install its notify integration if present.
+//
+// Claude is intentionally NOT modeled here — its settings.json merge, opt-out
+// marker, and wrapper fallback do not generalize (see configureRemoteClaudeHooks).
+// This table IS the extension seam for future notify CLIs (copilot, cursor, ...):
+// add a row with its predicate, detector, and installer; the deploy-state
+// recording is then one more applyAdapterState call in mergeNotifyDeployState.
+type detectInstallAdapter struct {
+	id       shim.AdapterID
+	label    string                                  // human label, e.g. "Codex", "Antigravity"
+	step     string                                  // step tag for the progress line, e.g. "N5", "N5.5"
+	fileNote string                                  // success line printed after install
+	targeted func(DeployTargets) bool                // gate predicate (5.3c: untargeted => skipped, config untouched)
+	detect   func(shim.RemoteExecutor) (bool, error) // remote presence probe
+	install  func(shim.RemoteExecutor, int) error    // notify integration writer
+}
+
+// run executes one adapter's detect-install flow and returns its outcome. A
+// non-targeted adapter is skipped entirely (attempted=false) so 5.3c gating
+// preserves its existing deploy-state entry. When targeted, attempted=true
+// regardless of detection so a stale installed entry can be downgraded if the
+// agent is no longer present or install fails.
+func (a detectInstallAdapter) run(session shim.RemoteExecutor, port int, targets DeployTargets) adapterOutcome {
+	if !a.targeted(targets) {
+		fmt.Printf("  [%s] Skipping %s notify (%s not targeted)\n", a.step, a.label, a.label)
+		return adapterOutcome{}
+	}
+	has, err := a.detect(session)
+	if err != nil {
+		log.Printf("      warning: %s detection failed: %v", a.label, err)
+		return adapterOutcome{attempted: true}
+	}
+	if !has {
+		fmt.Printf("  [%s] %s not detected, skipping notify setup\n", a.step, a.label)
+		return adapterOutcome{attempted: true}
+	}
+	fmt.Printf("  [%s] %s detected, configuring notify integration...\n", a.step, a.label)
+	if err := a.install(session, port); err != nil {
+		log.Printf("      warning: %s notify setup failed: %v", a.label, err)
+		return adapterOutcome{attempted: true}
+	}
+	fmt.Printf("      %s\n", a.fileNote)
+	return adapterOutcome{attempted: true, installed: true}
+}
+
+// runDetectInstallAdapters runs each detect-install adapter and collects the
+// per-adapter outcomes keyed by adapter id.
+func runDetectInstallAdapters(session shim.RemoteExecutor, port int, targets DeployTargets, adapters []detectInstallAdapter) map[shim.AdapterID]adapterOutcome {
+	outcomes := make(map[shim.AdapterID]adapterOutcome, len(adapters))
+	for _, a := range adapters {
+		outcomes[a.id] = a.run(session, port, targets)
+	}
+	return outcomes
+}
+
 // connectNotifySetup performs notification bridge setup:
 // 1. Generate nonce and register with local daemon
 // 2. Write nonce to remote
 // 3. Install hook script on remote
-// 4. Print Claude Code hook config
-// 5. Detect and configure Codex notify (if ~/.codex exists)
+// 4. Configure Claude Code hooks (if Claude targeted)
+// 5/5.5. Detect-install notify adapters (Codex, Antigravity) via the
+//
+//	detectInstallAdapter table, each gated on its target
+//
 // 6. Run health probe
 func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host string, state *shim.DeployState, opts connectOpts) {
 	fmt.Println()
@@ -1106,27 +1175,32 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		fmt.Println("  [N4] Skipping Claude hooks (Claude not targeted)")
 	}
 
-	// Step N5: Detect and configure Codex notify — only when Codex is targeted.
-	// 5.3c: --claude/--opencode/--agy must NOT write ~/.codex/config.toml.
-	codexInjected := false
-	if codexTargeted(opts.targets) {
-		hasCodex, err := shim.RemoteHasCodex(session)
-		if err != nil {
-			log.Printf("      warning: codex detection failed: %v", err)
-		} else if hasCodex {
-			fmt.Println("  [N5] Codex detected, injecting notify config...")
-			if err := shim.EnsureRemoteCodexNotifyConfig(session, port); err != nil {
-				log.Printf("      warning: codex config injection failed: %v", err)
-			} else {
-				codexInjected = true
-				fmt.Println("      ~/.codex/config.toml updated")
-			}
-		} else {
-			fmt.Println("  [N5] Codex not detected, skipping config injection")
-		}
-	} else {
-		fmt.Println("  [N5] Skipping Codex notify (Codex not targeted)")
+	// Steps N5/N5.5: detect-install notify adapters. Each row is gated on its
+	// target predicate; 5.3c is preserved — an untargeted adapter is skipped
+	// entirely (its config file is never written) and its existing deploy-state
+	// entry is left untouched. Adding a future notify CLI = adding a row here
+	// plus its shim detector/installer.
+	notifyAdapters := []detectInstallAdapter{
+		{
+			id:       shim.AdapterCodexNotify,
+			label:    "Codex",
+			step:     "N5",
+			fileNote: "~/.codex/config.toml updated",
+			targeted: codexTargeted,
+			detect:   shim.RemoteHasCodex,
+			install:  shim.EnsureRemoteCodexNotifyConfig,
+		},
+		{
+			id:       shim.AdapterAntigravityNotify,
+			label:    "Antigravity",
+			step:     "N5.5",
+			fileNote: "cc-clip-notify agy plugin installed",
+			targeted: agyTargeted,
+			detect:   shim.RemoteHasAgy,
+			install:  shim.EnsureRemoteAntigravityPlugin,
+		},
 	}
+	adapterOutcomes := runDetectInstallAdapters(session, port, opts.targets, notifyAdapters)
 
 	// Step N6: Health probe
 	fmt.Println("  [N6] Running notification health probe...")
@@ -1145,12 +1219,16 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	// are attempted on every pre-Step-5 connect (N4 Claude, N5 Codex), so a stale
 	// installed entry is downgraded when wiring did not succeed; Step 5 gates
 	// attempted on DeployTargets so un-targeted adapters are preserved instead.
+	codexOut := adapterOutcomes[shim.AdapterCodexNotify]
+	agyOut := adapterOutcomes[shim.AdapterAntigravityNotify]
 	mergeNotifyDeployState(state, notifyOutcome{
 		hookScriptInstalled: hookInstalled,
 		claudeAttempted:     claudeTargeted(opts.targets),
 		claudeWired:         claudeHooks.adapterInstalled,
-		codexAttempted:      codexTargeted(opts.targets),
-		codexInjected:       codexInjected,
+		codexAttempted:      codexOut.attempted,
+		codexInjected:       codexOut.installed,
+		agyAttempted:        agyOut.attempted,
+		agyInstalled:        agyOut.installed,
 		healthVerified:      healthVerified,
 	})
 }
@@ -1167,6 +1245,8 @@ type notifyOutcome struct {
 	claudeWired         bool // managed runner genuinely wired in ~/.claude/settings.json
 	codexAttempted      bool // this connect probed/attempted Codex notify (N5)
 	codexInjected       bool // ~/.codex/config.toml notify successfully injected
+	agyAttempted        bool // this connect probed/attempted Antigravity notify (N5.5)
+	agyInstalled        bool // cc-clip-notify agy plugin installed via the agy CLI
 	healthVerified      bool // N6 health probe passed
 }
 
@@ -1189,6 +1269,11 @@ func mergeNotifyDeployState(state *shim.DeployState, o notifyOutcome) {
 
 	applyAdapterState(state.Notify, shim.AdapterClaudeNotify, o.claudeAttempted, o.claudeWired)
 	applyAdapterState(state.Notify, shim.AdapterCodexNotify, o.codexAttempted, o.codexInjected)
+	// agy-notify has no legacy boolean mirror; it is tracked purely via the
+	// per-adapter map. Verified stays false (applyAdapterState) because a
+	// successful `agy plugin install` proves only that the layout was accepted,
+	// not that the Stop hook fires.
+	applyAdapterState(state.Notify, shim.AdapterAntigravityNotify, o.agyAttempted, o.agyInstalled)
 }
 
 // applyAdapterState records one adapter's per-connect truth without over-claiming:

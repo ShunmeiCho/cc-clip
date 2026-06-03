@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -180,6 +181,136 @@ func TestMergeNotifyAsymmetricPreservation(t *testing.T) {
 		}
 		if a := state.Notify.Adapters[shim.AdapterClaudeNotify]; a == nil || !a.Installed {
 			t.Fatal("--claude must wire the claude-notify adapter when wired")
+		}
+	})
+}
+
+// TestDetectInstallAdapterRun verifies the detect-install flow for one notify
+// adapter — the seam future notify CLIs (copilot, cursor) plug into. An
+// untargeted adapter is skipped (attempted=false); a targeted adapter is
+// attempted=true regardless of detection, and installed=true only on a
+// successful install. detect/install are stubbed so no real session is needed.
+func TestDetectInstallAdapterRun(t *testing.T) {
+	t.Parallel()
+	targeted := DeployTargets{Antigravity: true}
+	untargeted := DeployTargets{Claude: true} // agy not among targets
+	ok := func(shim.RemoteExecutor) (bool, error) { return true, nil }
+	notFound := func(shim.RemoteExecutor) (bool, error) { return false, nil }
+	probeErr := func(shim.RemoteExecutor) (bool, error) { return false, fmt.Errorf("probe failed") }
+	installOK := func(shim.RemoteExecutor, int) error { return nil }
+	installErr := func(shim.RemoteExecutor, int) error { return fmt.Errorf("install failed") }
+
+	tests := []struct {
+		name          string
+		targets       DeployTargets
+		detect        func(shim.RemoteExecutor) (bool, error)
+		install       func(shim.RemoteExecutor, int) error
+		wantAttempted bool
+		wantInstalled bool
+	}{
+		{"not targeted -> skipped", untargeted, ok, installOK, false, false},
+		{"targeted, detected, installed", targeted, ok, installOK, true, true},
+		{"targeted, not detected", targeted, notFound, installOK, true, false},
+		{"targeted, detect error", targeted, probeErr, installOK, true, false},
+		{"targeted, install error", targeted, ok, installErr, true, false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := detectInstallAdapter{
+				id:       shim.AdapterAntigravityNotify,
+				label:    "Antigravity",
+				step:     "N5.5",
+				fileNote: "installed",
+				targeted: agyTargeted,
+				detect:   tt.detect,
+				install:  tt.install,
+			}
+			got := a.run(nil, 18339, tt.targets)
+			if got.attempted != tt.wantAttempted || got.installed != tt.wantInstalled {
+				t.Fatalf("run() = %+v, want {attempted:%v installed:%v}", got, tt.wantAttempted, tt.wantInstalled)
+			}
+		})
+	}
+}
+
+// TestRunDetectInstallAdaptersKeysOutcomesByID verifies the collected outcomes
+// are keyed by adapter id, mixing a successful (codex) and a not-detected (agy)
+// adapter in one pass.
+func TestRunDetectInstallAdaptersKeysOutcomesByID(t *testing.T) {
+	t.Parallel()
+	adapters := []detectInstallAdapter{
+		{
+			id: shim.AdapterCodexNotify, label: "Codex", step: "N5", targeted: codexTargeted,
+			detect:  func(shim.RemoteExecutor) (bool, error) { return true, nil },
+			install: func(shim.RemoteExecutor, int) error { return nil },
+		},
+		{
+			id: shim.AdapterAntigravityNotify, label: "Antigravity", step: "N5.5", targeted: agyTargeted,
+			detect:  func(shim.RemoteExecutor) (bool, error) { return false, nil },
+			install: func(shim.RemoteExecutor, int) error { return nil },
+		},
+	}
+	out := runDetectInstallAdapters(nil, 18339, DeployTargets{Codex: true, Antigravity: true}, adapters)
+	if c := out[shim.AdapterCodexNotify]; !c.attempted || !c.installed {
+		t.Fatalf("codex outcome = %+v, want attempted+installed", c)
+	}
+	if a := out[shim.AdapterAntigravityNotify]; !a.attempted || a.installed {
+		t.Fatalf("agy outcome = %+v, want attempted, not installed", a)
+	}
+}
+
+// TestMergeNotifyDeployStateAgyAdapter verifies the agy-notify adapter is
+// recorded in the per-adapter map with Verified=false (a successful install
+// proves only that agy accepted the layout, NOT that the Stop hook fires),
+// absent when not installed, and preserved when not targeted this connect.
+func TestMergeNotifyDeployStateAgyAdapter(t *testing.T) {
+	t.Run("installed -> present, Verified=false, Source=config", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			agyAttempted:        true,
+			agyInstalled:        true,
+		})
+		a := state.Notify.Adapters[shim.AdapterAntigravityNotify]
+		if a == nil || !a.Installed {
+			t.Fatalf("agy adapter must be Installed=true: %+v", a)
+		}
+		if a.Verified {
+			t.Fatalf("agy adapter Verified must be false (install != hook-fire proof): %+v", a)
+		}
+		if a.Source != install.SourceConfig {
+			t.Fatalf("agy adapter Source = %q, want %q", a.Source, install.SourceConfig)
+		}
+	})
+	t.Run("attempted but not installed -> absent", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			agyAttempted:        true,
+			agyInstalled:        false,
+		})
+		if state.Notify.Adapters != nil {
+			if _, ok := state.Notify.Adapters[shim.AdapterAntigravityNotify]; ok {
+				t.Fatalf("agy adapter must be absent when not installed: %+v", state.Notify.Adapters)
+			}
+		}
+	})
+	t.Run("not attempted -> preserves existing agy entry", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterAntigravityNotify: {Installed: true, Verified: false, Source: install.SourceConfig},
+				},
+			},
+		}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			agyAttempted:        false,
+		})
+		if a := state.Notify.Adapters[shim.AdapterAntigravityNotify]; a == nil || !a.Installed {
+			t.Fatalf("un-targeted connect must preserve existing agy adapter: %+v", a)
 		}
 	})
 }
