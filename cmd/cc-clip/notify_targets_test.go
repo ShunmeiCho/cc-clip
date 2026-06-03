@@ -63,6 +63,104 @@ func TestAgyAdapterIDsMatch(t *testing.T) {
 	}
 }
 
+// TestOpencodeNotifyAdapterIDsMatch pins the shim deploy-state AdapterID for
+// opencode-notify to the plugin dispatcher key: they live in separate packages
+// but MUST be the same string, or connect would record deploy-state under a key
+// the runner never uses.
+func TestOpencodeNotifyAdapterIDsMatch(t *testing.T) {
+	t.Parallel()
+	if string(shim.AdapterOpencodeNotify) != string(plugin.AdapterOpencodeNotify) {
+		t.Fatalf("shim.AdapterOpencodeNotify=%q != plugin.AdapterOpencodeNotify=%q",
+			shim.AdapterOpencodeNotify, plugin.AdapterOpencodeNotify)
+	}
+	if shim.AdapterOpencodeNotify != "opencode-notify" {
+		t.Fatalf("AdapterOpencodeNotify=%q want \"opencode-notify\"", shim.AdapterOpencodeNotify)
+	}
+}
+
+// TestOpencodeNotifyTargeted verifies the opencode notify gate predicate fires
+// for an --opencode run and stays off for an unrelated (--claude-only) run.
+// opencode's clipboard already works via the shim; this predicate gates ONLY the
+// notify plugin.
+func TestOpencodeNotifyTargeted(t *testing.T) {
+	t.Parallel()
+	if !opencodeNotifyTargeted(DeployTargets{Opencode: true}) {
+		t.Fatal("opencodeNotifyTargeted must be true for DeployTargets{Opencode:true}")
+	}
+	if opencodeNotifyTargeted(DeployTargets{Claude: true}) {
+		t.Fatal("opencodeNotifyTargeted must be false for DeployTargets{Claude:true} only")
+	}
+}
+
+// TestBuildNotifyAdaptersOpencodeRow asserts buildNotifyAdapters() (the extracted
+// detect-install table seam) registers an opencode-notify row whose gate
+// predicate is true under --opencode and false under --claude-only. Behavior test
+// on the seam — no reflection/string-matching of the predicate identity.
+func TestBuildNotifyAdaptersOpencodeRow(t *testing.T) {
+	t.Parallel()
+	var row *detectInstallAdapter
+	for i := range buildNotifyAdapters() {
+		if buildNotifyAdapters()[i].id == shim.AdapterOpencodeNotify {
+			a := buildNotifyAdapters()[i]
+			row = &a
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("buildNotifyAdapters() must contain an opencode-notify row")
+	}
+	if !row.targeted(DeployTargets{Opencode: true}) {
+		t.Fatal("opencode-notify row predicate must be true for DeployTargets{Opencode:true}")
+	}
+	if row.targeted(DeployTargets{Claude: true}) {
+		t.Fatal("opencode-notify row predicate must be false for DeployTargets{Claude:true} only")
+	}
+}
+
+// TestMergeNotifyDeployStateOpencodeAdapter verifies the opencode-notify adapter
+// is recorded in the per-adapter map with Verified=false (a successful plugin
+// drop proves only that the file was written, NOT that session.idle fires) when
+// attempted+installed, and an existing opencode-notify entry is PRESERVED
+// untouched when opencode is NOT attempted this connect (5.3c).
+func TestMergeNotifyDeployStateOpencodeAdapter(t *testing.T) {
+	t.Run("installed -> present, Verified=false, Source=config", func(t *testing.T) {
+		state := &shim.DeployState{Notify: nil}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			opencodeAttempted:   true,
+			opencodeInstalled:   true,
+		})
+		a := state.Notify.Adapters[shim.AdapterOpencodeNotify]
+		if a == nil || !a.Installed {
+			t.Fatalf("opencode adapter must be Installed=true: %+v", a)
+		}
+		if a.Verified {
+			t.Fatalf("opencode adapter Verified must be false (drop != session.idle proof): %+v", a)
+		}
+		if a.Source != install.SourceConfig {
+			t.Fatalf("opencode adapter Source = %q, want %q", a.Source, install.SourceConfig)
+		}
+	})
+	t.Run("not attempted -> preserves existing opencode entry", func(t *testing.T) {
+		state := &shim.DeployState{
+			Notify: &shim.NotifyDeployState{
+				Adapters: map[shim.AdapterID]*shim.AdapterState{
+					shim.AdapterOpencodeNotify: {Installed: true, Verified: false, Source: install.SourceConfig},
+				},
+			},
+		}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true,
+			claudeWired:         true,
+			opencodeAttempted:   false,
+		})
+		if a := state.Notify.Adapters[shim.AdapterOpencodeNotify]; a == nil || !a.Installed {
+			t.Fatalf("un-targeted connect must preserve existing opencode adapter: %+v", a)
+		}
+	})
+}
+
 // TestNewDeployStateShimPreservation verifies that newDeployState only claims a
 // shim when the shim is targeted, and otherwise preserves the prior remote
 // state's shim (never downgrading or fabricating one). This is the deploy-state

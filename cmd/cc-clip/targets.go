@@ -286,3 +286,9 @@ func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode }
 // `cc-clip plugin run agy-notify`. It needs neither the clipboard shim nor X11
 // (clipboard transport is deferred), so it is gated independently of shimTargeted.
 func agyTargeted(t DeployTargets) bool { return t.Antigravity }
+
+// opencodeNotifyTargeted gates ONLY the opencode notify plugin. opencode's
+// clipboard already works via the shim (shimTargeted includes Opencode); this
+// predicate governs the separate session.idle notify plugin install, so an
+// --opencode run installs both the shim AND the notify plugin.
+func opencodeNotifyTargeted(t DeployTargets) bool { return t.Opencode }

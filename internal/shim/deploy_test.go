@@ -272,6 +272,41 @@ func TestDeployStateJSON(t *testing.T) {
 	}
 }
 
+// TestDeployStateOpencodeNotifyRoundTrip verifies that after marking the
+// opencode-notify adapter installed, AdapterInstalled reports it true and the
+// entry (Installed=true, Verified=false) survives a marshal/unmarshal round-trip.
+// Verified stays false because a successful plugin drop proves the file landed,
+// not that opencode loads it or that session.idle fires.
+func TestDeployStateOpencodeNotifyRoundTrip(t *testing.T) {
+	state := &DeployState{
+		Notify: &NotifyDeployState{
+			Enabled: true,
+			Adapters: map[AdapterID]*AdapterState{
+				AdapterOpencodeNotify: {Installed: true, Source: install.SourceConfig, Verified: false},
+			},
+		},
+	}
+	if !AdapterInstalled(state, AdapterOpencodeNotify) {
+		t.Fatal("AdapterInstalled(opencode-notify) must be true after install")
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	var decoded DeployState
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if !AdapterInstalled(&decoded, AdapterOpencodeNotify) {
+		t.Fatal("opencode-notify adapter must survive marshal/unmarshal as installed")
+	}
+	if a := decoded.Notify.Adapters[AdapterOpencodeNotify]; a == nil || a.Verified {
+		t.Fatalf("opencode-notify adapter must round-trip with Verified=false: %+v", a)
+	}
+}
+
 func TestDeployStateJSONFromRaw(t *testing.T) {
 	// Simulate reading from a remote file
 	raw := `{
