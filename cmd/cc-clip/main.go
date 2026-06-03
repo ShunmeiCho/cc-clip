@@ -589,7 +589,8 @@ type connectOpts struct {
 	port        int
 	force       bool
 	tokenOnly   bool
-	codex       bool
+	codex       bool          // bridge for 5.3b; 5.3c derives this from targets membership
+	targets     DeployTargets // resolved deployment target set (parse + TTY menu)
 	noNotify    bool
 	noHooks     bool
 	hooks       bool
@@ -649,12 +650,34 @@ func cmdConnect() {
 	}
 	rejectAutoRecoverWithTokenOnly("connect", autoRecover, tokenOnly)
 	rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly)
+
+	// Resolve deployment targets BEFORE any SSH/daemon activity so the
+	// interactive menu (design §5) precedes the passphrase prompt. A multi-
+	// target conflict or a non-Claude hook-control combination fails fast with
+	// exit 2. On the non-TTY path resolveImplicitTargets falls back to {Claude}
+	// only — an unattended run never silently selects --all / Xvfb / sudo
+	// (constraint §6).
+	targets, explicit, terr := parseDeployTargets(os.Args[2:])
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, terr)
+		os.Exit(2)
+	}
+	if !explicit {
+		targets = resolveImplicitTargets(stdinIsTTY(), os.Stdin, os.Stdout, os.Stderr, DeployTargets{Claude: true}, "claude")
+	}
+	if herr := checkHookControlTargets(targets, noHooks, hooks); herr != nil {
+		fmt.Fprintln(os.Stderr, herr)
+		os.Exit(2)
+	}
+	maybeLegacyCodexNotice(os.Stderr, os.Args[2:], targets)
+
 	runConnect(connectOpts{
 		host:        host,
 		port:        getPort(),
 		force:       hasFlag("force"),
 		tokenOnly:   tokenOnly,
-		codex:       hasFlag("codex"),
+		codex:       targets.Codex, // bridge: 5.3c converts opts.codex call sites to targets membership
+		targets:     targets,
 		noNotify:    hasFlag("no-notify"),
 		noHooks:     noHooks,
 		hooks:       hooks,
@@ -1364,6 +1387,21 @@ func cmdSetup() {
 	tokenOnly := hasFlag("token-only")
 	rejectAutoRecoverWithTokenOnly("setup", autoRecover, tokenOnly)
 
+	// Resolve deployment targets BEFORE any local dependency / daemon / SSH
+	// activity so the interactive menu (design §5) precedes any prompt, and a
+	// multi-target conflict fails fast with exit 2. setup defaults to {Claude}
+	// (design §4/§12: no-sudo contract) on the non-TTY path. setup exposes no
+	// --no-hooks/--hooks flags, so hook-control validation stays connect-only.
+	targets, explicit, terr := parseDeployTargets(os.Args[2:])
+	if terr != nil {
+		fmt.Fprintln(os.Stderr, terr)
+		os.Exit(2)
+	}
+	if !explicit {
+		targets = resolveImplicitTargets(stdinIsTTY(), os.Stdin, os.Stdout, os.Stderr, DeployTargets{Claude: true}, "claude")
+	}
+	maybeLegacyCodexNotice(os.Stderr, os.Args[2:], targets)
+
 	// Step 1: Dependencies
 	fmt.Println("[1/4] Checking local dependencies...")
 	if runtime.GOOS == "darwin" {
@@ -1422,7 +1460,8 @@ func cmdSetup() {
 	runConnect(connectOpts{
 		host:        host,
 		port:        port,
-		codex:       hasFlag("codex"),
+		codex:       targets.Codex, // bridge: 5.3c converts opts.codex call sites to targets membership
+		targets:     targets,
 		autoRecover: autoRecover,
 	})
 }

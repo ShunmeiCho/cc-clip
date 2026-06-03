@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -203,4 +204,63 @@ func hostFromArgs(args []string) (string, error) {
 		return a, nil
 	}
 	return "", errNoHost
+}
+
+// stdinIsTTYReader reports whether r is an interactive terminal. Only an
+// *os.File backed by a character device qualifies; any other reader (pipe,
+// redirected file, or a test's bytes.Reader) is treated as non-interactive so
+// an unattended run takes the non-TTY fallback instead of blocking on the
+// interactive target menu. Avoids a golang.org/x/term dependency (design §0).
+func stdinIsTTYReader(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// stdinIsTTY reports whether the process stdin is an interactive terminal.
+func stdinIsTTY() bool { return stdinIsTTYReader(os.Stdin) }
+
+// errHookControlNonClaude is returned when --no-hooks/--hooks is combined with a
+// target set that does not include Claude. Those flags govern ONLY the Claude
+// Code settings.json managed hooks, so they are meaningless (and rejected) for
+// codex/opencode/agy-only runs. Under --all, Claude IS selected, so it is
+// allowed. Callers print it to stderr and exit 2 (design §6(b)).
+var errHookControlNonClaude = errors.New(
+	"--no-hooks/--hooks only apply to the Claude target; drop them or include --claude/--all")
+
+// checkHookControlTargets enforces that --no-hooks/--hooks is Claude-scoped. It
+// returns errHookControlNonClaude when a hook-control flag is set but Claude is
+// not among the selected targets, and nil otherwise.
+func checkHookControlTargets(t DeployTargets, noHooks, hooks bool) error {
+	if (noHooks || hooks) && !t.Claude {
+		return errHookControlNonClaude
+	}
+	return nil
+}
+
+// legacyCodexNotice is the one-time breaking-change notice printed when a run
+// uses the legacy single --codex selector (not --all). As of v0.9.0, --codex
+// installs ONLY Codex transport (X11 + codex-notify) and no longer installs the
+// Claude shim; --all restores the previous full behavior.
+const legacyCodexNotice = "cc-clip: v0.9.0 BREAKING: --codex now installs ONLY Codex (X11 + codex-notify); it no longer installs the Claude shim. Use --all for the previous full behavior. (set CC_CLIP_NO_DEPRECATION_NOTICE=1 to silence this notice)"
+
+// maybeLegacyCodexNotice writes legacyCodexNotice to errOut (STDERR in
+// production, so scripted stdout parsing is unaffected) exactly when the run
+// used the bare legacy --codex selector — i.e. --codex present, --all absent,
+// and the resolved targets are Codex-only. Setting CC_CLIP_NO_DEPRECATION_NOTICE
+// to any non-empty value suppresses the notice ONLY; it does not change
+// --codex's install semantics (design §18.5).
+func maybeLegacyCodexNotice(errOut io.Writer, args []string, t DeployTargets) {
+	if os.Getenv("CC_CLIP_NO_DEPRECATION_NOTICE") != "" {
+		return
+	}
+	if flagInArgs(args, "codex") && !flagInArgs(args, "all") && t == (DeployTargets{Codex: true}) {
+		fmt.Fprintln(errOut, legacyCodexNotice)
+	}
 }

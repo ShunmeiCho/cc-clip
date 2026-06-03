@@ -54,3 +54,52 @@ func TestCLIMutex(t *testing.T) {
 		})
 	}
 }
+
+// TestCLITargetMatrix covers the Step 5.3b target-resolution flag matrix:
+// multi-target conflicts and Claude-scoped hook control must fail-fast at
+// parse/validation time (exit 2) BEFORE any SSH activity, proven by the
+// target/hook message appearing in stderr instead of an SSH failure for the
+// fake host. Mirrors TestCLIMutex's subprocess pattern.
+func TestCLITargetMatrix(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "connect_codex_all_conflict",
+			args:    []string{"connect", "fakehost.invalid", "--codex", "--all"},
+			wantErr: "only one deployment target",
+		},
+		{
+			name:    "setup_codex_all_conflict",
+			args:    []string{"setup", "fakehost.invalid", "--codex", "--all"},
+			wantErr: "only one deployment target",
+		},
+		{
+			name:    "connect_claude_codex_conflict",
+			args:    []string{"connect", "fakehost.invalid", "--claude", "--codex"},
+			wantErr: "only one deployment target",
+		},
+		{
+			name:    "connect_codex_no_hooks_rejected",
+			args:    []string{"connect", "fakehost.invalid", "--codex", "--no-hooks"},
+			wantErr: "--no-hooks/--hooks",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"run", "."}, tc.args...)
+			cmd := exec.Command("go", args...)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if err == nil {
+				t.Fatal("expected non-zero exit on target/flag conflict")
+			}
+			if !strings.Contains(stderr.String(), tc.wantErr) {
+				t.Fatalf("missing target-matrix error in stderr: %s", stderr.String())
+			}
+		})
+	}
+}
