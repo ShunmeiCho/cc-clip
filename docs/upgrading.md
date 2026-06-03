@@ -194,7 +194,7 @@ The install script does not support Windows. Upgrade is manual.
   The process must be the upgraded cc-clip daemon you intend to use. Stop any
   old bundled copy before running `cc-clip connect <host> --force` again.
 - **Remote cache says "unchanged":** `cc-clip connect` tracks the remote
-  binary hash in `~/.cache/cc-clip/deploy-state.json` on the remote. If that
+  binary hash in `~/.cache/cc-clip/deploy.json` on the remote. If that
   file claims the binary is already current, `connect` will skip the upload.
   Use `--force` on upgrade runs.
 - **Token vs binary upgrade:** If you only rotated the daemon token and did

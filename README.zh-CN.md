@@ -324,6 +324,7 @@ graph LR
 | Codex CLI | ✅ 若选择了 Codex 目标（`--codex`/`--all`）且远程存在 `~/.codex/` |
 | Claude Code | ✅ 自动管理 `~/.claude/settings.json` hooks |
 | opencode | ✅ 若远程已安装 `opencode` 且选择了 opencode 目标（`--opencode`/`--all`） |
+| Antigravity (agy) | ✅ 选择了 Antigravity 目标（`--agy`/`--all`）且远程已安装 `agy` 时，通过 `agy` CLI 安装 `agy-notify` 插件 |
 
 完整设置、Claude Code hooks、nonce 注册和故障排查见：**[docs/notifications.md](docs/notifications.md)**。
 

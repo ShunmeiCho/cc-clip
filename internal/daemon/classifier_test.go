@@ -13,7 +13,6 @@ func TestClassifyHookPayload(t *testing.T) {
 		raw       map[string]any
 		wantTitle string
 		wantUrg   int
-		wantType  string
 	}{
 		{
 			name:     "permission prompt is critical",
@@ -25,7 +24,6 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Tool approval needed",
 			wantUrg:   2,
-			wantType:  "permission_prompt",
 		},
 		{
 			name:     "stop at end of turn is low urgency",
@@ -36,7 +34,6 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Claude finished",
 			wantUrg:   0,
-			wantType:  "stop_at_end_of_turn",
 		},
 		{
 			name:     "idle prompt is medium urgency",
@@ -48,7 +45,6 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Claude is idle",
 			wantUrg:   1,
-			wantType:  "idle_prompt",
 		},
 		{
 			name:     "stop with non-end-of-turn reason",
@@ -59,7 +55,19 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Claude stopped",
 			wantUrg:   1,
-			wantType:  "interrupted",
+		},
+		{
+			// The real Claude Code Stop hook payload carries no
+			// stop_hook_reason field; Stop fires at a calm end-of-turn, so
+			// a reason-less payload must be treated as normal completion.
+			name:     "stop with no reason is normal completion",
+			hookType: "stop",
+			raw: map[string]any{
+				"stop_hook_active":       false,
+				"last_assistant_message": "Done implementing bridge",
+			},
+			wantTitle: "Claude finished",
+			wantUrg:   0,
 		},
 		{
 			name:     "unknown hook type falls through to default",
@@ -70,7 +78,6 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Claude hook: custom_event",
 			wantUrg:   1,
-			wantType:  "custom_event",
 		},
 		{
 			name:     "notification with unknown type gets title from raw",
@@ -82,7 +89,6 @@ func TestClassifyHookPayload(t *testing.T) {
 			},
 			wantTitle: "Step 3 of 5",
 			wantUrg:   1,
-			wantType:  "progress_update",
 		},
 	}
 

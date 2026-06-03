@@ -1172,7 +1172,7 @@ func runDetectInstallAdapters(session shim.RemoteExecutor, port int, targets Dep
 // 2. Write nonce to remote
 // 3. Install hook script on remote
 // 4. Configure Claude Code hooks (if Claude targeted)
-// 5/5.5. Detect-install notify adapters (Codex, Antigravity) via the
+// 5/5.5. Detect-install notify adapters (Codex, Antigravity, opencode) via the
 //
 //	detectInstallAdapter table, each gated on its target
 //
