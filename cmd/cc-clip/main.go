@@ -129,6 +129,7 @@ Remote:
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
+    --claude/--codex/--opencode/--agy/--all   Deployment target (see "Deployment targets" below)
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
 Known hosts (per-user registry):
@@ -148,13 +149,21 @@ Deploy (local -> remote):
     --local-bin      Path to pre-downloaded remote binary
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
-    --no-hooks       Persistently disable Claude Code hook injection
-    --hooks          Re-enable Claude Code hook injection
+    --no-hooks       Persistently disable Claude Code hook injection (Claude target only)
+    --hooks          Re-enable Claude Code hook injection (Claude target only)
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
-Codex support (extends connect/setup/uninstall):
-  connect <host> --codex   Deploy with Codex support (Xvfb + x11-bridge)
-  setup <host> --codex     Full setup including Codex support
+Deployment targets (connect/setup; choose at most one selector):
+    --claude         Claude Code: clipboard shim + claude-notify (default)
+    --codex          Codex CLI ONLY: Xvfb + x11-bridge + codex-notify (no Claude shim)
+    --opencode       opencode: clipboard shim only (no Claude/Codex config)
+    --agy            Antigravity: agy-notify (alias --antigravity)
+    --all            Everything above
+  With no selector: interactive menu on a TTY, or the {Claude} default on a
+  non-TTY. v0.9.0 BREAKING: --codex no longer installs the Claude shim; use
+  --all for the previous Claude+Codex behavior.
+
+Codex teardown:
   uninstall --codex        Remove Codex support only (local)
   uninstall --codex --host H  Remove Codex support on remote host
 
@@ -813,7 +822,7 @@ remote has a valid claude binary installed.
 			}
 		}
 
-		connectVerifyTunnel(session, port, host)
+		connectVerifyTunnel(session, port, host, opts.targets)
 
 		// Record this host even on the --token-only path so `hosts list` and
 		// per-host update reminders reflect the most recent successful sync.
@@ -980,7 +989,7 @@ remote has a valid claude binary installed.
 	}
 
 	// Step 7: Verify tunnel
-	connectVerifyTunnel(session, port, host)
+	connectVerifyTunnel(session, port, host, opts.targets)
 
 	// Notification bridge setup (unless --no-notify)
 	if !opts.noNotify {
@@ -1504,8 +1513,26 @@ func cmdSetup() {
 	})
 }
 
+// connectSuccessSummary returns the post-connect summary line, tailored to the
+// resolved targets. The clipboard shim serves Claude Code / opencode; Codex
+// prints its own readiness line from runConnectCodex, so a Codex-only run must
+// not claim the Claude shim is ready (it is deliberately not installed under
+// pure --codex).
+func connectSuccessSummary(t DeployTargets) string {
+	switch {
+	case t.Claude:
+		return "Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard."
+	case t.Opencode:
+		return "Setup complete. Ctrl+V in remote opencode will paste images from your local clipboard."
+	case t.Codex:
+		return "Setup complete. Codex CLI clipboard support is configured below."
+	default:
+		return "Setup complete."
+	}
+}
+
 // connectVerifyTunnel verifies the SSH tunnel from the remote side.
-func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
+func connectVerifyTunnel(session *shim.SSHSession, port int, host string, targets DeployTargets) {
 	remoteBin := "~/.local/bin/cc-clip"
 
 	fmt.Printf("[7/7] Verifying tunnel from remote...\n")
@@ -1546,7 +1573,7 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 	fmt.Printf("      %s\n", shimOut)
 
 	fmt.Println()
-	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your local clipboard.")
+	fmt.Println(connectSuccessSummary(targets))
 }
 
 // prepareBinaryLocal resolves the local binary path without performing remote operations.

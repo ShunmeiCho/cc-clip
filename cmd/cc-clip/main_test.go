@@ -351,6 +351,37 @@ func TestNewDeployStateDoesNotPreserveCodexWhenRequested(t *testing.T) {
 	}
 }
 
+// TestConnectSuccessSummary verifies the post-connect summary is target-aware:
+// a non-Claude target (pure --codex / --agy) must never claim the Claude shim
+// is ready, since the shim is not installed for those targets (5.3c).
+func TestConnectSuccessSummary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		targets DeployTargets
+		want    string
+	}{
+		{"claude mentions Claude Code", DeployTargets{Claude: true}, "remote Claude Code"},
+		{"all mentions Claude Code (codex line printed separately)", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, "remote Claude Code"},
+		{"opencode mentions opencode", DeployTargets{Opencode: true}, "remote opencode"},
+		{"pure codex does not claim the Claude shim", DeployTargets{Codex: true}, "Codex CLI clipboard support"},
+		{"agy only is neutral", DeployTargets{Antigravity: true}, "Setup complete."},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := connectSuccessSummary(tt.targets)
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("connectSuccessSummary(%+v) = %q, want substring %q", tt.targets, got, tt.want)
+			}
+			if !tt.targets.Claude && strings.Contains(got, "Claude Code") {
+				t.Fatalf("non-Claude target must not claim Claude Code: %q", got)
+			}
+		})
+	}
+}
+
 func TestReleaseVersion(t *testing.T) {
 	tests := []struct {
 		input string
