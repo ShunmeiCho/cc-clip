@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
@@ -447,6 +449,72 @@ func TestReleaseVersion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyArchiveChecksum(t *testing.T) {
+	content := []byte("hello cc-clip")
+	archiveName := "cc-clip_0.6.0_linux_amd64.tar.gz"
+
+	// Compute the real digest for the fixture so the test is self-contained.
+	dir := t.TempDir()
+	archivePath := filepath.Join(dir, archiveName)
+	if err := os.WriteFile(archivePath, content, 0o600); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	realSum := sha256Hex(t, content)
+
+	otherName := "cc-clip_0.6.0_darwin_arm64.tar.gz"
+
+	tests := []struct {
+		name        string
+		checksums   string
+		archiveName string
+		wantErr     bool
+	}{
+		{
+			name: "matching checksum passes",
+			checksums: realSum + "  " + archiveName + "\n" +
+				"0000000000000000000000000000000000000000000000000000000000000000  " + otherName + "\n",
+			archiveName: archiveName,
+			wantErr:     false,
+		},
+		{
+			name:        "mismatched checksum fails",
+			checksums:   "deadbeef00000000000000000000000000000000000000000000000000000000  " + archiveName + "\n",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+		{
+			name:        "missing entry fails",
+			checksums:   realSum + "  " + otherName + "\n",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+		{
+			name:        "empty checksums fails",
+			checksums:   "",
+			archiveName: archiveName,
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifyArchiveChecksum(archivePath, tt.checksums, tt.archiveName)
+			if tt.wantErr && err == nil {
+				t.Fatalf("verifyArchiveChecksum() = nil, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("verifyArchiveChecksum() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func sha256Hex(t *testing.T, b []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func TestNotifyFromCodexParsesLastAssistantMessage(t *testing.T) {

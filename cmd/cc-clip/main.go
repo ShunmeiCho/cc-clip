@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -1842,6 +1844,27 @@ func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 		return "", fmt.Errorf("download failed (%s): %s", url, string(out))
 	}
 
+	// Verify the archive's sha256 against the release checksums.txt before
+	// extracting. This downloads a release binary and pushes it to a remote
+	// host, so an unverified archive is a supply-chain exposure. On any
+	// mismatch or missing entry, refuse to extract.
+	checksumsURL := fmt.Sprintf("https://github.com/ShunmeiCho/cc-clip/releases/download/v%s/checksums.txt", ver)
+	checksumsPath := filepath.Join(tmpDir, "checksums.txt")
+	csCmd := exec.Command("curl", "-fsSL", "--max-time", "30", "-o", checksumsPath, checksumsURL)
+	if out, err := csCmd.CombinedOutput(); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("checksums download failed (%s): %s", checksumsURL, string(out))
+	}
+	checksumsContent, err := os.ReadFile(checksumsPath)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("read checksums.txt: %w", err)
+	}
+	if err := verifyArchiveChecksum(archivePath, string(checksumsContent), archiveName); err != nil {
+		os.RemoveAll(tmpDir)
+		return "", fmt.Errorf("checksum verification failed: %w", err)
+	}
+
 	extractCmd := exec.Command("tar", "-xzf", archivePath, "-C", tmpDir)
 	if out, err := extractCmd.CombinedOutput(); err != nil {
 		os.RemoveAll(tmpDir)
@@ -1855,6 +1878,42 @@ func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
 	}
 
 	return binPath, nil
+}
+
+// verifyArchiveChecksum computes the sha256 of the file at archivePath and
+// compares it against the expected digest for archiveName as listed in a
+// goreleaser checksums.txt. The checksums format is "<sha256>  <filename>"
+// lines (two spaces). Returns an error on a missing entry or a mismatch so the
+// caller can refuse to use an unverified archive.
+func verifyArchiveChecksum(archivePath, checksumsContent, archiveName string) error {
+	expected := ""
+	for _, line := range strings.Split(checksumsContent, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == archiveName {
+			expected = fields[0]
+			break
+		}
+	}
+	if expected == "" {
+		return fmt.Errorf("checksum for %s not found in checksums.txt", archiveName)
+	}
+
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash archive: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", archiveName, expected, actual)
+	}
+	return nil
 }
 
 func findSourceDir() (string, error) {
