@@ -111,3 +111,57 @@ func TestMergeNotifyPreservesUntargetedAdapters(t *testing.T) {
 		t.Fatal("opencode connect must preserve the existing codex-notify adapter")
 	}
 }
+
+// TestMergeNotifyAsymmetricPreservation verifies the per-adapter cross-run
+// anti-downgrade invariant (constraint §4): a --codex run (Claude not attempted,
+// Codex attempted) must leave a prior claude-notify adapter untouched while
+// wiring codex-notify, and a --claude run must leave a prior codex-notify entry
+// untouched while wiring claude-notify. applyAdapterState handles each adapter
+// independently, so the two axes never interfere.
+func TestMergeNotifyAsymmetricPreservation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("--codex preserves prior claude-notify and wires codex-notify", func(t *testing.T) {
+		t.Parallel()
+		state := &shim.DeployState{Notify: &shim.NotifyDeployState{
+			Adapters: map[shim.AdapterID]*shim.AdapterState{
+				shim.AdapterClaudeNotify: {Installed: true, Source: install.SourceConfig},
+			},
+		}}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     false,
+			codexAttempted:      true,
+			codexInjected:       true,
+			healthVerified:      true,
+		})
+		if a := state.Notify.Adapters[shim.AdapterClaudeNotify]; a == nil || !a.Installed {
+			t.Fatal("--codex must preserve the existing claude-notify adapter")
+		}
+		if a := state.Notify.Adapters[shim.AdapterCodexNotify]; a == nil || !a.Installed {
+			t.Fatal("--codex must wire the codex-notify adapter when injected")
+		}
+	})
+
+	t.Run("--claude preserves prior codex-notify and wires claude-notify", func(t *testing.T) {
+		t.Parallel()
+		state := &shim.DeployState{Notify: &shim.NotifyDeployState{
+			Adapters: map[shim.AdapterID]*shim.AdapterState{
+				shim.AdapterCodexNotify: {Installed: true, Source: install.SourceConfig},
+			},
+		}}
+		mergeNotifyDeployState(state, notifyOutcome{
+			hookScriptInstalled: true,
+			claudeAttempted:     true,
+			claudeWired:         true,
+			codexAttempted:      false,
+			healthVerified:      true,
+		})
+		if a := state.Notify.Adapters[shim.AdapterCodexNotify]; a == nil || !a.Installed {
+			t.Fatal("--claude must preserve the existing codex-notify adapter")
+		}
+		if a := state.Notify.Adapters[shim.AdapterClaudeNotify]; a == nil || !a.Installed {
+			t.Fatal("--claude must wire the claude-notify adapter when wired")
+		}
+	})
+}
