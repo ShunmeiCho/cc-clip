@@ -482,6 +482,24 @@ func cmdUninstall() {
 	}
 }
 
+// shouldAbortUninstallCodexNewerSchema decides whether `uninstall --codex`
+// must refuse to proceed because the remote was deployed by a newer cc-clip
+// (deploy-state schema > this binary's). Extracted as a pure helper so the
+// abort decision and its operator-facing message are unit-testable without a
+// live SSH session. Returns (false, "") for a nil/legacy/current-schema state.
+//
+// Unlike the connect guard, there is intentionally NO --force escape hatch:
+// uninstall is not an emergency-recovery path, so an older binary must never
+// be allowed to tear down a newer-schema remote and clobber its deploy.json.
+func shouldAbortUninstallCodexNewerSchema(host string, remoteState *shim.DeployState) (bool, string) {
+	if !remoteState.IsNewerSchema() {
+		return false, ""
+	}
+	return true, fmt.Sprintf(
+		"remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); refusing to uninstall Codex from it and clobber its newer state. Upgrade this cc-clip first.",
+		host, remoteState.SchemaVersion, shim.CurrentDeploySchemaVersion())
+}
+
 // cmdUninstallCodexRemote cleans up Codex support on a remote host via SSH.
 func cmdUninstallCodexRemote(host string) {
 	fmt.Printf("Uninstalling Codex support from %s...\n", host)
@@ -491,6 +509,17 @@ func cmdUninstallCodexRemote(host string) {
 		log.Fatalf("SSH connection failed: %v", err)
 	}
 	defer session.Close()
+
+	// Forward downgrade guard (before ANY teardown): if the remote was deployed
+	// by a newer cc-clip, refuse — tearing it down would rewrite deploy.json with
+	// this older binary's schema and silently drop unknown newer fields. A read
+	// error or nil/legacy state is NOT a newer schema, so normal uninstalls
+	// proceed unaffected.
+	if preState, perr := shim.ReadRemoteState(session); perr == nil {
+		if abort, msg := shouldAbortUninstallCodexNewerSchema(host, preState); abort {
+			log.Fatalf("      %s", msg)
+		}
+	}
 
 	var teardownError bool
 	var stateError bool

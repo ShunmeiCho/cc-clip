@@ -285,6 +285,48 @@ func TestNewDeployStateReturnsHashError(t *testing.T) {
 	}
 }
 
+func TestShouldAbortUninstallCodexNewerSchema(t *testing.T) {
+	cur := shim.CurrentDeploySchemaVersion()
+
+	t.Run("newer schema aborts", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: cur + 1}
+		abort, msg := shouldAbortUninstallCodexNewerSchema("host-a", state)
+		if !abort {
+			t.Fatal("expected abort for a remote with a newer deploy-state schema")
+		}
+		// The message must be actionable: name the host, both versions, refusal,
+		// and the upgrade remedy. No --force escape hatch is offered for uninstall.
+		for _, want := range []string{"host-a", "newer cc-clip", "refusing", "Upgrade this cc-clip"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("abort message missing %q; got: %q", want, msg)
+			}
+		}
+		if strings.Contains(msg, "--force") {
+			t.Errorf("uninstall abort message must NOT offer --force; got: %q", msg)
+		}
+	})
+
+	t.Run("current schema proceeds", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: cur}
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-b", state); abort {
+			t.Fatal("must not abort for a remote stamped at the current schema")
+		}
+	})
+
+	t.Run("legacy schema proceeds", func(t *testing.T) {
+		state := &shim.DeployState{SchemaVersion: 0}
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-c", state); abort {
+			t.Fatal("must not abort for a legacy (SchemaVersion==0) remote")
+		}
+	})
+
+	t.Run("nil state proceeds", func(t *testing.T) {
+		if abort, _ := shouldAbortUninstallCodexNewerSchema("host-d", nil); abort {
+			t.Fatal("must not abort when there is no deploy state to read")
+		}
+	})
+}
+
 func TestNewDeployStatePreservesCodexWhenNotRequested(t *testing.T) {
 	dir := t.TempDir()
 	binPath := filepath.Join(dir, "cc-clip")
