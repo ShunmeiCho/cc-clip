@@ -233,9 +233,14 @@ There are two flavours of rollback, and they are **not** equally safe:
   do not yet have `cc-clip update`:
 
     ```sh
-    CC_CLIP_VERSION=v0.5.0 \
-      curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh \
+      | CC_CLIP_VERSION=v0.5.0 sh
     ```
+
+    The env var must be set on the **right-hand side of the pipe** (the `sh` that
+    runs the script), not on `curl`. `CC_CLIP_VERSION=v0.5.0 curl ... | sh` would
+    export the pin only into the `curl` process and the piped `sh` would still
+    install `/latest`.
 
   The value must be a full tag (for example `v0.5.0`); a missing `v` prefix is
   accepted. An invalid value aborts the install with an actionable error.
@@ -291,10 +296,24 @@ So do **not** rely on a fail-closed here — the protection is forward-only by
 design. If you must cross the v0.9 boundary downward, expect to clean up and
 redeploy those adapters by hand:
 
-1. From a machine still running v0.9.0+, tear down the v0.9-only adapters on the
-   remote you are about to downgrade (for example `cc-clip uninstall <host>
-   --opencode` / `--agy`, or whichever you enabled) so no orphaned hook entries
-   are left behind.
+1. **Manually tear down the v0.9-only adapters** on the remote you are about to
+   downgrade, so no orphaned plugin / hook entries are left behind. There is **no**
+   `cc-clip uninstall <host> --opencode` / `--agy` command today — symmetric
+   uninstall for those targets is not yet implemented (`cc-clip uninstall`
+   currently supports only `--codex` and `--host`). Clean them up over SSH by hand,
+   only for whichever adapters you actually enabled:
+
+    ```sh
+    # opencode notify plugin (the dropped .js is removed by hand):
+    ssh <host> 'rm -f "$HOME/.config/opencode/plugins/cc-clip-notify.js"'
+
+    # Antigravity (agy) notify plugin (use agy's own uninstall on the remote;
+    # agy's managed plugins dir is version-specific, so let the CLI find it):
+    ssh <host> 'agy plugin uninstall cc-clip-notify'
+    ```
+
+    (Future cc-clip versions may add `cc-clip uninstall --opencode` / `--agy` to
+    automate this; until then the manual cleanup above is the supported path.)
 2. Roll the remote back by deploying the pre-v0.9 binary from the older local
    cc-clip (`connect --force`), accepting that `deploy.json` will be rewritten
    in the old format.

@@ -877,7 +877,8 @@ remote has a valid claude binary installed.
 	}
 	// Forward downgrade guard: if the remote was deployed by a newer cc-clip
 	// (deploy-state schema > this binary's), refuse to overwrite it unless the
-	// operator explicitly passes --force. Runs before any remote mutation.
+	// operator explicitly passes --force. Runs before any deploy-state or
+	// binary write.
 	if remoteState.IsNewerSchema() {
 		if force {
 			log.Printf("      warning: remote %s was deployed by a newer cc-clip (deploy-state schema v%d > this binary's v%d); --force DISCARDS the newer remote's deploy-state fields and rewrites deploy.json with this older binary's schema v%d (data loss) — upgrade this cc-clip instead to preserve them.",
