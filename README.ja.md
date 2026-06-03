@@ -162,7 +162,8 @@ cc-clip setup myserver
 | Claude Code のみ | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不要 |
 | Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **に加えて**リモートの Xvfb + x11-bridge（下記参照） | ✅ **必要** — `apt`/`dnf install xvfb` 用の passwordless `sudo`、または事前に手動インストール |
 | Codex CLI のみ | `cc-clip setup myserver --codex` | Xvfb + x11-bridge のみ — Claude shim は**入りません** | ✅ **必要** — 上記と同じ Xvfb `sudo` |
-| opencode のみ | `cc-clip setup myserver` | shim のみ — opencode は Claude Code と同じ xclip / wl-paste 経路でクリップボードを読むため、`--codex` は不要です |
+| opencode のみ | `cc-clip setup myserver` | shim のみ — opencode は Claude Code と同じ xclip / wl-paste 経路でクリップボードを読むため、`--codex` は不要です | ❌ 不要 |
+| Antigravity (agy) のみ | `cc-clip setup myserver --agy` | agy 通知プラグイン（`cc-clip-notify`）— 現状は通知のみ、クリップボード貼り付けは未対応；リモートに `agy` が必要 | ❌ 不要 |
 | Windows ローカルマシン | [Windows Quick Start](docs/windows-quickstart.md) を参照 | 別ワークフロー — `--codex` は使いません | ❌ 不要 |
 
 > **v0.9.0 破壊的変更:** `--codex` は現在 **Codex サポートのみ**（Xvfb + x11-bridge）をインストールし、Claude shim は入りません。Claude Code と Codex の両方が必要な場合は `--all` を使ってください。デフォルト（フラグなし）と `--claude` は Claude shim をインストールします。`--opencode`・`--agy` は他のターゲットです。legacy `--codex` では一度だけ通知が出ます — `CC_CLIP_NO_DEPRECATION_NOTICE=1` で抑制できます。既存の shim が削除されることはありません。

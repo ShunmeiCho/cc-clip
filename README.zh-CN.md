@@ -162,7 +162,8 @@ cc-clip setup myserver
 | 只用 Claude Code | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不需要 |
 | Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **加上**远程的 Xvfb + x11-bridge（见下文） | ✅ **需要** — 用于 `apt`/`dnf install xvfb` 的 passwordless `sudo`，或先手动安装 |
 | 只用 Codex CLI | `cc-clip setup myserver --codex` | 仅 Xvfb + x11-bridge — **不装** Claude shim | ✅ **需要** — 同上 Xvfb `sudo` |
-| 只用 opencode | `cc-clip setup myserver` | 仅 shim — opencode 通过和 Claude Code 相同的 xclip / wl-paste 路径读取剪贴板，因此不需要 `--codex` |
+| 只用 opencode | `cc-clip setup myserver` | 仅 shim — opencode 通过和 Claude Code 相同的 xclip / wl-paste 路径读取剪贴板，因此不需要 `--codex` | ❌ 不需要 |
+| 只用 Antigravity (agy) | `cc-clip setup myserver --agy` | agy 通知插件（`cc-clip-notify`）— 目前仅通知，剪贴板粘贴待实现；需要远程已安装 `agy` | ❌ 不需要 |
 | Windows 本地机器 | 见 [Windows Quick Start](docs/windows-quickstart.md) | 不同的工作流 — 不要使用 `--codex` | ❌ 不需要 |
 
 > **v0.9.0 破坏性变更：** `--codex` 现在**只**安装 Codex 支持（Xvfb + x11-bridge），不装 Claude shim。要同时获得 Claude Code 与 Codex，请用 `--all`。默认（不带 flag）和 `--claude` 安装 Claude shim；`--opencode`、`--agy` 是另外的目标。legacy `--codex` 会打印一次性提示——可用 `CC_CLIP_NO_DEPRECATION_NOTICE=1` 静音。已存在的 shim 绝不会被移除。

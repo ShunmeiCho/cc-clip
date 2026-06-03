@@ -242,11 +242,11 @@ type NotifyDeployState struct {
 ## 13. Antigravity 第 5 target（独立）
 
 ```text
---antigravity
-  notify: antigravity-notify
-     plugin dir: ~/.gemini/antigravity-cli/plugins/cc-clip-notify/  (plugin.json + hooks.json)
-     install (bundled-first): agy plugin validate <dir> -> agy plugin install <dir>
-     hook: Stop ; runner = cc-clip plugin run antigravity-notify
+--agy  (alias --antigravity)
+  notify: agy-notify
+     staged bundle (temp source): ~/.cache/cc-clip/agy-plugin-src.XXXXXX/cc-clip-notify/  (plugin.json + hooks/hooks.json)
+     install (bundled-first, temp-src): agy plugin validate <src> -> agy plugin install <src>  (agy copies into its managed plugins dir)
+     hook: Stop ; runner = cc-clip plugin run agy-notify  (RemoteHasAgy via `command -v agy`; Verified=false until real hook-fire smoke)
      runner 契约: 必须 stdout 吐合法放行 JSON (如 {"decision":""}), 否则阻止 agy 停止
      marketplace 也可用（agy plugin install plugin@marketplace），但命令面不稳定（agy plugin install --help 把 --help 当路径）→ v0.9 坚持 bundled-first + 仅显式 --antigravity，不进全量默认
   clipboard: UNRESOLVED — 三假设待远端 Linux strace 定夺:

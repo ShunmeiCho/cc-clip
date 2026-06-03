@@ -160,6 +160,7 @@ Pick the row that matches your remote workflow. These are the only decisions you
 | Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
 | Codex CLI only | `cc-clip setup myserver --codex` | Xvfb + x11-bridge only — **no** Claude shim | ✅ **Yes** — same Xvfb `sudo` as above |
 | opencode only | `cc-clip setup myserver` | shim only — opencode reads the clipboard via the same xclip / wl-paste path as Claude Code, so it works without `--codex` | ❌ No |
+| Antigravity (agy) only | `cc-clip setup myserver --agy` | agy notify plugin (`cc-clip-notify`) — notify-only today, clipboard paste still pending; requires `agy` installed on the remote | ❌ No |
 | Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` | ❌ No |
 
 > **v0.9.0 breaking change:** `--codex` now installs **only** Codex support (Xvfb + x11-bridge), no Claude shim. For Claude Code **and** Codex together, use `--all`. The default (no flag) and `--claude` install the Claude shim; `--opencode` and `--agy` are the other targets. A one-time notice prints on legacy `--codex` — silence it with `CC_CLIP_NO_DEPRECATION_NOTICE=1`. An existing shim is never removed.
