@@ -62,6 +62,20 @@ func TestClassifyHookPayload(t *testing.T) {
 			wantType:  "interrupted",
 		},
 		{
+			// The real Claude Code Stop hook payload carries no
+			// stop_hook_reason field; Stop fires at a calm end-of-turn, so
+			// a reason-less payload must be treated as normal completion.
+			name:     "stop with no reason is normal completion",
+			hookType: "stop",
+			raw: map[string]any{
+				"stop_hook_active":       false,
+				"last_assistant_message": "Done implementing bridge",
+			},
+			wantTitle: "Claude finished",
+			wantUrg:   0,
+			wantType:  "",
+		},
+		{
 			name:     "unknown hook type falls through to default",
 			hookType: "custom_event",
 			raw: map[string]any{

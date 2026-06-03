@@ -63,7 +63,12 @@ func ClassifyHookPayload(hookType string, raw map[string]any) *NotifyEnvelope {
 		env.ToolAttention.StopReason = reason
 		env.ToolAttention.Message = truncate(msg, 280)
 		env.GenericMessage.Body = truncate(msg, 280)
-		if reason == "stop_at_end_of_turn" {
+		// Stop fires when the agent finished responding (a calm end-of-turn).
+		// The real Claude Code Stop payload has no stop_hook_reason field, so
+		// an absent/empty reason is the normal-completion case. Only a
+		// non-empty reason that is not the explicit completion signal (old or
+		// abnormal payloads) is treated as an interrupted stop.
+		if reason == "" || reason == "stop_at_end_of_turn" {
 			env.GenericMessage.Title = "Claude finished"
 			env.GenericMessage.Urgency = 0
 		} else {
