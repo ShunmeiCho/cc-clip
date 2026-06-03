@@ -26,6 +26,10 @@
   <em>インストール → セットアップ → 貼り付け。クリップボードが SSH 越しに動きます。</em>
 </p>
 
+<p align="center">
+  <b>Beta（テスト版）：</b><a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">v0.9.0-beta.1</a>（opt-in プレリリース）—— マルチターゲット設定（Claude / Codex / opencode / Antigravity）に加え、opencode・Antigravity 通知。<a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">リリースノートとインストール →</a>
+</p>
+
 > これは英語版 README の日本語訳です。内容に差異がある場合は [English README](README.md) を正とします。この翻訳は英語版のメインラインより遅れている場合があります。
 >
 > *This is the Japanese translation of the English README. If any content differs, the [English README](README.md) is authoritative. This translation may lag behind the English main line.*

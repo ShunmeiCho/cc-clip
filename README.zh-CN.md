@@ -26,6 +26,10 @@
   <em>安装 → 初始化 → 粘贴。剪贴板可跨 SSH 工作。</em>
 </p>
 
+<p align="center">
+  <b>Beta 测试版：</b><a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">v0.9.0-beta.1</a>（opt-in 预发布）—— 多目标安装（Claude / Codex / opencode / Antigravity），并新增 opencode 与 Antigravity 通知。<a href="https://github.com/ShunmeiCho/cc-clip/releases/tag/v0.9.0-beta.1">发布说明与安装 →</a>
+</p>
+
 > 这是英文 README 的简体中文翻译。如果翻译版与 [English README](README.md) 存在差异，以英文原版为准。翻译版本可能晚于英文主线更新。
 >
 > *This is the Simplified Chinese translation of the English README. If any content differs, the [English README](README.md) is authoritative. This translation may lag behind the English main line.*
