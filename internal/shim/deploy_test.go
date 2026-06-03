@@ -1061,6 +1061,24 @@ func TestStampSchemaVersionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestStampSchemaVersionNeverLowers verifies stampSchemaVersion preserves a
+// HIGHER existing schema version (never downgrades). An older binary re-writing
+// a state deployed by a newer cc-clip (uninstall --codex / connect --force) must
+// not silently lower schema_version below what the remote already carries.
+func TestStampSchemaVersionNeverLowers(t *testing.T) {
+	newer := &DeployState{SchemaVersion: currentDeploySchemaVersion + 1}
+	stampSchemaVersion(newer)
+	if newer.SchemaVersion != currentDeploySchemaVersion+1 {
+		t.Fatalf("stampSchemaVersion lowered a newer schema: got %d, want %d", newer.SchemaVersion, currentDeploySchemaVersion+1)
+	}
+
+	legacy := &DeployState{SchemaVersion: 0}
+	stampSchemaVersion(legacy)
+	if legacy.SchemaVersion != currentDeploySchemaVersion {
+		t.Fatalf("stampSchemaVersion failed to bump legacy state: got %d, want %d", legacy.SchemaVersion, currentDeploySchemaVersion)
+	}
+}
+
 // TestSchemaVersionOmittedWhenZero verifies the omitempty tag keeps legacy
 // JSON byte-clean: a state that was never stamped writes no schema_version key.
 func TestSchemaVersionOmittedWhenZero(t *testing.T) {

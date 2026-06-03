@@ -114,7 +114,15 @@ func stampSchemaVersion(state *DeployState) {
 	if state == nil {
 		return
 	}
-	state.SchemaVersion = currentDeploySchemaVersion
+	// Never LOWER an existing schema version. An older binary re-writing a
+	// state deployed by a NEWER cc-clip (e.g. `uninstall --codex`, or
+	// `connect --force`) must not silently downgrade schema_version — that
+	// would mask the very newer-schema condition IsNewerSchema/the connect
+	// guard exist to surface. Stamp forward only when the existing value is
+	// older than this binary's.
+	if state.SchemaVersion < currentDeploySchemaVersion {
+		state.SchemaVersion = currentDeploySchemaVersion
+	}
 }
 
 const remoteDeployPath = "~/.cache/cc-clip/deploy.json"
