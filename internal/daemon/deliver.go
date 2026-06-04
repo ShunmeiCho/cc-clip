@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -121,6 +123,12 @@ func formatNotification(env NotifyEnvelope) (title, body string) {
 }
 
 const defaultCriticalSound = "Glass"
+const (
+	envSoundCritical  = "CC_CLIP_SOUND_CRITICAL"
+	envSoundAttention = "CC_CLIP_SOUND_ATTENTION"
+	envSoundCalm      = "CC_CLIP_SOUND_CALM"
+	envNotifyAppIcon  = "CC_CLIP_NOTIFY_APP_ICON"
+)
 
 func notificationSound(env NotifyEnvelope) string {
 	if env.GenericMessage == nil {
@@ -132,10 +140,38 @@ func notificationSound(env NotifyEnvelope) string {
 	if strings.TrimSpace(env.GenericMessage.Sound) != "" {
 		return ""
 	}
-	if env.GenericMessage.Urgency == 2 {
-		return defaultCriticalSound
+	switch {
+	case env.GenericMessage.Urgency >= 2:
+		return configuredSoundTier(envSoundCritical, defaultCriticalSound)
+	case env.GenericMessage.Urgency <= 0:
+		return configuredSoundTier(envSoundCalm, "")
+	default:
+		return configuredSoundTier(envSoundAttention, "")
 	}
-	return ""
+}
+
+func configuredSoundTier(key, fallback string) string {
+	if configured := strings.TrimSpace(os.Getenv(key)); configured != "" {
+		return normalizeNotificationSound(configured)
+	}
+	return normalizeNotificationSound(fallback)
+}
+
+func notificationAppIconPath() string {
+	path := strings.TrimSpace(os.Getenv(envNotifyAppIcon))
+	if path == "" {
+		return ""
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".icns":
+	default:
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	return path
 }
 
 func normalizeNotificationSound(sound string) string {

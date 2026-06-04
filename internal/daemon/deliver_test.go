@@ -346,6 +346,12 @@ func TestNotificationSoundAllowlistAndCriticalDefault(t *testing.T) {
 	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2}}); got != defaultCriticalSound {
 		t.Fatalf("critical default sound = %q, want %q", got, defaultCriticalSound)
 	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1}}); got != "" {
+		t.Fatalf("attention default sound = %q, want silent", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 0}}); got != "" {
+		t.Fatalf("calm default sound = %q, want silent", got)
+	}
 	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1, Sound: "ping"}}); got != "Ping" {
 		t.Fatalf("allowlisted sound = %q, want Ping", got)
 	}
@@ -354,6 +360,46 @@ func TestNotificationSoundAllowlistAndCriticalDefault(t *testing.T) {
 	}
 	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2, Sound: "none"}}); got != "" {
 		t.Fatalf("sound=none should suppress critical default, got %q", got)
+	}
+}
+
+func TestNotificationSoundTierEnvOverrides(t *testing.T) {
+	t.Setenv(envSoundCritical, "ping")
+	t.Setenv(envSoundAttention, "Pop")
+	t.Setenv(envSoundCalm, "Sosumi")
+
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2}}); got != "Ping" {
+		t.Fatalf("critical env sound = %q, want Ping", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1}}); got != "Pop" {
+		t.Fatalf("attention env sound = %q, want Pop", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 0}}); got != "Sosumi" {
+		t.Fatalf("calm env sound = %q, want Sosumi", got)
+	}
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2, Sound: "glass"}}); got != "Glass" {
+		t.Fatalf("explicit sound should override env, got %q", got)
+	}
+}
+
+func TestNotificationAppIconPath(t *testing.T) {
+	icon := filepath.Join(t.TempDir(), "cc-clip.png")
+	if err := os.WriteFile(icon, []byte("fake"), 0600); err != nil {
+		t.Fatalf("write icon file: %v", err)
+	}
+	t.Setenv(envNotifyAppIcon, icon)
+	if got := notificationAppIconPath(); got != icon {
+		t.Fatalf("notificationAppIconPath = %q, want %q", got, icon)
+	}
+
+	t.Setenv(envNotifyAppIcon, filepath.Join(t.TempDir(), "missing.png"))
+	if got := notificationAppIconPath(); got != "" {
+		t.Fatalf("missing icon should be ignored, got %q", got)
+	}
+
+	t.Setenv(envNotifyAppIcon, filepath.Join(t.TempDir(), "icon.jpg"))
+	if got := notificationAppIconPath(); got != "" {
+		t.Fatalf("non-png/icns icon should be ignored, got %q", got)
 	}
 }
 

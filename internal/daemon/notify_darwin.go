@@ -97,6 +97,7 @@ func (n *DarwinNotifier) Name() string { return "darwin" }
 func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 	title, body := formatNotification(env)
 	sound := notificationSound(env)
+	appIconPath := notificationAppIconPath()
 	subtitle := ""
 	imagePath := ""
 
@@ -133,7 +134,7 @@ func (n *DarwinNotifier) Deliver(_ context.Context, env NotifyEnvelope) error {
 	}
 
 	if n.terminalNotifier != "" {
-		return n.sendViaTerminalNotifier(title, subtitle, body, imagePath, sound)
+		return n.sendViaTerminalNotifier(title, subtitle, body, appIconPath, imagePath, sound)
 	}
 	return n.sendViaOsascript(title, subtitle, body, sound)
 }
@@ -167,12 +168,12 @@ func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
 	}
 
 	if n.terminalNotifier != "" {
-		return n.sendViaTerminalNotifier(title, subtitle, body, previewPath, "")
+		return n.sendViaTerminalNotifier(title, subtitle, body, notificationAppIconPath(), previewPath, "")
 	}
 	return n.sendViaOsascript(title, subtitle, body, "")
 }
 
-func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePath, sound string) error {
+func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, appIconPath, imagePath, sound string) error {
 	args := []string{
 		"-title", title,
 		"-subtitle", subtitle,
@@ -181,6 +182,9 @@ func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePat
 	}
 	if sound != "" {
 		args = append(args, "-sound", sound)
+	}
+	if appIconPath != "" {
+		args = append(args, "-appIcon", appIconPath)
 	}
 	if imagePath != "" {
 		args = append(args, "-contentImage", imagePath)

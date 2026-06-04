@@ -20,6 +20,21 @@ Image paste notifications help you track what was pasted without leaving your wo
 - **Duplicate detection** alerts when the same image is pasted twice within 5 images.
 - **Click notification** to open the full image in Preview.app (macOS, requires `terminal-notifier`).
 
+## Local macOS sound/icon settings
+
+These settings are read only from the local daemon environment (never from remote hook payloads):
+
+| Variable | Applies to | Default |
+| --- | --- | --- |
+| `CC_CLIP_SOUND_CRITICAL` | Tool approval needed notifications (`urgency=2`) | `Glass` |
+| `CC_CLIP_SOUND_ATTENTION` | Idle/interrupted/Codex/opencode/Antigravity notifications (`urgency=1`) | silent |
+| `CC_CLIP_SOUND_CALM` | End-of-turn "Claude finished" notifications (`urgency=0`) | silent |
+| `CC_CLIP_NOTIFY_APP_ICON` | Custom app icon path (`.png`/`.icns`) for `terminal-notifier` delivery | unset |
+
+Sound values use macOS system sound names (`Ping`, `Pop`, `Sosumi`, ...).  
+Use `none`, `off`, or `silent` to mute a tier.  
+A per-notification `sound` payload value still takes precedence over these defaults.
+
 ## Coverage by CLI
 
 | CLI | Auto-configured by `cc-clip connect`? | How |
