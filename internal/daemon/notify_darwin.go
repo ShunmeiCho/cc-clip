@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -173,6 +174,14 @@ func (n *DarwinNotifier) Notify(_ context.Context, evt NotifyEvent) error {
 }
 
 func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePath, sound string) error {
+	args := buildTerminalNotifierArgs(title, subtitle, body, imagePath, sound, notifyAppIcon())
+	return exec.Command(n.terminalNotifier, args...).Run()
+}
+
+// buildTerminalNotifierArgs assembles the terminal-notifier argv. It is
+// extracted as a pure function so the flag wiring (-sound, -appIcon,
+// -contentImage) is unit-tested without executing the binary.
+func buildTerminalNotifierArgs(title, subtitle, body, imagePath, sound, appIcon string) []string {
 	args := []string{
 		"-title", title,
 		"-subtitle", subtitle,
@@ -182,11 +191,33 @@ func (n *DarwinNotifier) sendViaTerminalNotifier(title, subtitle, body, imagePat
 	if sound != "" {
 		args = append(args, "-sound", sound)
 	}
+	// -appIcon brands the notification with a custom icon. This is honored
+	// only on the terminal-notifier path; the osascript fallback cannot set a
+	// custom app icon (macOS derives it from the calling process's bundle).
+	if appIcon != "" {
+		args = append(args, "-appIcon", appIcon)
+	}
 	if imagePath != "" {
 		args = append(args, "-contentImage", imagePath)
 		args = append(args, "-open", "file://"+imagePath)
 	}
-	return exec.Command(n.terminalNotifier, args...).Run()
+	return args
+}
+
+// notifyAppIcon resolves the optional notification app icon from the local
+// CC_CLIP_NOTIFY_APP_ICON environment variable. The path is read only from the
+// local daemon's environment — never from a remote /notify payload — so a
+// remote agent cannot point the notifier at an arbitrary local file. A missing
+// file or a directory is treated as "no icon" and skipped silently.
+func notifyAppIcon() string {
+	p := strings.TrimSpace(os.Getenv("CC_CLIP_NOTIFY_APP_ICON"))
+	if p == "" {
+		return ""
+	}
+	if info, err := os.Stat(p); err != nil || info.IsDir() {
+		return ""
+	}
+	return p
 }
 
 func (n *DarwinNotifier) sendViaOsascript(title, subtitle, body, sound string) error {

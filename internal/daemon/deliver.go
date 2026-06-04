@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -122,20 +123,52 @@ func formatNotification(env NotifyEnvelope) (title, body string) {
 
 const defaultCriticalSound = "Glass"
 
+// notificationSound resolves the macOS sound name for an envelope.
+//
+// Precedence:
+//  1. An explicit per-notification Sound (e.g. from a generic /notify payload)
+//     always wins. An unrecognized explicit name normalizes to silence, so a
+//     caller can opt out with "none" / "off" / "silent".
+//  2. Otherwise a configurable default-sound policy applies, keyed by urgency
+//     tier (see defaultSoundForUrgency).
 func notificationSound(env NotifyEnvelope) string {
 	if env.GenericMessage == nil {
 		return ""
 	}
-	if sound := normalizeNotificationSound(env.GenericMessage.Sound); sound != "" {
-		return sound
-	}
 	if strings.TrimSpace(env.GenericMessage.Sound) != "" {
-		return ""
+		return normalizeNotificationSound(env.GenericMessage.Sound)
 	}
-	if env.GenericMessage.Urgency == 2 {
-		return defaultCriticalSound
+	return defaultSoundForUrgency(env.GenericMessage.Urgency)
+}
+
+// defaultSoundForUrgency picks the default sound for a notification that did
+// not carry an explicit sound. Each urgency tier reads a local environment
+// override so users can configure sounds without redeploying the remote
+// agents, then falls back to a built-in default. Built-in defaults preserve
+// historical behaviour: only the critical tier (permission prompts) makes a
+// sound; attention/calm stay silent unless configured.
+//
+// An override of none/off/silent (or any unrecognized name) suppresses the
+// tier's sound — the user asked for something specific, so we never
+// second-guess it with a different built-in sound.
+//
+// The environment is read on the local daemon (where Deliver runs), not from
+// the remote /notify payload, so a remote agent cannot change local sound
+// settings.
+func defaultSoundForUrgency(urgency int) string {
+	var envKey, builtin string
+	switch {
+	case urgency >= 2:
+		envKey, builtin = "CC_CLIP_SOUND_CRITICAL", defaultCriticalSound
+	case urgency == 1:
+		envKey, builtin = "CC_CLIP_SOUND_ATTENTION", ""
+	default:
+		envKey, builtin = "CC_CLIP_SOUND_CALM", ""
 	}
-	return ""
+	if override := strings.TrimSpace(os.Getenv(envKey)); override != "" {
+		return normalizeNotificationSound(override)
+	}
+	return builtin
 }
 
 func normalizeNotificationSound(sound string) string {
