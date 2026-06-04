@@ -231,7 +231,7 @@ func TestClassifyNotificationUsesMessageFallbackBody(t *testing.T) {
 	}
 }
 
-func TestClassifyPermissionPromptGetsDefaultSound(t *testing.T) {
+func TestClassifyPermissionPromptDelegatesSoundToDeliveryPolicy(t *testing.T) {
 	env := ClassifyHookPayload("notification", map[string]any{
 		"type": "permission_prompt",
 		"body": "Approve tool",
@@ -239,8 +239,19 @@ func TestClassifyPermissionPromptGetsDefaultSound(t *testing.T) {
 	if env == nil || env.GenericMessage == nil {
 		t.Fatalf("expected generic message envelope, got %#v", env)
 	}
-	if env.GenericMessage.Sound != defaultCriticalSound {
-		t.Fatalf("expected sound %q, got %q", defaultCriticalSound, env.GenericMessage.Sound)
+	// The classifier no longer hardcodes a sound; sound selection moved to the
+	// delivery layer so it can be configured via CC_CLIP_SOUND_CRITICAL.
+	if env.GenericMessage.Sound != "" {
+		t.Fatalf("classifier should delegate sound to delivery policy, got %q", env.GenericMessage.Sound)
+	}
+	if env.GenericMessage.Urgency != 2 {
+		t.Fatalf("permission prompt should be urgency 2, got %d", env.GenericMessage.Urgency)
+	}
+	// By default (no override) the delivery layer turns urgency 2 into the
+	// critical default sound, preserving the historical behaviour.
+	t.Setenv("CC_CLIP_SOUND_CRITICAL", "")
+	if got := notificationSound(*env); got != defaultCriticalSound {
+		t.Fatalf("delivery default for permission prompt = %q, want %q", got, defaultCriticalSound)
 	}
 }
 

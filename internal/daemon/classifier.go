@@ -39,7 +39,10 @@ func ClassifyHookPayload(hookType string, raw map[string]any) *NotifyEnvelope {
 		case "permission_prompt":
 			env.GenericMessage.Title = "Tool approval needed"
 			env.GenericMessage.Urgency = 2
-			env.GenericMessage.Sound = defaultCriticalSound
+			// Sound is intentionally left unset here. The critical-tier
+			// default (and any CC_CLIP_SOUND_CRITICAL override) is applied at
+			// delivery time by defaultSoundForUrgency, keeping all
+			// sound-selection logic in one configurable place.
 		case "idle_prompt":
 			env.GenericMessage.Title = "Claude is idle"
 			env.GenericMessage.Urgency = 1

@@ -101,6 +101,67 @@ ssh myserver "mkdir -p ~/.cache/cc-clip && echo '$NONCE' > ~/.cache/cc-clip/noti
 
 > **Note:** `cc-clip connect` handles steps 2-4 automatically. Manual setup is only needed if you use plain `ssh` instead of `cc-clip connect`.
 
+## Customizing sound & icon (macOS)
+
+Notification **sound** and the **app icon** are configured with local
+environment variables read by the daemon (`cc-clip serve`). They are read on the
+local Mac only — never from the remote payload — so a remote agent cannot change
+your local sound or icon.
+
+> **Note:** These settings apply to the **native macOS notification path**
+> (`terminal-notifier` / osascript). If `cmux` is installed, the delivery chain
+> tries it first and — when it succeeds — sound and icon are skipped, because the
+> `cmux` (tmux) path only carries a title and body.
+
+Set them in the environment the daemon runs in:
+
+- **Foreground** (`cc-clip serve` in a shell): `export` the variable before starting.
+- **launchd service**: `launchctl setenv NAME value`, then restart the service
+  (`cc-clip service uninstall && cc-clip service install`). Note that
+  `launchctl setenv` is **session/bootstrap-scoped** — it is inherited by the
+  service the next time it starts, but it is *not* written into the cc-clip
+  `plist`, so reapply it after a reboot or re-login (or `export` the vars in the
+  shell that launches `cc-clip serve`).
+
+### Sound
+
+By default only **tool-approval** prompts play a sound (`Glass`); completion and
+idle notifications are silent. Override per urgency tier:
+
+| Variable | Applies to | Default |
+|----------|-----------|---------|
+| `CC_CLIP_SOUND_CRITICAL` | Tool approval needed (urgency 2) | `Glass` |
+| `CC_CLIP_SOUND_ATTENTION` | Idle / interrupted / Codex / opencode / Antigravity (urgency 1) | silent |
+| `CC_CLIP_SOUND_CALM` | "Claude finished" at end of turn (urgency 0) | silent |
+
+Values are macOS system sound names: `Basso`, `Blow`, `Bottle`, `Frog`, `Funk`,
+`Glass`, `Hero`, `Morse`, `Ping`, `Pop`, `Purr`, `Sosumi`, `Submarine`, `Tink`.
+Use `none` / `off` / `silent` to mute a tier; unrecognized names are treated as
+silent. A per-notification `sound` field in a `cc-clip notify` / `/notify`
+payload still overrides these tier defaults.
+
+```bash
+# Gentle end-of-turn chime, distinct approval sound
+launchctl setenv CC_CLIP_SOUND_CALM Tink
+launchctl setenv CC_CLIP_SOUND_CRITICAL Sosumi
+```
+
+### App icon
+
+`CC_CLIP_NOTIFY_APP_ICON` sets a custom notification icon, pointing at a local
+`.png`/`.icns` file:
+
+```bash
+launchctl setenv CC_CLIP_NOTIFY_APP_ICON "$HOME/.config/cc-clip/icon.png"
+```
+
+Limitations:
+
+- Honored **only on the `terminal-notifier` path** (`brew install terminal-notifier`).
+  The osascript fallback cannot set a custom app icon — macOS derives it from the
+  calling process — so without `terminal-notifier` the icon is unchanged.
+- A missing file or a directory is ignored silently (no icon, no error).
+
 ## Troubleshooting
 
 ### Notifications don't appear

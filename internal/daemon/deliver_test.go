@@ -343,6 +343,11 @@ func TestFormatNotificationToolAttention(t *testing.T) {
 }
 
 func TestNotificationSoundAllowlistAndCriticalDefault(t *testing.T) {
+	// Isolate from the host/CI environment: the delivery sound policy now reads
+	// these CC_CLIP_SOUND_* vars, so clear them to assert the built-in defaults.
+	t.Setenv("CC_CLIP_SOUND_CRITICAL", "")
+	t.Setenv("CC_CLIP_SOUND_ATTENTION", "")
+	t.Setenv("CC_CLIP_SOUND_CALM", "")
 	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2}}); got != defaultCriticalSound {
 		t.Fatalf("critical default sound = %q, want %q", got, defaultCriticalSound)
 	}
@@ -354,6 +359,82 @@ func TestNotificationSoundAllowlistAndCriticalDefault(t *testing.T) {
 	}
 	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2, Sound: "none"}}); got != "" {
 		t.Fatalf("sound=none should suppress critical default, got %q", got)
+	}
+}
+
+func TestDefaultSoundPolicyByUrgency(t *testing.T) {
+	// With no explicit sound and no env override, only the critical tier
+	// (urgency >= 2) makes a sound; attention/calm tiers stay silent so the
+	// historical completion/idle UX is unchanged.
+	t.Setenv("CC_CLIP_SOUND_CRITICAL", "")
+	t.Setenv("CC_CLIP_SOUND_ATTENTION", "")
+	t.Setenv("CC_CLIP_SOUND_CALM", "")
+	cases := []struct {
+		urgency int
+		want    string
+	}{
+		{3, defaultCriticalSound},
+		{2, defaultCriticalSound},
+		{1, ""},
+		{0, ""},
+		{-1, ""},
+	}
+	for _, c := range cases {
+		got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: c.urgency}})
+		if got != c.want {
+			t.Fatalf("urgency %d default sound = %q, want %q", c.urgency, got, c.want)
+		}
+	}
+}
+
+func TestDefaultSoundPolicyEnvOverridesEachTier(t *testing.T) {
+	t.Setenv("CC_CLIP_SOUND_CRITICAL", "Sosumi")
+	t.Setenv("CC_CLIP_SOUND_ATTENTION", "Pop")
+	t.Setenv("CC_CLIP_SOUND_CALM", "Tink")
+	cases := []struct {
+		urgency int
+		want    string
+	}{
+		{2, "Sosumi"},
+		{1, "Pop"},
+		{0, "Tink"},
+	}
+	for _, c := range cases {
+		got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: c.urgency}})
+		if got != c.want {
+			t.Fatalf("urgency %d with env override = %q, want %q", c.urgency, got, c.want)
+		}
+	}
+}
+
+func TestDefaultSoundPolicyEnvCanSilenceCriticalTier(t *testing.T) {
+	t.Setenv("CC_CLIP_SOUND_CRITICAL", "off")
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 2}}); got != "" {
+		t.Fatalf("CC_CLIP_SOUND_CRITICAL=off should silence the critical default, got %q", got)
+	}
+}
+
+func TestDefaultSoundPolicyEnvUnknownNameIsSilent(t *testing.T) {
+	// An unrecognized env sound name resolves to silence rather than a
+	// surprising fallback to the built-in default.
+	t.Setenv("CC_CLIP_SOUND_ATTENTION", "not-a-real-sound")
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1}}); got != "" {
+		t.Fatalf("unknown env sound should be silent, got %q", got)
+	}
+}
+
+func TestNotificationSoundExplicitPayloadBeatsEnvPolicy(t *testing.T) {
+	// A per-notification Sound (e.g. from a generic /notify payload) wins over
+	// the env tier policy.
+	t.Setenv("CC_CLIP_SOUND_ATTENTION", "Pop")
+	if got := notificationSound(NotifyEnvelope{GenericMessage: &GenericMessagePayload{Urgency: 1, Sound: "ping"}}); got != "Ping" {
+		t.Fatalf("explicit payload sound should win over env policy, got %q", got)
+	}
+}
+
+func TestNotificationSoundNilGenericMessageIsSilent(t *testing.T) {
+	if got := notificationSound(NotifyEnvelope{}); got != "" {
+		t.Fatalf("nil generic message should be silent, got %q", got)
 	}
 }
 
