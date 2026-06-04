@@ -14,6 +14,8 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 
 ## Setup and deploy
 
+> **Version note:** This reference documents the latest code (v0.9.0-beta.1). On the current stable release (v0.8.1, what the default installer gives you), the only setup/connect target flag is `--codex`, and it adds Codex support **on top of** the Claude shim. The per-target flags below (`--all`, `--opencode`, `--agy`, `--claude`, and `--codex` as Codex-only) require the v0.9.0-beta.1 prerelease — install it with `CC_CLIP_VERSION=v0.9.0-beta.1`.
+
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | Full setup: deps, SSH config, daemon, deploy (default target: Claude) |

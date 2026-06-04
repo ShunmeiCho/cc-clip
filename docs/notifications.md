@@ -22,6 +22,8 @@ Image paste notifications help you track what was pasted without leaving your wo
 
 ## Coverage by CLI
 
+> **Version note:** This reference documents the latest code (v0.9.0-beta.1). On the current stable release (v0.8.1, what the default installer gives you), the only setup/connect target flag is `--codex`, and it adds Codex support on top of the Claude shim. The per-target flags below (`--all`, `--opencode`, `--agy`, `--claude`, and `--codex` as Codex-only) require the v0.9.0-beta.1 prerelease — install it with `CC_CLIP_VERSION=v0.9.0-beta.1`.
+
 | CLI | Auto-configured by `cc-clip connect`? | How |
 |-----|----------------------------------------|-----|
 | Claude Code | ✅ Managed hooks in `~/.claude/settings.json` | Wired during `cc-clip connect` |

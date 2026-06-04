@@ -37,6 +37,7 @@
 - [The Solution](#the-solution)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Beta Quick Start (opt-in: v0.9.0-beta.1)](#beta-quick-start-opt-in-v090-beta1)
 - [Why cc-clip?](#why-cc-clip)
 - [How It Works](#how-it-works)
 - [SSH Notifications](#ssh-notifications)
@@ -162,19 +163,15 @@ Pick the row that matches your remote workflow. These are the only decisions you
 | Your remote CLI | Command | What it adds | Remote `sudo` needed? |
 |---|---|---|---|
 | Claude Code only | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ No |
-| Claude Code + Codex CLI | `cc-clip setup myserver --all` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
-| Codex CLI only | `cc-clip setup myserver --codex` | Xvfb + x11-bridge only — **no** Claude shim | ✅ **Yes** — same Xvfb `sudo` as above |
-| opencode only | `cc-clip setup myserver --opencode` | clipboard shim + opencode-notify (forwards session.idle); opencode reads the clipboard via the same xclip / wl-paste path as Claude Code | ❌ No |
-| Antigravity (agy) only | `cc-clip setup myserver --agy` | agy notify plugin (`cc-clip-notify`) — notify-only today, clipboard paste still pending; requires `agy` installed on the remote | ❌ No |
+| Claude Code + Codex CLI | `cc-clip setup myserver --codex` | shim **plus** Xvfb + x11-bridge on the remote (see below) | ✅ **Yes** — passwordless `sudo` for `apt`/`dnf install xvfb`, or run it manually first |
+| opencode only | `cc-clip setup myserver` | shim only — opencode reads the clipboard via the same xclip / wl-paste path as Claude Code, so it works without `--codex` | ❌ No |
 | Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` | ❌ No |
 
-> **v0.9.0 breaking change:** `--codex` now installs **only** Codex support (Xvfb + x11-bridge), no Claude shim. For Claude Code **and** Codex together, use `--all`. The default (no flag) and `--claude` install the Claude shim; `--opencode` and `--agy` are the other targets. A one-time notice prints on legacy `--codex` — silence it with `CC_CLIP_NO_DEPRECATION_NOTICE=1`. An existing shim is never removed.
-
-> **Prerequisite for Codex targets (`--codex` or `--all`)** — the rows in the table above that need `sudo`: Xvfb must be installed on the remote. `cc-clip setup --codex` (or `--all`) will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
+> **Prerequisite for `--codex`** (the only row in the table above that needs `sudo`): Xvfb must be installed on the remote. `cc-clip setup --codex` will try `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora) for you — but if passwordless `sudo` isn't available, it aborts and prints the exact command to run manually. Re-run `cc-clip setup myserver --codex` after you've installed Xvfb.
 >
 > If your remote permits neither passwordless `sudo` nor a one-off manual install, stick with `cc-clip setup myserver` (without `--codex`). Clipboard paste still works for Claude Code and opencode; only the Codex CLI path needs Xvfb.
 
-> **Rule of thumb:** `--codex` installs Codex support **only** (Xvfb + x11-bridge, no Claude shim). Use it if you run Codex CLI and not Claude Code on this host; use `--all` if you run **both**; plain `setup` (or `--claude`) covers Claude Code and opencode.
+> **Rule of thumb:** Use `--codex` **only** if you actually run Codex CLI on the remote. It is otherwise unnecessary overhead.
 
 ### Step 3 (Codex CLI only): what `--codex` adds
 
@@ -244,12 +241,12 @@ If any step fails, the most common fix is `cc-clip connect myserver --codex --fo
 
 ### `setup` vs `connect` — which to run when
 
-You only need to know these three moves. The right-hand column is for hosts running **both** Claude Code and Codex CLI (use `--all`); if you run **only** Codex CLI, use `--codex` in its place. The left column (plain commands) covers Claude Code and opencode.
+You only need to know these three moves. Append `--codex` to the `setup` or `connect` commands below if you use Codex CLI on the remote; otherwise omit it.
 
-| Situation | Command (Claude Code only) | Command (Claude Code + Codex CLI) |
+| Situation | Command (Claude Code only) | Command (also running Codex CLI) |
 |---|---|---|
-| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --all` |
-| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --all --force` |
+| **First-time install** on this host | `cc-clip setup myserver` | `cc-clip setup myserver --codex` |
+| **Broken state** (DISPLAY empty, x11-bridge missing, tunnel won't probe) | `cc-clip connect myserver --force` | `cc-clip connect myserver --codex --force` |
 | **Daemon rotated token** and the remote still has the old one | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
 
 `setup` is the first-time path (deps + SSH config + daemon + deploy). `connect` is the repair/redeploy path — same deploy steps, but it assumes SSH config and the local daemon are already in place.
@@ -257,6 +254,30 @@ You only need to know these three moves. The right-hand column is for hosts runn
 On Windows, the equivalent quick check is:
 
 - [Windows Quick Start](docs/windows-quickstart.md)
+
+## Beta Quick Start (opt-in: v0.9.0-beta.1)
+
+The Quick Start above targets the current **stable** release (v0.8.1) — that is what the default installer gives you. The **v0.9.0-beta.1** prerelease adds per-target setup (Claude / Codex / opencode / Antigravity) plus opencode and Antigravity notifications. It is opt-in.
+
+### Install the beta
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | CC_CLIP_VERSION=v0.9.0-beta.1 sh
+```
+
+`cc-clip --version` should then report `v0.9.0-beta.1`.
+
+### Setup — pick your target(s)
+
+| Target | Command | What it adds |
+|--------|---------|--------------|
+| Claude Code (default) | `cc-clip setup myserver` (or `--claude`) | Claude shim |
+| Codex CLI only | `cc-clip setup myserver --codex` | Codex only (Xvfb + x11-bridge), no Claude shim |
+| Claude + Codex | `cc-clip setup myserver --all` | both |
+| opencode | `cc-clip setup myserver --opencode` | clipboard shim + opencode-notify (forwards `session.idle`) |
+| Antigravity (agy) | `cc-clip setup myserver --agy` | agy notify plugin (notify-only today) |
+
+> **Breaking change vs v0.8.1:** in the beta, `--codex` installs Codex support **only** (no Claude shim), whereas in stable v0.8.1 `--codex` adds Codex **on top of** the Claude shim. Codex targets (`--codex` or `--all`) need Xvfb on the remote — auto-installed with passwordless `sudo`, otherwise install it manually.
 
 ## Why cc-clip?
 
@@ -322,10 +343,9 @@ Remote hook events (Claude finishing, tool approval requests, image paste events
 
 | CLI | Auto-configured by `cc-clip connect`? |
 |-----|----------------------------------------|
-| Codex CLI | ✅ If a Codex target (`--codex`/`--all`) is selected and `~/.codex/` exists |
-| Claude Code | ✅ Managed hooks in `~/.claude/settings.json` |
-| opencode | ✅ If `opencode` is installed and an opencode target (`--opencode`/`--all`) is selected |
-| Antigravity (agy) | ✅ `agy-notify` plugin installed via the `agy` CLI when an Antigravity target (`--agy`/`--all`) is selected and `agy` is installed |
+| Codex CLI | ✅ If `~/.codex/` exists on the remote |
+| Claude Code | ⚠️ Manual — add `cc-clip-hook` to `~/.claude/settings.json` |
+| opencode | ❌ Not yet supported out of the box |
 
 Full setup, manual configuration for Claude Code, nonce registration, and troubleshooting: **[docs/notifications.md](docs/notifications.md)**.
 
@@ -376,7 +396,7 @@ The 10 you'll actually use:
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
-| `cc-clip setup <host> --all` | Full setup for all targets (Claude + Codex + opencode + agy) (`--codex` alone = Codex only) |
+| `cc-clip setup <host> --codex` | Full setup with Codex CLI support |
 | `cc-clip connect <host> --force` | Repair/redeploy (when DISPLAY, x11-bridge, or tunnel is stuck) |
 | `cc-clip connect <host> --token-only` | Sync rotated token without redeploying binaries |
 | `cc-clip doctor --host <host>` | End-to-end health check |
@@ -412,9 +432,8 @@ cc-clip works with **any coding agent that reads the clipboard via `xclip` or `w
 | CLI | Image paste | Notifications |
 |-----|-------------|----------------|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ out of the box (xclip / wl-paste shim) | ✅ via `cc-clip-hook` in `Stop` / `Notification` hooks |
-| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured when a Codex target is selected (`--codex` or `--all`) during `cc-clip connect` and `~/.codex/` exists |
-| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ✅ auto-configured when an opencode target is selected (`--opencode` or `--all`) during `cc-clip connect` and `opencode` is installed |
-| [Antigravity (agy)](https://antigravity.google) | ⏳ pending — clipboard transport not yet implemented (notify-only today) | ✅ auto-configured when an Antigravity target is selected (`--agy` or `--all`) during `cc-clip connect` and `agy` is installed |
+| [Codex CLI](https://github.com/openai/codex) | ✅ out of the box (Xvfb + x11-bridge; needs `--codex`) | ✅ auto-configured during `cc-clip connect` if `~/.codex/` exists |
+| [opencode](https://opencode.ai) | ✅ out of the box (xclip shim on X11, wl-paste shim on Wayland) | ⚠️ not auto-configured — wire your own notifier if desired |
 | Any other `xclip`/`wl-paste` consumer | ✅ should just work — please [open a discussion](https://github.com/ShunmeiCho/cc-clip/discussions) if it doesn't | — |
 
 `cc-clip setup HOST` installs the xclip and wl-paste shims regardless of which CLI you use; opencode picks them up automatically the next time it reads the clipboard.
