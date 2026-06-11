@@ -23,6 +23,7 @@ func (mockClipboard) Type() (daemon.ClipboardInfo, error) {
 	return daemon.ClipboardInfo{Type: daemon.ClipboardEmpty}, nil
 }
 func (mockClipboard) ImageBytes() ([]byte, error) { return nil, nil }
+func (mockClipboard) Text() (string, error)       { return "", nil }
 
 // drainOne reads exactly one envelope off the server's notify channel, failing
 // if none arrives promptly. It is reused across delivery assertions.
@@ -34,6 +35,17 @@ func drainOne(t *testing.T, ch <-chan daemon.NotifyEnvelope) daemon.NotifyEnvelo
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for envelope")
 		return daemon.NotifyEnvelope{}
+	}
+}
+
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	drive := filepath.VolumeName(home)
+	if drive != "" {
+		t.Setenv("HOMEDRIVE", drive)
+		t.Setenv("HOMEPATH", strings.TrimPrefix(home[len(drive):], `\`))
 	}
 }
 
@@ -178,7 +190,7 @@ func TestRunClaudeNotifyFailSoftOnReadError(t *testing.T) {
 // does NOT propagate from runClaudeNotify (3b-1 fail-soft).
 func TestRunClaudeNotifyFailSoftOnPostFailure(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // empty => nonce file missing => POST fails
+	setTestHome(t, home) // empty => nonce file missing => POST fails
 
 	stdin := strings.NewReader(`{"hook_event_name":"Stop"}`)
 	if err := runClaudeNotify(1, stdin); err != nil {
@@ -199,7 +211,7 @@ func TestRunCodexNotifyFailSoftOnParseError(t *testing.T) {
 // does NOT propagate from runCodexNotify (3b-2 fail-soft).
 func TestRunCodexNotifyFailSoftOnPostFailure(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // empty => nonce file missing => POST fails
+	setTestHome(t, home) // empty => nonce file missing => POST fails
 
 	stdin := strings.NewReader(`{"last-assistant-message":"hi"}`)
 	if err := runCodexNotify(1, stdin); err != nil {
@@ -289,11 +301,7 @@ func newNotifyServerWithChannel(t *testing.T) (port int, srv *daemon.Server) {
 	if err := os.WriteFile(filepath.Join(cacheDir, "notify.nonce"), []byte(nonce+"\n"), 0600); err != nil {
 		t.Fatalf("write nonce: %v", err)
 	}
-	oldHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
+	setTestHome(t, home)
 	return port, srv
 }
 
@@ -388,11 +396,7 @@ func TestRunAntigravityNotifyAlwaysWritesDecision(t *testing.T) {
 func TestRunAntigravityNotifyWritesDecisionOnPostFailure(t *testing.T) {
 	// Point HOME at an empty dir so the nonce file is missing => POST fails.
 	home := t.TempDir()
-	oldHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Setenv("HOME", oldHome) })
+	setTestHome(t, home)
 
 	// Use a port unlikely to be serving; the missing nonce alone forces failure.
 	stdin := strings.NewReader(`{"terminationReason":"user_cancelled"}`)

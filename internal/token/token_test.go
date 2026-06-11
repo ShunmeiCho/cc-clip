@@ -3,6 +3,7 @@ package token
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -437,7 +438,8 @@ func TestWriteTokenFile_AtomicNoLingeringTempAndMode0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat failed: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		perm := info.Mode().Perm()
 		t.Fatalf("expected mode 0600, got %o", perm)
 	}
 

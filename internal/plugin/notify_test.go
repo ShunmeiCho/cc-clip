@@ -94,7 +94,7 @@ func TestRunOpencodeNotifyFailSoftOnEmptyStdin(t *testing.T) {
 // nonce) does NOT propagate from runOpencodeNotify.
 func TestRunOpencodeNotifyFailSoftOnPostFailure(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home) // empty => nonce file missing => POST fails
+	setTestHome(t, home) // empty => nonce file missing => POST fails
 
 	stdin := strings.NewReader(`{"event":{"type":"session.idle"}}`)
 	if err := runOpencodeNotify(1, stdin); err != nil {

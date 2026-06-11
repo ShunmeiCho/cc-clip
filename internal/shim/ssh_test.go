@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -269,7 +270,8 @@ func TestSetRemoteClaudeHooksEnabledTogglesMarker(t *testing.T) {
 	}
 	if info, err := os.Stat(marker); err != nil {
 		t.Fatalf("expected no-hooks marker: %v", err)
-	} else if got := info.Mode().Perm(); got != 0600 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		got := info.Mode().Perm()
 		t.Fatalf("marker mode = %o, want 0600", got)
 	}
 
