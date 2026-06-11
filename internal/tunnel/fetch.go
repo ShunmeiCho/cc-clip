@@ -23,6 +23,7 @@ var (
 )
 
 const defaultUserAgent = "cc-clip/0.1"
+const maxFetchImageSize = 20 * 1024 * 1024
 
 type Client struct {
 	baseURL    string
@@ -87,6 +88,9 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("fetch image failed: %s", resp.Status)
 	}
+	if resp.ContentLength > maxFetchImageSize {
+		return "", fmt.Errorf("fetch image failed: response exceeds 20MB limit")
+	}
 
 	if err := os.MkdirAll(outDir, 0700); err != nil {
 		return "", fmt.Errorf("failed to create output dir: %w", err)
@@ -110,10 +114,16 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 		return "", fmt.Errorf("failed to create image file: %w", err)
 	}
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	n, err := io.Copy(f, io.LimitReader(resp.Body, maxFetchImageSize+1))
+	if err != nil {
 		f.Close()
 		os.Remove(outPath)
 		return "", fmt.Errorf("failed to write image file: %w", err)
+	}
+	if n > maxFetchImageSize {
+		f.Close()
+		os.Remove(outPath)
+		return "", fmt.Errorf("fetch image failed: response exceeds 20MB limit")
 	}
 
 	// Flush to disk and surface any deferred write errors (e.g. ENOSPC) that
