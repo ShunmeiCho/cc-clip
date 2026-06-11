@@ -8,8 +8,8 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 |---------|-------------|
 | `cc-clip serve` | Start daemon in foreground |
 | `cc-clip serve --rotate-token` | Start daemon with forced new token |
-| `cc-clip service install` | Install macOS launchd service |
-| `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip service install` | Install local daemon service (macOS launchd / Windows logon launcher) |
+| `cc-clip service uninstall` | Remove local daemon service |
 | `cc-clip service status` | Show service status |
 
 ## Setup and deploy
@@ -70,8 +70,14 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | Port | 18339 | `CC_CLIP_PORT` |
 | Token TTL | 30d | `CC_CLIP_TOKEN_TTL` |
 | Output dir | `$XDG_RUNTIME_DIR/claude-images` | `CC_CLIP_OUT_DIR` |
+| Max clipboard text | 1MB | `CC_CLIP_MAX_TEXT_MB` |
+| Max clipboard image | 20MB | `CC_CLIP_MAX_IMAGE_MB` |
 | Probe timeout | 500ms | `CC_CLIP_PROBE_TIMEOUT_MS` |
 | Fetch timeout | 5000ms | `CC_CLIP_FETCH_TIMEOUT_MS` |
 | Debug logs | off | `CC_CLIP_DEBUG=1` |
+
+> Size limits apply to the local daemon (`cc-clip serve`). The Codex path
+> (x11-bridge) keeps its own 20MB fetch cap on the remote side, so raising
+> `CC_CLIP_MAX_IMAGE_MB` above 20 only takes effect for the Claude Code shim path.
 
 > `cc-clip --help` always shows the authoritative flag list for the installed version.

@@ -86,9 +86,9 @@ additionally:
 the pre-download conflict check. `--to v0.6.0` pins a specific release
 instead of the latest (handy for rollback).
 
-Not yet supported: Windows (use the manual path below), and systemd-based
-Linux services (the updater prints a reminder instead of restarting the
-service).
+Not yet supported: Windows (use the Windows installer path below), and
+systemd-based Linux services (the updater prints a reminder instead of
+restarting the service).
 
 ### Option B: re-run the install script
 
@@ -177,7 +177,8 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
 
 ## Windows upgrade
 
-The install script does not support Windows. Upgrade is manual.
+`cc-clip update` does not support Windows yet. Use the PowerShell installer,
+or the manual zip path if you prefer to inspect the archive yourself.
 
 1. Stop any running cc-clip hotkey listener:
 
@@ -186,14 +187,36 @@ The install script does not support Windows. Upgrade is manual.
     # or kill the tray icon process, or log out of the Windows session
     ```
 
-2. Download the new zip from
+2. Run the Windows installer:
+
+    ```powershell
+    irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
+    ```
+
+    It downloads the latest `cc-clip_<version>_windows_<arch>.zip`, verifies
+    `checksums.txt`, and replaces `cc-clip.exe` in
+    `%USERPROFILE%\.local\bin` by default.
+
+    To install a specific version for rollback or pinning:
+
+    ```powershell
+    $env:CC_CLIP_VERSION="v0.5.0"; irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
+    ```
+
+    If you installed cc-clip somewhere else, pass the same directory:
+
+    ```powershell
+    $env:CC_CLIP_INSTALL_DIR="$HOME\bin"; irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
+    ```
+
+3. Manual fallback: download the new zip from
    <https://github.com/ShunmeiCho/cc-clip/releases/latest> (pick
-   `cc-clip_<version>_windows_amd64.zip` or `..._arm64.zip`).
+   `cc-clip_<version>_windows_amd64.zip` or `..._arm64.zip`), then extract
+   `cc-clip.exe` on top of your existing install location.
 
-3. Extract `cc-clip.exe` on top of your existing install location
-   (typically `C:\Users\<you>\.local\bin`). Overwrite the old file.
+4. Restart whichever Windows component you use.
 
-4. Restart the hotkey listener:
+    For the default hotkey/send workflow:
 
     ```powershell
     cc-clip hotkey
@@ -202,11 +225,25 @@ The install script does not support Windows. Upgrade is manual.
     cc-clip hotkey --status          # confirms the new version is registered
     ```
 
-5. **Windows does not need `cc-clip connect`** — the Windows workflow talks
-   to the remote over SSH/stdin directly, not via the xclip/wl-paste shim.
-   There is no remote binary to redeploy for the Windows-only path. If you
-   also use this remote from a Mac/Linux machine, run `cc-clip connect`
-   from **that** machine after upgrading it.
+    For the experimental direct shim workflow:
+
+    ```powershell
+    cc-clip service uninstall
+    cc-clip service install
+    cc-clip service status
+    ```
+
+5. If you opted into the experimental direct shim workflow, redeploy to every
+   remote host from Windows so the remote binary/shim matches the upgraded
+   local daemon:
+
+    ```powershell
+    cc-clip connect myserver --claude --force
+    ```
+
+   If you use only the default hotkey/send workflow (`cc-clip send --paste` /
+   `cc-clip hotkey`) and never installed the remote shim from Windows, there
+   is no remote binary to redeploy for that path.
 
 ## Pitfalls to know about
 
@@ -273,6 +310,13 @@ There are two flavours of rollback, and they are **not** equally safe:
 - **Via install script, the manual way:** you can also skip `CC_CLIP_VERSION`
   and use the Option C manual-download commands above with `V=` set to the
   version you want (for example `V=0.5.0` downgrades to `v0.5.0`).
+
+- **Windows PowerShell installer:** same pinning model, using the Windows zip
+  asset and `Get-FileHash` verification:
+
+    ```powershell
+    $env:CC_CLIP_VERSION="v0.5.0"; irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
+    ```
 
 ### Rollback runbook
 

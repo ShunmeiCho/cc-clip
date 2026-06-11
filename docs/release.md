@@ -162,9 +162,9 @@ The notes file should cover, in this order:
 2. **Other Improvements** — documentation, tooling, CI, everything else
    that users might notice but is not the headline.
 3. **Upgrade** — concrete commands per platform. On cc-clip this is
-   `cc-clip update` for 0.6.2+ users, `install.sh` for fresh installs
-   and Windows-to-manual, and always the `cc-clip connect <host> --force`
-   reminder for remote hosts.
+   `cc-clip update` for 0.6.2+ macOS/Linux users, `install.sh` for
+   fresh macOS/Linux installs, `install.ps1` for Windows installs/upgrades,
+   and always the `cc-clip connect <host> --force` reminder for remote hosts.
 4. **Not in This Release** — features deferred, known limitations, links
    to issues tracking follow-ups. This stops users filing "why didn't
    X ship" questions.
