@@ -18,7 +18,7 @@ const clipboardTimeout = 5 * time.Second
 // in launchd environments where PATH doesn't include Homebrew directories.
 var pngpasteFallbackPaths = []string{
 	"/opt/homebrew/bin/pngpaste", // Apple Silicon Homebrew
-	"/usr/local/bin/pngpaste",   // Intel Homebrew
+	"/usr/local/bin/pngpaste",    // Intel Homebrew
 }
 
 type darwinClipboard struct{}
@@ -87,4 +87,19 @@ func (c *darwinClipboard) ImageBytes() ([]byte, error) {
 		return nil, fmt.Errorf("clipboard image is empty")
 	}
 	return out, nil
+}
+
+func (c *darwinClipboard) Text() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "pbpaste")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("no text in clipboard: %w", err)
+	}
+	if len(out) == 0 {
+		return "", fmt.Errorf("clipboard text is empty")
+	}
+	return string(out), nil
 }

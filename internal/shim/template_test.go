@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,19 +40,68 @@ func TestWlPasteShimSubstitutesPortAndRealBinary(t *testing.T) {
 	}
 }
 
+func TestShimsIncludeTextClipboardEndpoint(t *testing.T) {
+	for name, content := range map[string]string{
+		"xclip":    XclipShim(18339, "/usr/bin/xclip"),
+		"wl-paste": WlPasteShim(18339, "/usr/bin/wl-paste"),
+	} {
+		if !strings.Contains(content, `"/clipboard/text"`) {
+			t.Fatalf("%s shim must fetch /clipboard/text", name)
+		}
+		if !strings.Contains(content, `"text"`) {
+			t.Fatalf("%s shim must handle text clipboard type", name)
+		}
+	}
+}
+
 // imagePayload is a distinctive byte sequence served by the mock daemon for
 // /clipboard/image. Tests assert that when a shim pattern actually intercepts
 // an invocation, this exact payload reaches stdout — which is only possible if
 // the shim went through the HTTP path rather than falling through to the real
 // binary.
 var imagePayload = []byte("CC-CLIP-INTERCEPTED-PAYLOAD")
+var textPayload = []byte("cc-clip intercepted text\n")
 
 const expectedTypeToken = "image/png"
+const expectedTextTypeToken = "UTF8_STRING"
+
+func bashPath(path string) string {
+	path = filepath.Clean(path)
+	if runtime.GOOS != "windows" {
+		return path
+	}
+	vol := filepath.VolumeName(path)
+	if len(vol) == 2 && vol[1] == ':' {
+		drive := strings.ToLower(vol[:1])
+		rest := strings.TrimPrefix(path[len(vol):], `\`)
+		if exec.Command("bash", "-lc", "test -d /mnt/"+drive).Run() == nil {
+			return "/mnt/" + drive + "/" + strings.ReplaceAll(rest, `\`, "/")
+		}
+		return "/" + drive + "/" + strings.ReplaceAll(rest, `\`, "/")
+	}
+	return strings.ReplaceAll(path, `\`, "/")
+}
+
+func bashPATH(paths ...string) string {
+	parts := make([]string, 0, len(paths)+1)
+	for _, p := range paths {
+		parts = append(parts, bashPath(p))
+	}
+	parts = append(parts, os.Getenv("PATH"))
+	if runtime.GOOS == "windows" {
+		return strings.Join(parts, ":")
+	}
+	return strings.Join(parts, string(os.PathListSeparator))
+}
 
 // startMockDaemon serves the two endpoints the shim consumes when
 // intercepting: /clipboard/type (JSON `{"type":"image","format":"png"}`) and
 // /clipboard/image (raw bytes). Returns (port, tokenFilePath).
 func startMockDaemon(t *testing.T, tmpDir string) (int, string) {
+	return startMockDaemonWithType(t, tmpDir, "image")
+}
+
+func startMockDaemonWithType(t *testing.T, tmpDir string, clipType string) (int, string) {
 	t.Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,10 +112,17 @@ func startMockDaemon(t *testing.T, tmpDir string) (int, string) {
 		switch r.URL.Path {
 		case "/clipboard/type":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"type": "image", "format": "png"})
+			if clipType == "text" {
+				_ = json.NewEncoder(w).Encode(map[string]string{"type": "text"})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]string{"type": "image", "format": "png"})
+			}
 		case "/clipboard/image":
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = w.Write(imagePayload)
+		case "/clipboard/text":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write(textPayload)
 		default:
 			http.NotFound(w, r)
 		}
@@ -89,17 +146,25 @@ func startMockDaemon(t *testing.T, tmpDir string) (int, string) {
 }
 
 func writeFakeCurl(t *testing.T, dir string) (argvLog, stdinLog string) {
+	return writeFakeCurlWithType(t, dir, "image")
+}
+
+func writeFakeCurlWithType(t *testing.T, dir string, clipType string) (argvLog, stdinLog string) {
 	t.Helper()
 
 	argvLog = filepath.Join(dir, "curl-argv.log")
 	stdinLog = filepath.Join(dir, "curl-stdin.log")
 	dataLog := filepath.Join(dir, "curl-data.log")
 	curlPath := filepath.Join(dir, "curl")
+	typeJSON := `{"type":"image","format":"png"}`
+	if clipType == "text" {
+		typeJSON = `{"type":"text"}`
+	}
 	script := "#!/bin/bash\n" +
 		"set -euo pipefail\n" +
-		"argv_log=" + strconv.Quote(argvLog) + "\n" +
-		"stdin_log=" + strconv.Quote(stdinLog) + "\n" +
-		"data_log=" + strconv.Quote(dataLog) + "\n" +
+		"argv_log=" + strconv.Quote(bashPath(argvLog)) + "\n" +
+		"stdin_log=" + strconv.Quote(bashPath(stdinLog)) + "\n" +
+		"data_log=" + strconv.Quote(bashPath(dataLog)) + "\n" +
 		"printf '%s\\n' \"$*\" > \"$argv_log\"\n" +
 		"for ((i=1; i<=$#; i++)); do\n" +
 		"  if [ \"${!i}\" = \"-K\" ]; then\n" +
@@ -123,17 +188,27 @@ func writeFakeCurl(t *testing.T, dir string) (argvLog, stdinLog string) {
 		"done\n" +
 		"url=\"${@: -1}\"\n" +
 		"case \"$url\" in\n" +
-		"  */clipboard/type) printf '{\"type\":\"image\",\"format\":\"png\"}\\n' ;;\n" +
+		"  */clipboard/type) printf " + strconv.Quote(typeJSON+"\n") + " ;;\n" +
 		"  */clipboard/image) if [ -n \"$outfile\" ]; then printf " + strconv.Quote(string(imagePayload)) + " > \"$outfile\"; else printf " + strconv.Quote(string(imagePayload)) + "; fi ;;\n" +
+		"  */clipboard/text) if [ -n \"$outfile\" ]; then printf " + strconv.Quote(string(textPayload)) + " > \"$outfile\"; else printf " + strconv.Quote(string(textPayload)) + "; fi ;;\n" +
 		"  */notify) printf '204' ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(curlPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write fake curl: %v", err)
 	}
+	for _, name := range []string{"timeout", "nc"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/bash\nexit 0\n"), 0755); err != nil {
+			t.Fatalf("write fake %s: %v", name, err)
+		}
+	}
 	return argvLog, stdinLog
 }
 
 func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash path and executable semantics are not reliable from Windows test temp dirs")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -154,6 +229,11 @@ func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
 			args:   []string{"-selection", "clipboard", "-t", "image/png", "-o"},
 		},
 		{
+			name:   "xclip_text",
+			render: XclipShim,
+			args:   []string{"-selection", "clipboard", "-o"},
+		},
+		{
 			name:   "wlpaste_json",
 			render: WlPasteShim,
 			args:   []string{"--list-types"},
@@ -162,6 +242,11 @@ func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
 			name:   "wlpaste_binary",
 			render: WlPasteShim,
 			args:   []string{"--type", "image/png"},
+		},
+		{
+			name:   "wlpaste_text",
+			render: WlPasteShim,
+			args:   []string{"--type", "text/plain"},
 		},
 	}
 
@@ -182,15 +267,15 @@ func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
 			}
 
 			shimPath := filepath.Join(tmpDir, "shim.sh")
-			if err := os.WriteFile(shimPath, []byte(tc.render(port, realBin)), 0755); err != nil {
+			if err := os.WriteFile(shimPath, []byte(tc.render(port, bashPath(realBin))), 0755); err != nil {
 				t.Fatalf("write shim: %v", err)
 			}
 
-			cmd := exec.Command("bash", append([]string{shimPath}, tc.args...)...)
+			cmd := exec.Command("bash", append([]string{bashPath(shimPath)}, tc.args...)...)
 			cmd.Env = append(os.Environ(),
-				"PATH="+tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"PATH="+bashPATH(tmpDir),
 				"CC_CLIP_PORT="+strconv.Itoa(port),
-				"CC_CLIP_TOKEN_FILE="+tokenFile,
+				"CC_CLIP_TOKEN_FILE="+bashPath(tokenFile),
 				"CC_CLIP_PROBE_TIMEOUT_MS=2000",
 				"CC_CLIP_FETCH_TIMEOUT_MS=5000",
 			)
@@ -228,22 +313,28 @@ func TestShimsKeepTokenOutOfCurlArgv(t *testing.T) {
 // data" from "pattern didn't match -> default fallback", which a daemon-down
 // variant cannot do.
 func TestShimInterceptsMatchingInvocations(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash path and executable semantics are not reliable from Windows test temp dirs")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
 
 	type expectation int
 	const (
-		expectInterceptImage expectation = iota // stdout == imagePayload, no fallback
-		expectInterceptType                     // stdout contains expectedTypeToken, no fallback
-		expectFallback                          // stdout empty of payload, fallback captures args
+		expectInterceptImage    expectation = iota // stdout == imagePayload, no fallback
+		expectInterceptType                        // stdout contains expectedTypeToken, no fallback
+		expectInterceptText                        // stdout == textPayload, no fallback
+		expectInterceptTextType                    // stdout contains expectedTextTypeToken, no fallback
+		expectFallback                             // stdout empty of payload, fallback captures args
 	)
 
 	cases := []struct {
-		name   string
-		render func(port int, real string) string
-		args   []string
-		expect expectation
+		name     string
+		render   func(port int, real string) string
+		args     []string
+		expect   expectation
+		clipType string
 	}{
 		{
 			name:   "claude_xclip_targets",
@@ -270,6 +361,20 @@ func TestShimInterceptsMatchingInvocations(t *testing.T) {
 			expect: expectFallback,
 		},
 		{
+			name:     "xclip_targets_text",
+			render:   XclipShim,
+			args:     []string{"-selection", "clipboard", "-t", "TARGETS", "-o"},
+			expect:   expectInterceptTextType,
+			clipType: "text",
+		},
+		{
+			name:     "xclip_text",
+			render:   XclipShim,
+			args:     []string{"-selection", "clipboard", "-o"},
+			expect:   expectInterceptText,
+			clipType: "text",
+		},
+		{
 			name:   "claude_wlpaste_list_types",
 			render: WlPasteShim,
 			args:   []string{"--list-types"},
@@ -293,34 +398,61 @@ func TestShimInterceptsMatchingInvocations(t *testing.T) {
 			args:   []string{"--watch"},
 			expect: expectFallback,
 		},
+		{
+			name:     "wlpaste_list_types_text",
+			render:   WlPasteShim,
+			args:     []string{"--list-types"},
+			expect:   expectInterceptTextType,
+			clipType: "text",
+		},
+		{
+			name:     "wlpaste_type_text",
+			render:   WlPasteShim,
+			args:     []string{"--type", "text/plain"},
+			expect:   expectInterceptText,
+			clipType: "text",
+		},
+		{
+			name:     "wlpaste_default_text",
+			render:   WlPasteShim,
+			args:     []string{},
+			expect:   expectInterceptText,
+			clipType: "text",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			sentinel := filepath.Join(tmpDir, "fallback.log")
+			clipType := tc.clipType
+			if clipType == "" {
+				clipType = "image"
+			}
+			_, _ = writeFakeCurlWithType(t, tmpDir, clipType)
 
 			// Fake "real" binary records its args to a sentinel and exits 0.
 			realBin := filepath.Join(tmpDir, "fake-real")
 			fakeScript := "#!/bin/bash\n" +
-				"printf '%s\\n' \"$*\" > \"" + sentinel + "\"\n" +
+				"printf '%s\\n' \"$*\" > \"" + bashPath(sentinel) + "\"\n" +
 				"exit 0\n"
 			if err := os.WriteFile(realBin, []byte(fakeScript), 0755); err != nil {
 				t.Fatalf("write fake real: %v", err)
 			}
 
-			port, tokenFile := startMockDaemon(t, tmpDir)
+			port, tokenFile := startMockDaemonWithType(t, tmpDir, clipType)
 
-			shim := tc.render(port, realBin)
+			shim := tc.render(port, bashPath(realBin))
 			shimPath := filepath.Join(tmpDir, "shim.sh")
 			if err := os.WriteFile(shimPath, []byte(shim), 0755); err != nil {
 				t.Fatalf("write shim: %v", err)
 			}
 
-			cmd := exec.Command("bash", append([]string{shimPath}, tc.args...)...)
+			cmd := exec.Command("bash", append([]string{bashPath(shimPath)}, tc.args...)...)
 			cmd.Env = append(os.Environ(),
+				"PATH="+bashPATH(tmpDir),
 				"CC_CLIP_PORT="+strconv.Itoa(port),
-				"CC_CLIP_TOKEN_FILE="+tokenFile,
+				"CC_CLIP_TOKEN_FILE="+bashPath(tokenFile),
 				"CC_CLIP_PROBE_TIMEOUT_MS=2000",
 				"CC_CLIP_FETCH_TIMEOUT_MS=5000",
 			)
@@ -354,6 +486,23 @@ func TestShimInterceptsMatchingInvocations(t *testing.T) {
 				if !strings.Contains(string(out), expectedTypeToken) {
 					t.Fatalf("expected stdout to contain %q, got %q", expectedTypeToken, string(out))
 				}
+			case expectInterceptText:
+				if fallbackInvoked {
+					t.Fatalf("expected interception, but fallback was invoked with %q (stdout=%q)",
+						recordedArgs, string(out))
+				}
+				if string(out) != string(textPayload) {
+					t.Fatalf("expected stdout to equal daemon text payload %q, got %q",
+						string(textPayload), string(out))
+				}
+			case expectInterceptTextType:
+				if fallbackInvoked {
+					t.Fatalf("expected interception, but fallback was invoked with %q (stdout=%q)",
+						recordedArgs, string(out))
+				}
+				if !strings.Contains(string(out), expectedTextTypeToken) && !strings.Contains(string(out), "text/plain") {
+					t.Fatalf("expected stdout to contain text target, got %q", string(out))
+				}
 			case expectFallback:
 				if !fallbackInvoked {
 					t.Fatalf("expected fallback invocation, but sentinel was absent (stdout=%q)", string(out))
@@ -371,6 +520,9 @@ func TestShimInterceptsMatchingInvocations(t *testing.T) {
 }
 
 func TestXclipShimFallbackResolvesRealBinaryFromPathWhenConfiguredPathIsMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash path and executable semantics are not reliable from Windows test temp dirs")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -383,7 +535,7 @@ func TestXclipShimFallbackResolvesRealBinaryFromPathWhenConfiguredPathIsMissing(
 	sentinel := filepath.Join(tmpDir, "fallback.log")
 	realBin := filepath.Join(realDir, "xclip")
 	fakeScript := "#!/bin/bash\n" +
-		"printf '%s\\n' \"$*\" > \"" + sentinel + "\"\n" +
+		"printf '%s\\n' \"$*\" > \"" + bashPath(sentinel) + "\"\n" +
 		"exit 0\n"
 	if err := os.WriteFile(realBin, []byte(fakeScript), 0755); err != nil {
 		t.Fatalf("write fake real xclip: %v", err)
@@ -394,8 +546,8 @@ func TestXclipShimFallbackResolvesRealBinaryFromPathWhenConfiguredPathIsMissing(
 		t.Fatalf("write shim: %v", err)
 	}
 
-	cmd := exec.Command("bash", shimPath, "-selection", "primary", "-o")
-	cmd.Env = append(os.Environ(), "PATH="+tmpDir+string(os.PathListSeparator)+realDir)
+	cmd := exec.Command("bash", bashPath(shimPath), "-selection", "primary", "-o")
+	cmd.Env = append(os.Environ(), "PATH="+bashPATH(tmpDir, realDir))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("shim fallback failed: %v (stdout=%q)", err, string(out))
@@ -410,6 +562,9 @@ func TestXclipShimFallbackResolvesRealBinaryFromPathWhenConfiguredPathIsMissing(
 }
 
 func TestXclipShimFallbackFailsClearlyWhenRealBinaryIsMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash path and executable semantics are not reliable from Windows test temp dirs")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -420,8 +575,8 @@ func TestXclipShimFallbackFailsClearlyWhenRealBinaryIsMissing(t *testing.T) {
 		t.Fatalf("write shim: %v", err)
 	}
 
-	cmd := exec.Command("bash", shimPath, "-selection", "primary", "-o")
-	cmd.Env = append(os.Environ(), "PATH="+tmpDir)
+	cmd := exec.Command("bash", bashPath(shimPath), "-selection", "primary", "-o")
+	cmd.Env = append(os.Environ(), "PATH="+bashPATH(tmpDir))
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected fallback failure when real xclip is absent, got success: %q", string(out))

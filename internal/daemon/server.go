@@ -14,6 +14,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,12 +25,33 @@ import (
 )
 
 const (
-	maxImageSize    = 20 * 1024 * 1024 // 20MB
-	maxNotifyBody   = 64 * 1024        // 64KB
-	userAgent       = "cc-clip"
-	criticalChCap   = 4
-	claudeHookCType = "application/x-claude-hook"
+	defaultMaxImageMB = 20
+	defaultMaxTextMB  = 1
+	maxNotifyBody     = 64 * 1024 // 64KB
+	userAgent         = "cc-clip"
+	criticalChCap     = 4
+	claudeHookCType   = "application/x-claude-hook"
 )
+
+// sizeLimitMB reads a whole-megabyte clipboard cap override from env.
+// Invalid or non-positive values fall back to the default, mirroring
+// CC_CLIP_PORT handling.
+func sizeLimitMB(envName string, defMB int) int {
+	if env := os.Getenv(envName); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defMB
+}
+
+func maxImageMB() int { return sizeLimitMB("CC_CLIP_MAX_IMAGE_MB", defaultMaxImageMB) }
+
+func maxImageSize() int { return maxImageMB() * 1024 * 1024 }
+
+func maxTextMB() int { return sizeLimitMB("CC_CLIP_MAX_TEXT_MB", defaultMaxTextMB) }
+
+func maxTextSize() int { return maxTextMB() * 1024 * 1024 }
 
 const (
 	httpReadHeaderTimeout = 2 * time.Second
@@ -70,6 +93,7 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /clipboard/type", s.authMiddleware(s.handleClipboardType))
 	s.mux.HandleFunc("GET /clipboard/image", s.authMiddleware(s.handleClipboardImage))
+	s.mux.HandleFunc("GET /clipboard/text", s.authMiddleware(s.handleClipboardText))
 	s.mux.HandleFunc("POST /notify", s.handleNotify)
 	s.mux.HandleFunc("POST /register-nonce", s.authMiddleware(s.handleRegisterNonce))
 	return s
@@ -472,8 +496,8 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(data) > maxImageSize {
-		http.Error(w, "image exceeds 20MB limit", http.StatusRequestEntityTooLarge)
+	if len(data) > maxImageSize() {
+		http.Error(w, fmt.Sprintf("image exceeds %dMB limit", maxImageMB()), http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -515,6 +539,36 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
+	info, err := s.clipboard.Type()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if info.Type != ClipboardText {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	text, err := s.clipboard.Text()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if text == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if len(text) > maxTextSize() {
+		http.Error(w, fmt.Sprintf("text exceeds %dMB limit", maxTextMB()), http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len([]byte(text))))
+	_, _ = w.Write([]byte(text))
+}
+
 // handleNotify accepts notification payloads from remote hook scripts
 // or generic senders. Auth is via notification nonce (separate from
 // clipboard bearer token).
@@ -553,9 +607,12 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 //   - application/x-claude-hook: Claude hook JSON, processed via ClassifyHookPayload
 //   - anything else (typically application/json): generic JSON notification
 func (s *Server) parseNotifyRequest(r *http.Request) (NotifyEnvelope, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxNotifyBody))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxNotifyBody+1))
 	if err != nil {
 		return NotifyEnvelope{}, fmt.Errorf("failed to read body: %w", err)
+	}
+	if len(body) > maxNotifyBody {
+		return NotifyEnvelope{}, fmt.Errorf("notification body exceeds 64KB limit")
 	}
 	if len(body) == 0 {
 		return NotifyEnvelope{}, fmt.Errorf("empty request body")

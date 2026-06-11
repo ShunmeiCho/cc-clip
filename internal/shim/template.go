@@ -174,6 +174,12 @@ case "$ARGS" in
                 echo "image/${FORMAT:-png}"
                 exit 0
             fi
+            if [ "$TYPE" = "text" ]; then
+                echo "UTF8_STRING"
+                echo "TEXT"
+                echo "STRING"
+                exit 0
+            fi
             _cc_clip_fallback "$@"
         else
             _cc_clip_log "tunnel not reachable"
@@ -189,6 +195,21 @@ case "$ARGS" in
                 exit 0
             fi
             _cc_clip_log "fetch image failed, falling back"
+            _cc_clip_fallback "$@"
+        else
+            _cc_clip_log "tunnel not reachable"
+            _cc_clip_fallback "$@"
+        fi
+        ;;
+
+    *"-selection clipboard"*"-t UTF8_STRING"*"-o"*|*"-selection clipboard"*"-t TEXT"*"-o"*|*"-selection clipboard"*"-t STRING"*"-o"*|*"-selection clipboard"*"-t text/plain"*"-o"*|*"-selection clipboard -o"*|*"-o -selection clipboard"*)
+        # Text read — keep this after TARGETS and image cases.
+        _cc_clip_log "intercepting text read"
+        if _cc_clip_probe; then
+            if _cc_clip_fetch_binary "/clipboard/text"; then
+                exit 0
+            fi
+            _cc_clip_log "fetch text failed, falling back"
             _cc_clip_fallback "$@"
         else
             _cc_clip_log "tunnel not reachable"
@@ -376,6 +397,10 @@ case "$ARGS" in
                 echo "image/${FORMAT:-png}"
                 exit 0
             fi
+            if [ "$TYPE" = "text" ]; then
+                echo "text/plain"
+                exit 0
+            fi
             _cc_clip_fallback "$@"
         else
             _cc_clip_fallback "$@"
@@ -391,6 +416,20 @@ case "$ARGS" in
                 exit 0
             fi
             _cc_clip_log "fetch image failed, falling back"
+            _cc_clip_fallback "$@"
+        else
+            _cc_clip_fallback "$@"
+        fi
+        ;;
+
+    *"--type"*"text/"*|*"-t text/"*|"")
+        # Text read (typed or default wl-paste)
+        _cc_clip_log "intercepting text read"
+        if _cc_clip_probe; then
+            if _cc_clip_fetch_binary "/clipboard/text"; then
+                exit 0
+            fi
+            _cc_clip_log "fetch text failed, falling back"
             _cc_clip_fallback "$@"
         else
             _cc_clip_fallback "$@"

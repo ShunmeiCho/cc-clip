@@ -75,3 +75,23 @@ func (c *linuxClipboard) ImageBytes() ([]byte, error) {
 
 	return nil, fmt.Errorf("no image in clipboard: xclip or wl-paste required")
 }
+
+func (c *linuxClipboard) Text() (string, error) {
+	if xclipPath, err := exec.LookPath("xclip"); err == nil {
+		cmd := exec.Command(xclipPath, "-selection", "clipboard", "-o")
+		out, err := cmd.Output()
+		if err == nil && len(out) > 0 {
+			return string(out), nil
+		}
+	}
+
+	if wlPath, err := exec.LookPath("wl-paste"); err == nil {
+		cmd := exec.Command(wlPath, "--type", "text/plain")
+		out, err := cmd.Output()
+		if err == nil && len(out) > 0 {
+			return string(out), nil
+		}
+	}
+
+	return "", fmt.Errorf("no text in clipboard: xclip or wl-paste required")
+}
