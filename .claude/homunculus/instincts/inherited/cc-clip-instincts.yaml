@@ -1,0 +1,433 @@
+# Instincts generated from https://github.com/ShunmeiCho/cc-clip
+# Generated: 2026-06-13T15:03:17.751Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cc-clip-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: docs, feat, fix, test, build
+
+## Evidence
+
+- 7 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat: add experimental Windows direct clipboard support, fix: cap remote clipboard fetch sizes
+
+---
+id: cc-clip-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Length
+
+## Action
+
+Write moderate-length commit messages (~50 characters)
+
+## Evidence
+
+- Average commit message length: 50 chars
+- Based on 7 commits
+
+---
+id: cc-clip-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: cc-clip-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cc-clip-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: cc-clip-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cc-clip-workflow-feature-development-with-tests
+trigger: "when doing feature development with tests"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Feature Development With Tests
+
+## Action
+
+Follow the feature-development-with-tests workflow:
+1. Edit or add implementation files in internal/*/*.go
+2. Edit or add corresponding test files in internal/*/*_test.go
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: internal/daemon/clipboard_windows.go, internal/daemon/clipboard_windows_test.go, internal/daemon/server.go
+
+---
+id: cc-clip-workflow-documentation-update-multilingual
+trigger: "when doing documentation update multilingual"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Documentation Update Multilingual
+
+## Action
+
+Follow the documentation-update-multilingual workflow:
+1. Edit main documentation files (README.md, SECURITY.md, docs/*.md)
+2. Edit translated documentation files (README.ja.md, README.zh-CN.md, etc.)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: README.md, README.ja.md, README.zh-CN.md
+
+---
+id: cc-clip-instinct-filename-snake-case
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Filename Snake Case
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in files: internal/daemon/clipboard_windows.go
+- internal/tunnel/fetch_test.go
+
+---
+id: cc-clip-instinct-function-camel-case
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Function Camel Case
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-class-pascal-case
+trigger: "When defining a new struct or class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Class Pascal Case
+
+## Action
+
+Use PascalCase for struct or class names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-constant-screaming-snake-case
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Constant Screaming Snake Case
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in Go codebase
+- Go language convention
+
+---
+id: cc-clip-instinct-import-relative
+trigger: "When importing modules in Go files"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Import Relative
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in Go codebase
+- Go import style
+
+---
+id: cc-clip-instinct-export-named
+trigger: "When exporting functions or types"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Export Named
+
+## Action
+
+Use named exports (export only what is needed, not default exports)
+
+## Evidence
+
+- Pattern in Go codebase
+- Go export style
+
+---
+id: cc-clip-instinct-test-file-location
+trigger: "When adding tests for a Go implementation file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test File Location
+
+## Action
+
+Place test files as *_test.go in the same folder as the implementation
+
+## Evidence
+
+- internal/daemon/clipboard_windows.go and internal/daemon/clipboard_windows_test.go
+- internal/tunnel/fetch.go and internal/tunnel/fetch_test.go
+
+---
+id: cc-clip-instinct-test-after-implementation
+trigger: "When adding or refactoring an implementation file in internal/*/*.go"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test After Implementation
+
+## Action
+
+Add or update a corresponding *_test.go file in the same folder
+
+## Evidence
+
+- feature-development-with-tests workflow
+- Commits: feat: add experimental Windows direct clipboard support + test: make Windows shell tests portable
+
+---
+id: cc-clip-instinct-commit-conventional-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Commit Conventional Format
+
+## Action
+
+Use the conventional commit format: <type>: <short description>
+
+## Evidence
+
+- Commits: feat: add experimental Windows direct clipboard support
+- fix: cap remote clipboard fetch sizes
+- docs: document Windows direct clipboard workflow
+
+---
+id: cc-clip-instinct-commit-prefix-types
+trigger: "When selecting a commit type"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Commit Prefix Types
+
+## Action
+
+Use one of the following prefixes: docs, feat, fix, test, build, refactor
+
+## Evidence
+
+- Commits: feat, fix, test, build, docs, refactor
+
+---
+id: cc-clip-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Commit Length
+
+## Action
+
+Keep the commit message summary around 50 characters
+
+## Evidence
+
+- Average commit message length: 50
+- Example commits
+
+---
+id: cc-clip-instinct-feature-dev-with-tests
+trigger: "When adding a new feature or refactoring a subsystem"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Feature Dev With Tests
+
+## Action
+
+Edit or add implementation files in internal/*/*.go and corresponding *_test.go files together
+
+## Evidence
+
+- feature-development-with-tests workflow
+- Paired changes in implementation and test files
+
+---
+id: cc-clip-instinct-docs-update-multilingual
+trigger: "When updating documentation for a new feature or clarification"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Docs Update Multilingual
+
+## Action
+
+Edit main documentation files (README.md, SECURITY.md, docs/*.md) and update translated docs (README.ja.md, README.zh-CN.md, etc.) together
+
+## Evidence
+
+- documentation-update-multilingual workflow
+- Commits updating README.md and README.ja.md
+
