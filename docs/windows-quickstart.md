@@ -3,6 +3,14 @@
 This guide is the shortest path for using `cc-clip` on a **Windows local
 machine** with remote Claude Code over SSH.
 
+Release boundary:
+
+- The default hotkey/send workflow is the released Windows workflow.
+- The direct RemoteForward/shim workflow is not included in the latest stable
+  release. Test it only from a source build of a commit that includes
+  this feature, or from a later prerelease/release whose changelog explicitly mentions
+  Windows direct clipboard support.
+
 ## Default: Hotkey Upload/Paste
 
 The default Windows workflow keeps the older, explicit mechanism:
@@ -42,14 +50,21 @@ exit
 
 ## Step 1: Install `cc-clip.exe`
 
-Run the Windows installer in PowerShell:
+For the released hotkey/send workflow, install a Windows release binary from
+[GitHub Releases](https://github.com/ShunmeiCho/cc-clip/releases), put
+`cc-clip.exe` in a stable directory such as
+`%USERPROFILE%\.local\bin`, and add that directory to your user `PATH`.
+
+If your release includes `scripts/install.ps1`, use the PowerShell installer:
 
 ```powershell
 irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
 ```
 
 It downloads the latest Windows zip, verifies `checksums.txt`, and installs
-`cc-clip.exe` to `%USERPROFILE%\.local\bin` by default.
+`cc-clip.exe` to `%USERPROFILE%\.local\bin` by default. Do not use the latest
+release installer to test the direct RemoteForward/shim path; that feature is
+not in the latest stable release.
 
 If you want a different install directory:
 
@@ -96,6 +111,9 @@ the host you want, or use separate hotkey configuration per workflow.
 
 ## Experimental: Direct Remote Clipboard
 
+This section is for source builds and future explicit prereleases only. It is
+not part of the latest stable release.
+
 The experimental Windows direct path tries to match the macOS/Linux model:
 
 ```text
@@ -107,7 +125,37 @@ daemon for clipboard text or image data through the SSH tunnel. This avoids
 choosing a host locally, but it depends on the remote app actually calling
 `xclip` or `wl-paste` in a supported shape.
 
-Enable it with:
+For source testing before a release, build the Windows binary and a remote
+Linux binary from a commit that includes this feature:
+
+```powershell
+$env:GOOS="windows"; $env:GOARCH="amd64"; go build -o .\dist\cc-clip-windows.exe .\cmd\cc-clip
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o .\dist\cc-clip-linux-amd64 .\cmd\cc-clip
+Remove-Item Env:GOOS, Env:GOARCH
+```
+
+Use the source-built Windows binary for the local daemon:
+
+```powershell
+.\dist\cc-clip-windows.exe service install
+```
+
+Make sure your SSH host has a RemoteForward:
+
+```ssh-config
+Host myserver
+    RemoteForward 18339 127.0.0.1:18339
+    ControlMaster no
+    ControlPath none
+```
+
+Deploy the source-built remote binary:
+
+```powershell
+.\dist\cc-clip-windows.exe connect myserver --claude --force --local-bin .\dist\cc-clip-linux-amd64
+```
+
+After a release containing this feature is published, the normal setup path is:
 
 ```powershell
 cc-clip setup myserver --claude
@@ -129,11 +177,11 @@ cc-clip status
 `which xclip` should resolve to `~/.local/bin/xclip` when the shim is first in
 `PATH`.
 
-Security note: only run direct setup against remote hosts you trust. The remote
-shim gets a bearer token that can request the current Windows clipboard text or
-image while the SSH tunnel is open. Images are capped at 20MB and text at 1MB
-by default (`CC_CLIP_MAX_IMAGE_MB` / `CC_CLIP_MAX_TEXT_MB`), but the token is
-still the access-control boundary.
+Security note: only run direct setup against remote hosts you trust. The daemon
+token lets the remote shim request the current Windows clipboard **text and
+image** content while the SSH tunnel is open. Images are capped at 20MB and text
+at 1MB by default (`CC_CLIP_MAX_IMAGE_MB` / `CC_CLIP_MAX_TEXT_MB`), but the
+token is still the access-control boundary.
 
 ### Experimental Stability Notes
 

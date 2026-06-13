@@ -34,6 +34,7 @@ cc-clip is designed with the following security principles:
 - **SSH tunnel:** All data between local and remote travels through the existing SSH connection
 - **Shim isolation:** The shim only intercepts specific `xclip` / `wl-paste` clipboard read patterns; unrelated calls pass through to the real binary unchanged
 - **Resource caps:** Clipboard images are capped at 20MB and clipboard text at 1MB by default (`CC_CLIP_MAX_IMAGE_MB` / `CC_CLIP_MAX_TEXT_MB`), and notification bodies at 64KB to reduce OOM and disk-fill exposure
+- **Windows direct-path scope:** The experimental Windows RemoteForward/shim path lets the remote shim request local Windows clipboard text as well as images while the SSH tunnel is open
 - **No persistent storage of clipboard data:** Clipboard data is served on-demand; Windows only keeps a short in-memory cache keyed by the OS clipboard sequence number
 
 ## Threat Model

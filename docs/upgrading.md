@@ -177,8 +177,10 @@ install -m 0755 cc-clip ~/.local/bin/cc-clip
 
 ## Windows upgrade
 
-`cc-clip update` does not support Windows yet. Use the PowerShell installer,
-or the manual zip path if you prefer to inspect the archive yourself.
+`cc-clip update` does not support Windows yet. Use the manual zip path for the
+latest stable release. The PowerShell installer applies to releases that include
+`scripts/install.ps1`; do not use the latest release installer to test
+unreleased direct RemoteForward/shim behavior.
 
 1. Stop any running cc-clip hotkey listener:
 
@@ -187,15 +189,17 @@ or the manual zip path if you prefer to inspect the archive yourself.
     # or kill the tray icon process, or log out of the Windows session
     ```
 
-2. Run the Windows installer:
+2. For a release that includes the Windows installer, run:
 
     ```powershell
     irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
     ```
 
-    It downloads the latest `cc-clip_<version>_windows_<arch>.zip`, verifies
+    It downloads `cc-clip_<version>_windows_<arch>.zip`, verifies
     `checksums.txt`, and replaces `cc-clip.exe` in
-    `%USERPROFILE%\.local\bin` by default.
+    `%USERPROFILE%\.local\bin` by default. If the feature you want is only in
+    an unreleased branch, build from source or wait for an explicit prerelease
+    tag instead of using the latest stable release.
 
     To install a specific version for rollback or pinning:
 
@@ -203,7 +207,7 @@ or the manual zip path if you prefer to inspect the archive yourself.
     $env:CC_CLIP_VERSION="v0.5.0"; irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
     ```
 
-    If you installed cc-clip somewhere else, pass the same directory:
+    If you installed cc-clip somewhere else, pass that directory:
 
     ```powershell
     $env:CC_CLIP_INSTALL_DIR="$HOME\bin"; irm https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.ps1 | iex
@@ -225,7 +229,9 @@ or the manual zip path if you prefer to inspect the archive yourself.
     cc-clip hotkey --status          # confirms the new version is registered
     ```
 
-    For the experimental direct shim workflow:
+    For the experimental direct shim workflow, only after installing a source
+    build or a release that explicitly contains Windows direct clipboard
+    support:
 
     ```powershell
     cc-clip service uninstall
@@ -233,9 +239,9 @@ or the manual zip path if you prefer to inspect the archive yourself.
     cc-clip service status
     ```
 
-5. If you opted into the experimental direct shim workflow, redeploy to every
-   remote host from Windows so the remote binary/shim matches the upgraded
-   local daemon:
+5. If you opted into the experimental direct shim workflow from a source build
+   or explicit prerelease, redeploy to every remote host from Windows so the
+   remote binary/shim matches the upgraded local daemon:
 
     ```powershell
     cc-clip connect myserver --claude --force
