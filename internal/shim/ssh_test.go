@@ -163,6 +163,56 @@ func TestSCPHostArgsInsertOptionSeparatorBeforePaths(t *testing.T) {
 	}
 }
 
+func TestWrapRemoteShell(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{
+			name: "simple command",
+			cmd:  "uname -sm",
+			want: `/bin/sh -c 'uname -sm'`,
+		},
+		{
+			name: "embedded single quotes use close-escape-reopen idiom",
+			cmd:  "echo 'hi'",
+			want: `/bin/sh -c 'echo '\''hi'\'''`,
+		},
+		{
+			// sh syntax that a fish login shell mis-parses (exit 127) must end up
+			// fully inside the single-quoted token, never bare on the command line.
+			name: "posix sh script is fully quoted",
+			cmd:  "set -e\n[ -L \"$HOME/x\" ] || exit 0",
+			want: "/bin/sh -c 'set -e\n[ -L \"$HOME/x\" ] || exit 0'",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WrapRemoteShell(tc.cmd); got != tc.want {
+				t.Errorf("WrapRemoteShell(%q)\n got: %q\nwant: %q", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSSHArgsWrapsRemoteCommandInPosixShell(t *testing.T) {
+	// The command sshd forwards to the login shell must be a single
+	// `/bin/sh -c '...'` token, so a non-POSIX login shell (fish) never parses
+	// sh syntax itself. Regression guard for fish-login-shell connect failures.
+	s := &SSHSession{host: "myhost", controlPath: "/tmp/cc-clip-ssh-test"}
+	cmd := "set -e\nmkdir -p ~/.cache/cc-clip"
+	args := s.sshArgs(cmd)
+
+	last := args[len(args)-1]
+	if want := WrapRemoteShell(cmd); last != want {
+		t.Fatalf("sshArgs last element\n got: %q\nwant: %q", last, want)
+	}
+	if !strings.HasPrefix(last, "/bin/sh -c '") {
+		t.Errorf("remote command not wrapped in /bin/sh -c: %q", last)
+	}
+}
+
 func TestGenerateNotificationNonce(t *testing.T) {
 	nonce, err := GenerateNotificationNonce()
 	if err != nil {

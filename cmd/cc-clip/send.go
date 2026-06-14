@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
+	"github.com/shunmei/cc-clip/internal/shim"
 )
 
 const defaultRemoteUploadDir = "~/.cache/cc-clip/uploads"
@@ -413,7 +414,7 @@ func sshNoForwardArgs(host, cmd string) []string {
 	return []string{
 		"-o", "ClearAllForwardings=yes",
 		"-o", "LogLevel=ERROR",
-		"--", host, cmd,
+		"--", host, shim.WrapRemoteShell(cmd),
 	}
 }
 

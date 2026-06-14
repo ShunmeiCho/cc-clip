@@ -121,14 +121,36 @@ func sshHostArgs(prefix []string, host string, remoteArgs ...string) []string {
 	return args
 }
 
+// WrapRemoteShell wraps cmd so the remote always runs it under POSIX /bin/sh,
+// independent of the user's login shell. OpenSSH hands a remote command string
+// to the login shell; a non-POSIX login shell (notably fish) mis-parses sh
+// syntax such as `set -e`, `$(...)`, `[ ... ]`, and bare `var=val`, which makes
+// `connect` fail with exit 127. Every cc-clip remote command is POSIX sh, so
+// forcing /bin/sh is behavior-preserving on bash/zsh logins and fixes fish (and
+// any other) login shell. The single-quote escaping in shSingleQuote is
+// interpreted identically by POSIX shells and fish, so the wrapper line itself
+// parses correctly no matter which shell sshd invokes.
+func WrapRemoteShell(cmd string) string {
+	return "/bin/sh -c " + shSingleQuote(cmd)
+}
+
+// shSingleQuote renders s as a single single-quoted shell token, escaping any
+// embedded single quote via the portable '\'' close-escape-reopen idiom.
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func scpUploadArgs(prefix []string, localPath, host, remotePath string) []string {
 	args := append([]string{}, prefix...)
 	args = append(args, "--", localPath, fmt.Sprintf("%s:%s", host, remotePath))
 	return args
 }
 
-func (s *SSHSession) sshArgs(remoteArgs ...string) []string {
-	return sshHostArgs(s.connArgs(), s.host, remoteArgs...)
+// sshArgs builds the ssh arg vector for a remote command over the master
+// connection. cmd is wrapped in WrapRemoteShell so it runs under POSIX /bin/sh
+// regardless of the remote login shell.
+func (s *SSHSession) sshArgs(cmd string) []string {
+	return sshHostArgs(s.connArgs(), s.host, WrapRemoteShell(cmd))
 }
 
 // Exec runs a command on the remote host via the SSH master connection.
