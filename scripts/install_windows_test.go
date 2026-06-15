@@ -58,6 +58,28 @@ func TestWindowsInstallScriptSupportsCCClipVersionPin(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallScriptPinsTLS12BeforeNetworkCalls(t *testing.T) {
+	data, err := os.ReadFile("install.ps1")
+	if err != nil {
+		t.Fatalf("read install.ps1: %v", err)
+	}
+	script := string(data)
+
+	tlsIdx := strings.Index(script, "[Net.ServicePointManager]::SecurityProtocol")
+	if tlsIdx == -1 {
+		t.Fatal("install.ps1 must pin TLS 1.2 or newer before network calls")
+	}
+	for _, needle := range []string{"Invoke-RestMethod", "Invoke-WebRequest"} {
+		callIdx := strings.Index(script, needle)
+		if callIdx == -1 {
+			t.Fatalf("install.ps1 must contain %q", needle)
+		}
+		if tlsIdx > callIdx {
+			t.Fatalf("install.ps1 must pin TLS before %s", needle)
+		}
+	}
+}
+
 func TestWindowsInstallScriptUsesWindowsZipReleaseContract(t *testing.T) {
 	data, err := os.ReadFile("install.ps1")
 	if err != nil {

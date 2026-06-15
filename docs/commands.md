@@ -76,8 +76,7 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | Fetch timeout | 5000ms | `CC_CLIP_FETCH_TIMEOUT_MS` |
 | Debug logs | off | `CC_CLIP_DEBUG=1` |
 
-> Size limits apply to the local daemon (`cc-clip serve`). The Codex path
-> (x11-bridge) keeps its own 20MB fetch cap on the remote side, so raising
-> `CC_CLIP_MAX_IMAGE_MB` above 20 only takes effect for the Claude Code shim path.
+> Size limits apply to the local daemon (`cc-clip serve`) and Go fetch clients
+> (`cc-clip paste`, x11-bridge) in the process where the env var is set.
 
 > `cc-clip --help` always shows the authoritative flag list for the installed version.

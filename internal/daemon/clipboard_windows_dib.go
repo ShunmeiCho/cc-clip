@@ -26,7 +26,7 @@ type cappedBuffer struct {
 
 func (b *cappedBuffer) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > b.limit {
-		return 0, fmt.Errorf("encoded image exceeds %dMB limit", maxImageMB())
+		return 0, clipboardOutputLimitError{msg: fmt.Sprintf("encoded image exceeds %dMB limit", maxImageMB())}
 	}
 	return b.Buffer.Write(p)
 }
@@ -66,22 +66,22 @@ func imageFromDIB(dib []byte) (image.Image, error) {
 		topDown = true
 		height = -height
 	}
-	if width > maxClipboardDIBSize/4 || height > maxClipboardDIBSize/4 || width*height > maxClipboardDIBSize/4 {
-		return nil, fmt.Errorf("DIB dimensions exceed limit")
+	maxPixels := int64(maxClipboardDIBSize / 4)
+	if int64(width) > maxPixels || int64(height) > maxPixels || int64(width)*int64(height) > maxPixels {
+		return nil, clipboardOutputLimitError{msg: "DIB dimensions exceed limit"}
 	}
 
 	planes := binary.LittleEndian.Uint16(dib[12:14])
 	bpp := int(binary.LittleEndian.Uint16(dib[14:16]))
 	compression := binary.LittleEndian.Uint32(dib[16:20])
-	clrUsed := uint32(0)
-	if len(dib) >= 36 {
-		clrUsed = binary.LittleEndian.Uint32(dib[32:36])
-	}
 	if planes != 1 {
 		return nil, fmt.Errorf("unsupported DIB planes %d", planes)
 	}
 	if compression != biRGB && compression != biBitFields {
 		return nil, fmt.Errorf("unsupported DIB compression %d", compression)
+	}
+	if bpp != 24 && bpp != 32 {
+		return nil, fmt.Errorf("unsupported DIB bit depth %d", bpp)
 	}
 
 	masks, masksBytes, err := dibMasks(dib, headerSize, bpp, compression)
@@ -90,13 +90,6 @@ func imageFromDIB(dib []byte) (image.Image, error) {
 	}
 
 	pixelOffset := headerSize + masksBytes
-	if bpp <= 8 {
-		colors := int(clrUsed)
-		if colors == 0 {
-			colors = 1 << bpp
-		}
-		pixelOffset += colors * 4
-	}
 	if pixelOffset < 0 || pixelOffset > len(dib) {
 		return nil, fmt.Errorf("invalid DIB pixel offset")
 	}

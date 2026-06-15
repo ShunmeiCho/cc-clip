@@ -149,7 +149,7 @@ func TestFetchImageRejectsOversizedContentLength(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", maxFetchImageSize+1))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", maxFetchImageSize()+1))
 	})
 
 	ts := newIPv4TestServer(t, mux)
@@ -165,12 +165,34 @@ func TestFetchImageRejectsOversizedContentLength(t *testing.T) {
 	}
 }
 
+func TestFetchImageUsesImageLimitEnv(t *testing.T) {
+	t.Setenv("CC_CLIP_MAX_IMAGE_MB", "1")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", 1*1024*1024+1))
+	})
+
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-token", 5*time.Second)
+	_, err := client.FetchImage(t.TempDir())
+	if err == nil {
+		t.Fatal("expected env-sized response to fail")
+	}
+	if !strings.Contains(err.Error(), "1MB limit") {
+		t.Fatalf("error = %q, want 1MB limit", err.Error())
+	}
+}
+
 func TestFetchImageRejectsOversizedStreamingBody(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		chunk := strings.Repeat("x", 1024)
-		for i := 0; i < (maxFetchImageSize/1024)+1; i++ {
+		for i := 0; i < (maxFetchImageSize()/1024)+1; i++ {
 			_, _ = io.WriteString(w, chunk)
 		}
 	})

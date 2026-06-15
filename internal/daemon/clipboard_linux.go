@@ -3,10 +3,15 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const clipboardTimeout = 5 * time.Second
 
 type linuxClipboard struct{}
 
@@ -57,19 +62,29 @@ func (c *linuxClipboard) Type() (ClipboardInfo, error) {
 func (c *linuxClipboard) ImageBytes() ([]byte, error) {
 	// Try xclip
 	if xclipPath, err := exec.LookPath("xclip"); err == nil {
-		cmd := exec.Command(xclipPath, "-selection", "clipboard", "-t", "image/png", "-o")
-		out, err := cmd.Output()
+		ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, xclipPath, "-selection", "clipboard", "-t", "image/png", "-o")
+		out, err := limitedCommandOutput(cmd, maxImageSize(), fmt.Sprintf("clipboard image exceeds %dMB limit", maxImageMB()))
 		if err == nil && len(out) > 0 {
 			return out, nil
+		}
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			return nil, err
 		}
 	}
 
 	// Try wl-paste
 	if wlPath, err := exec.LookPath("wl-paste"); err == nil {
-		cmd := exec.Command(wlPath, "--type", "image/png")
-		out, err := cmd.Output()
+		ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, wlPath, "--type", "image/png")
+		out, err := limitedCommandOutput(cmd, maxImageSize(), fmt.Sprintf("clipboard image exceeds %dMB limit", maxImageMB()))
 		if err == nil && len(out) > 0 {
 			return out, nil
+		}
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			return nil, err
 		}
 	}
 
@@ -78,18 +93,28 @@ func (c *linuxClipboard) ImageBytes() ([]byte, error) {
 
 func (c *linuxClipboard) Text() (string, error) {
 	if xclipPath, err := exec.LookPath("xclip"); err == nil {
-		cmd := exec.Command(xclipPath, "-selection", "clipboard", "-o")
-		out, err := cmd.Output()
+		ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, xclipPath, "-selection", "clipboard", "-o")
+		out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
 		if err == nil && len(out) > 0 {
 			return string(out), nil
+		}
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			return "", err
 		}
 	}
 
 	if wlPath, err := exec.LookPath("wl-paste"); err == nil {
-		cmd := exec.Command(wlPath, "--type", "text/plain")
-		out, err := cmd.Output()
+		ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, wlPath, "--type", "text/plain")
+		out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
 		if err == nil && len(out) > 0 {
 			return string(out), nil
+		}
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			return "", err
 		}
 	}
 

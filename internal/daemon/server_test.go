@@ -438,6 +438,26 @@ func TestClipboardImageTooLarge(t *testing.T) {
 	}
 }
 
+func TestClipboardImageSourceTooLarge(t *testing.T) {
+	clip := &mockClipboard{
+		clipType: ClipboardInfo{Type: ClipboardImage, Format: "png"},
+		imageErr: clipboardOutputLimitError{
+			msg: "clipboard image exceeds 20MB limit",
+		},
+	}
+	srv, tok := newTestServer(clip)
+
+	req := httptest.NewRequest("GET", "/clipboard/image", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("User-Agent", "cc-clip/0.1")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
 func TestClipboardTextReturnsData(t *testing.T) {
 	clip := &mockClipboard{
 		clipType: ClipboardInfo{Type: ClipboardText},
@@ -481,6 +501,26 @@ func TestClipboardTextTooLarge(t *testing.T) {
 	clip := &mockClipboard{
 		clipType: ClipboardInfo{Type: ClipboardText},
 		text:     strings.Repeat("x", maxTextSize()+1),
+	}
+	srv, tok := newTestServer(clip)
+
+	req := httptest.NewRequest("GET", "/clipboard/text", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("User-Agent", "cc-clip/0.1")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
+func TestClipboardTextSourceTooLarge(t *testing.T) {
+	clip := &mockClipboard{
+		clipType: ClipboardInfo{Type: ClipboardText},
+		textErr: clipboardOutputLimitError{
+			msg: "clipboard text exceeds 1MB limit",
+		},
 	}
 	srv, tok := newTestServer(clip)
 

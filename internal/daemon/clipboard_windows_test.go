@@ -5,8 +5,10 @@ package daemon
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 	"unicode/utf16"
 )
@@ -49,6 +51,99 @@ func TestImageFromDIB32BitAlphaZeroBecomesOpaque(t *testing.T) {
 		t.Fatalf("imageFromDIB returned error: %v", err)
 	}
 	assertPixel(t, img.At(0, 0), color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+}
+
+func TestImageFromDIB32BitBitFieldsNonDefaultMasks(t *testing.T) {
+	dib := make([]byte, 40+12+4)
+	writeDIBHeader(dib, 1, -1, 32, biBitFields)
+	binary.LittleEndian.PutUint32(dib[40:44], 0x000000ff) // red in low byte
+	binary.LittleEndian.PutUint32(dib[44:48], 0x0000ff00)
+	binary.LittleEndian.PutUint32(dib[48:52], 0x00ff0000)
+	copy(dib[52:], []byte{0x11, 0x22, 0x33, 0x00})
+
+	img, err := imageFromDIB(dib)
+	if err != nil {
+		t.Fatalf("imageFromDIB returned error: %v", err)
+	}
+	assertPixel(t, img.At(0, 0), color.NRGBA{R: 0x11, G: 0x22, B: 0x33, A: 255})
+}
+
+func TestImageFromDIBRejectsMalformed(t *testing.T) {
+	cases := []struct {
+		name      string
+		dib       []byte
+		want      string
+		wantLimit bool
+	}{
+		{
+			name: "short header",
+			dib:  make([]byte, 39),
+			want: "DIB too small",
+		},
+		{
+			name: "declared header beyond data",
+			dib:  dibWithHeaderSize(108),
+			want: "invalid DIB header size",
+		},
+		{
+			name: "zero width",
+			dib:  dibWithHeader(0, 1, 24, biRGB, 40),
+			want: "invalid DIB dimensions",
+		},
+		{
+			name: "zero height",
+			dib:  dibWithHeader(1, 0, 24, biRGB, 40),
+			want: "invalid DIB dimensions",
+		},
+		{
+			name:      "oversized dimensions",
+			dib:       dibWithHeader(20_000_000, 20_000_000, 24, biRGB, 40),
+			want:      "DIB dimensions exceed limit",
+			wantLimit: true,
+		},
+		{
+			name: "truncated pixels",
+			dib:  dibWithHeader(1, 1, 24, biRGB, 42),
+			want: "DIB pixel data truncated",
+		},
+		{
+			name: "truncated bitfield masks",
+			dib:  dibWithHeader(1, 1, 32, biBitFields, 40),
+			want: "DIB bitfield masks truncated",
+		},
+		{
+			name: "unsupported palettized depth",
+			dib:  dibWithHeader(1, 1, 8, biRGB, 40+4+4),
+			want: "unsupported DIB bit depth",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := imageFromDIB(tc.dib)
+			if err == nil {
+				t.Fatal("expected imageFromDIB to fail")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err.Error(), tc.want)
+			}
+			if tc.wantLimit && !errors.Is(err, errClipboardOutputTooLarge) {
+				t.Fatalf("error = %q, want errClipboardOutputTooLarge", err.Error())
+			}
+		})
+	}
+}
+
+func TestCappedBufferLimitWrapsSourceLimit(t *testing.T) {
+	var buf cappedBuffer
+	buf.limit = 1
+	_, err := buf.Write([]byte("xx"))
+	if err == nil {
+		t.Fatal("expected cappedBuffer write to fail")
+	}
+	if !errors.Is(err, errClipboardOutputTooLarge) {
+		t.Fatalf("error = %q, want errClipboardOutputTooLarge", err.Error())
+	}
 }
 
 func TestPNGFromDIBEncodesPNG(t *testing.T) {
@@ -150,6 +245,20 @@ func TestDecodeUnicodeClipboardTextStopsAtNUL(t *testing.T) {
 	}
 }
 
+func TestDecodeUnicodeClipboardTextRejectsOverLimitBeforeDecode(t *testing.T) {
+	data := make([]byte, (maxTextSize()+1)*2)
+	_, err := decodeUnicodeClipboardText(data)
+	if err == nil {
+		t.Fatal("expected oversized UTF-16 clipboard text to fail")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %q, want exceeds limit", err.Error())
+	}
+	if !errors.Is(err, errClipboardOutputTooLarge) {
+		t.Fatalf("error = %q, want errClipboardOutputTooLarge", err.Error())
+	}
+}
+
 func TestDecodeANSIClipboardTextStopsAtNUL(t *testing.T) {
 	got, err := decodeANSIClipboardText([]byte("hello\x00ignored"))
 	if err != nil {
@@ -160,6 +269,16 @@ func TestDecodeANSIClipboardTextStopsAtNUL(t *testing.T) {
 	}
 }
 
+func TestDecodeANSIClipboardTextRejectsOverLimit(t *testing.T) {
+	_, err := decodeANSIClipboardText(bytes.Repeat([]byte{'x'}, maxTextSize()+1))
+	if err == nil {
+		t.Fatal("expected oversized ANSI clipboard text to fail")
+	}
+	if !errors.Is(err, errClipboardOutputTooLarge) {
+		t.Fatalf("error = %q, want errClipboardOutputTooLarge", err.Error())
+	}
+}
+
 func writeDIBHeader(dib []byte, width, height int32, bpp uint16, compression uint32) {
 	binary.LittleEndian.PutUint32(dib[0:4], 40)
 	binary.LittleEndian.PutUint32(dib[4:8], uint32(width))
@@ -167,6 +286,18 @@ func writeDIBHeader(dib []byte, width, height int32, bpp uint16, compression uin
 	binary.LittleEndian.PutUint16(dib[12:14], 1)
 	binary.LittleEndian.PutUint16(dib[14:16], bpp)
 	binary.LittleEndian.PutUint32(dib[16:20], compression)
+}
+
+func dibWithHeader(width, height int32, bpp uint16, compression uint32, size int) []byte {
+	dib := make([]byte, size)
+	writeDIBHeader(dib, width, height, bpp, compression)
+	return dib
+}
+
+func dibWithHeaderSize(headerSize uint32) []byte {
+	dib := make([]byte, 40)
+	binary.LittleEndian.PutUint32(dib[0:4], headerSize)
+	return dib
 }
 
 func assertPixel(t *testing.T, got color.Color, want color.NRGBA) {

@@ -386,7 +386,7 @@ func TestFetchClipboardImageRejectsOversizedContentLength(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", maxFetchImageSize+1))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", maxFetchImageSize()+1))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -405,6 +405,36 @@ func TestFetchClipboardImageRejectsOversizedContentLength(t *testing.T) {
 	}
 }
 
+func TestFetchClipboardImageUsesImageLimitEnv(t *testing.T) {
+	t.Setenv("CC_CLIP_MAX_IMAGE_MB", "1")
+
+	tokenFile := writeTokenFile(t, "test-token")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /clipboard/image", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", 1*1024*1024+1))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	bridge := &Bridge{
+		port:       portFromURL(srv.URL),
+		tokenFile:  tokenFile,
+		httpClient: srv.Client(),
+	}
+	_, err := bridge.fetchClipboardImage()
+	if err == nil {
+		t.Fatal("expected env-sized response to fail")
+	}
+	if !strings.Contains(err.Error(), "1MB limit") {
+		t.Fatalf("error = %q, want 1MB limit", err.Error())
+	}
+}
+
 func TestFetchClipboardImageRejectsOversizedStreamingBody(t *testing.T) {
 	tokenFile := writeTokenFile(t, "test-token")
 	mux := http.NewServeMux()
@@ -415,7 +445,7 @@ func TestFetchClipboardImageRejectsOversizedStreamingBody(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "image/png")
 		chunk := []byte(strings.Repeat("x", 1024))
-		for i := 0; i < (maxFetchImageSize/1024)+1; i++ {
+		for i := 0; i < (maxFetchImageSize()/1024)+1; i++ {
 			_, _ = w.Write(chunk)
 		}
 	})

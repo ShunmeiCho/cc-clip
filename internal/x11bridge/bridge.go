@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,8 +33,21 @@ const (
 	// httpTimeout is the timeout for HTTP requests to the cc-clip daemon.
 	httpTimeout = 5 * time.Second
 
-	maxFetchImageSize = 20 * 1024 * 1024
+	defaultMaxFetchImageMB = 20
 )
+
+func maxFetchImageMB() int {
+	if env := os.Getenv("CC_CLIP_MAX_IMAGE_MB"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultMaxFetchImageMB
+}
+
+func maxFetchImageSize() int {
+	return maxFetchImageMB() * 1024 * 1024
+}
 
 // Option configures a Bridge.
 type Option func(*Bridge)
@@ -541,16 +555,18 @@ func (b *Bridge) fetchClipboardImage() ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
-	if resp.ContentLength > maxFetchImageSize {
-		return nil, fmt.Errorf("image exceeds 20MB limit")
+	limit := int64(maxFetchImageSize())
+	limitMB := maxFetchImageMB()
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("image exceeds %dMB limit", limitMB)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchImageSize+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("image download failed: %w", err)
 	}
-	if len(data) > maxFetchImageSize {
-		return nil, fmt.Errorf("image exceeds 20MB limit")
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("image exceeds %dMB limit", limitMB)
 	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("image fetch returned empty")

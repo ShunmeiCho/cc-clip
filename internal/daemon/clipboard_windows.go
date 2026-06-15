@@ -90,13 +90,13 @@ func (c *windowsClipboard) ImageBytes() ([]byte, error) {
 	}
 	defer closeClipboard()
 
-	if data, ok, err := readClipboardGlobalBytes(registeredPNGFormat(), int64(maxImageSize())); ok || err != nil {
+	if data, ok, err := readClipboardGlobalBytes(registeredPNGFormat(), int64(maxImageSize()), fmt.Sprintf("clipboard image exceeds %dMB limit", maxImageMB())); ok || err != nil {
 		if err == nil {
 			c.storeCachedImage(seq, "png", data)
 		}
 		return data, err
 	}
-	if data, ok, err := readClipboardGlobalBytes(cfDIBV5, maxClipboardDIBSize); ok || err != nil {
+	if data, ok, err := readClipboardGlobalBytes(cfDIBV5, maxClipboardDIBSize, "clipboard DIB image exceeds 80MB limit"); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +106,7 @@ func (c *windowsClipboard) ImageBytes() ([]byte, error) {
 		}
 		return pngData, err
 	}
-	if data, ok, err := readClipboardGlobalBytes(cfDIB, maxClipboardDIBSize); ok || err != nil {
+	if data, ok, err := readClipboardGlobalBytes(cfDIB, maxClipboardDIBSize, "clipboard DIB image exceeds 80MB limit"); ok || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +264,7 @@ func registeredPNGFormat() uint32 {
 	return uint32(r1)
 }
 
-func readClipboardGlobalBytes(format uint32, maxBytes int64) ([]byte, bool, error) {
+func readClipboardGlobalBytes(format uint32, maxBytes int64, tooLargeMsg string) ([]byte, bool, error) {
 	if !clipboardFormatAvailable(format) {
 		return nil, false, nil
 	}
@@ -277,7 +277,7 @@ func readClipboardGlobalBytes(format uint32, maxBytes int64) ([]byte, bool, erro
 		return nil, true, fmt.Errorf("GlobalSize(%d) failed: %v", format, err)
 	}
 	if size > uintptr(maxBytes) {
-		return nil, true, fmt.Errorf("clipboard image exceeds limit")
+		return nil, true, clipboardOutputLimitError{msg: tooLargeMsg}
 	}
 	ptr, _, err := procGlobalLock.Call(h)
 	if ptr == 0 {

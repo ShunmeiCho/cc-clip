@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -487,6 +488,10 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 
 	data, err := s.clipboard.ImageBytes()
 	if err != nil {
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -552,6 +557,10 @@ func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
 
 	text, err := s.clipboard.Text()
 	if err != nil {
+		if errors.Is(err, errClipboardOutputTooLarge) {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

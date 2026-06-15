@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,7 +60,10 @@ func (c *darwinClipboard) Type() (ClipboardInfo, error) {
 
 	// Check for text via pbpaste
 	cmd := exec.CommandContext(ctx, "pbpaste")
-	out, err := cmd.Output()
+	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
+	if errors.Is(err, errClipboardOutputTooLarge) {
+		return ClipboardInfo{Type: ClipboardText}, nil
+	}
 	if err != nil {
 		return ClipboardInfo{Type: ClipboardEmpty}, nil
 	}
@@ -79,7 +83,7 @@ func (c *darwinClipboard) ImageBytes() ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, pngpastePath, "-")
-	out, err := cmd.Output()
+	out, err := limitedCommandOutput(cmd, maxImageSize(), fmt.Sprintf("clipboard image exceeds %dMB limit", maxImageMB()))
 	if err != nil {
 		return nil, fmt.Errorf("no image in clipboard: %w", err)
 	}
@@ -94,7 +98,7 @@ func (c *darwinClipboard) Text() (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "pbpaste")
-	out, err := cmd.Output()
+	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
 	if err != nil {
 		return "", fmt.Errorf("no text in clipboard: %w", err)
 	}
