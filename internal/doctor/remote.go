@@ -117,7 +117,7 @@ func classifyRemoteTokenCheck(out string, err error) CheckResult {
 // Doctor checks should inspect the existing tunnel, not compete with it by opening a new one.
 func remoteExecNoForward(host string, args ...string) (string, error) {
 	cmdStr := strings.Join(args, " ")
-	cmd := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, cmdStr)
+	cmd := exec.Command("ssh", "-o", "ClearAllForwardings=yes", "--", host, shim.WrapRemoteShell(cmdStr))
 	hideConsoleWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err

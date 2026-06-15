@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/shunmei/cc-clip/internal/shim"
 )
 
 func TestParseSendArgsTreatsTrailingImagePathAsFileWithDefaultHost(t *testing.T) {
@@ -306,14 +308,16 @@ func TestRemoteHomeProbeCmdEmbedsSentinelsAndReadsHome(t *testing.T) {
 // TestSSHNoForwardArgsSuppressesBannerAndForwarding pins the shared ssh argv
 // builder used by every cc-clip ssh call. LogLevel=ERROR suppresses the
 // post-quantum banner (#80) at the source, ClearAllForwardings=yes keeps a
-// user's global RemoteForward from triggering, and `--` terminates option
-// parsing before the host so a dash-leading host can never be read as a flag.
+// user's global RemoteForward from triggering, `--` terminates option parsing
+// before the host so a dash-leading host can never be read as a flag, and the
+// remote command is wrapped in /bin/sh -c so a non-POSIX login shell (fish)
+// never parses sh syntax itself.
 func TestSSHNoForwardArgsSuppressesBannerAndForwarding(t *testing.T) {
 	got := sshNoForwardArgs("myserver", "echo hi")
 	want := []string{
 		"-o", "ClearAllForwardings=yes",
 		"-o", "LogLevel=ERROR",
-		"--", "myserver", "echo hi",
+		"--", "myserver", shim.WrapRemoteShell("echo hi"),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("sshNoForwardArgs(\"myserver\", \"echo hi\") = %#v, want %#v", got, want)

@@ -18,7 +18,7 @@ var noForwardPrefix = []string{"-o", "ClearAllForwardings=yes"}
 
 // detectRemoteArchArgs builds the ssh arg vector for DetectRemoteArch.
 func detectRemoteArchArgs(host string) []string {
-	return sshHostArgs(noForwardPrefix, host, "uname -sm")
+	return sshHostArgs(noForwardPrefix, host, WrapRemoteShell("uname -sm"))
 }
 
 // uploadBinaryScpArgs builds the scp arg vector for UploadBinary.
@@ -28,18 +28,18 @@ func uploadBinaryScpArgs(host, localBin, remoteBin string) []string {
 
 // uploadBinaryChmodArgs builds the ssh chmod arg vector for UploadBinary.
 func uploadBinaryChmodArgs(host, remoteBin string) []string {
-	return sshHostArgs(noForwardPrefix, host, fmt.Sprintf("chmod +x %s", remoteBin))
+	return sshHostArgs(noForwardPrefix, host, WrapRemoteShell(fmt.Sprintf("chmod +x %s", remoteBin)))
 }
 
 // remoteExecArgs builds the ssh arg vector for RemoteExec.
 func remoteExecArgs(host, cmdStr string) []string {
-	return sshHostArgs(noForwardPrefix, host, cmdStr)
+	return sshHostArgs(noForwardPrefix, host, WrapRemoteShell(cmdStr))
 }
 
 // writeRemoteTokenArgs builds the ssh arg vector for WriteRemoteToken.
 func writeRemoteTokenArgs(host string) []string {
 	return sshHostArgs(noForwardPrefix, host,
-		"mkdir -p ~/.cache/cc-clip && cat > ~/.cache/cc-clip/session.token && chmod 600 ~/.cache/cc-clip/session.token")
+		WrapRemoteShell("mkdir -p ~/.cache/cc-clip && cat > ~/.cache/cc-clip/session.token && chmod 600 ~/.cache/cc-clip/session.token"))
 }
 
 // DetectRemoteArch returns the remote system's GOARCH-compatible architecture string.
