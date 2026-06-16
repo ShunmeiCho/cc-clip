@@ -155,6 +155,29 @@ Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
 - **Screenshot to clipboard:** `Cmd + Shift + Ctrl + 4` (select area) or `Cmd + Shift + Ctrl + 3` (full screen)
 - **Copy from an app:** Right-click an image → Copy Image
 
+## Clipboard-History Manager "Paste" Button Bypasses cc-clip
+
+**Symptom:** You copied an image, but pasting it into remote Claude Code / Codex
+via a clipboard-history manager's **"Paste to <terminal>"** button inserts the
+image's file *path* as text instead of the image. cc-clip never seems to fire.
+
+**Cause:** This is a usage gotcha, not a cc-clip failure. Clipboard-history
+managers (Raycast, Maccy, Paste) "Paste to <app>" buttons inject the file path as
+text — they do **not** trigger the agent's own clipboard read. cc-clip only
+serves the clipboard when the agent itself reads it, via the xclip shim (Claude
+Code) or arboard (Codex). A manager that types a path on your behalf goes around
+that read entirely.
+
+**Fix:** Paste with the **agent's own `Ctrl+V`**, after copying the image as
+**raw image data** (not a file reference):
+
+- Take a fresh screenshot to the clipboard (`Cmd + Shift + Ctrl + 4` /
+  `Cmd + Shift + Ctrl + 3`), or right-click an image → **Copy Image**.
+- In the remote Claude Code / Codex session, press `Ctrl+V` directly.
+
+Do **not** use the clipboard manager's paste button for images — it never hands
+the raw image to the agent, so cc-clip is never asked for it.
+
 ## Setup Fails: "killed" During Re-Deployment
 
 **Symptom:** `cc-clip setup` was working before, but now shows `zsh: killed` when re-running.

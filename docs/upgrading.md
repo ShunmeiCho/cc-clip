@@ -55,6 +55,27 @@ upgrade an existing host:
 - **New targets:** `--opencode`, `--agy` (Antigravity), and an explicit
   `--claude`. `--all` selects every target.
 
+### Coming from a v0.9.0 beta?
+
+If you opted into a `v0.9.0-beta.x` prerelease, moving to stable `v0.9.0` is a
+non-event: stable v0.9.0 ships the **same feature set** as the beta prereleases.
+There is no beta-to-stable breaking change.
+
+- **`cc-clip update` moves you to v0.9.0.** The updater compares your installed
+  tag against the latest stable release. A `v0.9.0-beta.x` tag is *not* equal to
+  `v0.9.0`, so `cc-clip update` treats stable v0.9.0 as newer and upgrades.
+- **If you pinned the beta, drop the pin.** If you installed with
+  `CC_CLIP_VERSION=v0.9.0-beta.x`, run the next install/update without that env
+  var so you track the latest stable `v*` tag again.
+- **If `cc-clip update` hits a GitHub API rate limit**, use the pinned install
+  one-liner instead (it goes through the install script, which does not need the
+  `/releases/latest` API call):
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh \
+      | CC_CLIP_VERSION=v0.9.0 sh
+    ```
+
 Otherwise the upgrade is the normal forward path below: update the local binary,
 then redeploy each remote with `--force`. Downgrading back across the v0.9.0
 boundary is **not lossless** — see
@@ -108,7 +129,7 @@ Pick the archive matching your OS and arch from
 <https://github.com/ShunmeiCho/cc-clip/releases/latest>, then:
 
 ```sh
-V=0.6.1   # latest version without the v prefix
+V=0.9.0   # latest version without the v prefix
 OS=darwin         # or linux
 ARCH=arm64        # or amd64
 
