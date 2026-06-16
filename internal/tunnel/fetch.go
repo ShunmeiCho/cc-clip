@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
@@ -23,6 +24,20 @@ var (
 )
 
 const defaultUserAgent = "cc-clip/0.1"
+const defaultMaxFetchImageMB = 20
+
+func maxFetchImageMB() int {
+	if env := os.Getenv("CC_CLIP_MAX_IMAGE_MB"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultMaxFetchImageMB
+}
+
+func maxFetchImageSize() int {
+	return maxFetchImageMB() * 1024 * 1024
+}
 
 type Client struct {
 	baseURL    string
@@ -87,6 +102,11 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("fetch image failed: %s", resp.Status)
 	}
+	limit := int64(maxFetchImageSize())
+	limitMB := maxFetchImageMB()
+	if resp.ContentLength > limit {
+		return "", fmt.Errorf("fetch image failed: response exceeds %dMB limit", limitMB)
+	}
 
 	if err := os.MkdirAll(outDir, 0700); err != nil {
 		return "", fmt.Errorf("failed to create output dir: %w", err)
@@ -110,10 +130,16 @@ func (c *Client) FetchImage(outDir string) (string, error) {
 		return "", fmt.Errorf("failed to create image file: %w", err)
 	}
 
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	n, err := io.Copy(f, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
 		f.Close()
 		os.Remove(outPath)
 		return "", fmt.Errorf("failed to write image file: %w", err)
+	}
+	if n > limit {
+		f.Close()
+		os.Remove(outPath)
+		return "", fmt.Errorf("fetch image failed: response exceeds %dMB limit", limitMB)
 	}
 
 	// Flush to disk and surface any deferred write errors (e.g. ENOSPC) that

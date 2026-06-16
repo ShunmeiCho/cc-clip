@@ -34,6 +34,8 @@ jobs:
           # (-F is literal match: the pattern contains ${...} / . which are
           #  regex metacharacters — -F keeps this robust across grep flavors.)
           grep -Fq 'cc-clip_${VERSION#v}_${PLATFORM}.tar.gz' scripts/install.sh
+          # Windows installer must expect the matching zip artifact.
+          grep -Fq '$archiveName = "cc-clip_$($version.TrimStart("v"))_${platform}.zip"' scripts/install.ps1
           # goreleaser archives must default to tar.gz (darwin/linux); windows
           # uses the `formats: [zip]` override in the same block. Schema is the
           # plural GoReleaser v2 form introduced in PR #33.

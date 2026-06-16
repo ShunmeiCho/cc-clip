@@ -20,6 +20,7 @@ import (
 	"github.com/shunmei/cc-clip/internal/install"
 	"github.com/shunmei/cc-clip/internal/session"
 	"github.com/shunmei/cc-clip/internal/shim"
+	"github.com/shunmei/cc-clip/internal/testshell"
 	"github.com/shunmei/cc-clip/internal/token"
 )
 
@@ -149,15 +150,13 @@ type testRemoteSession struct {
 }
 
 func (s *testRemoteSession) Exec(cmd string) (string, error) {
-	c := exec.Command("bash", "-c", cmd)
-	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	c := testshell.Command(s.home, cmd)
 	out, err := c.Output()
 	return strings.TrimSpace(string(out)), err
 }
 
 func (s *testRemoteSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
-	c := exec.Command("bash", "-c", cmd)
-	c.Env = append(os.Environ(), "HOME="+s.home, "PATH=/usr/bin:/bin")
+	c := testshell.Command(s.home, cmd)
 	c.Stdin = stdin
 	out, err := c.CombinedOutput()
 	return string(out), err
@@ -949,13 +948,12 @@ func TestPostGenericNotificationDeliversExpectedPayload(t *testing.T) {
 		t.Fatalf("failed to write nonce file: %v", err)
 	}
 
-	oldHome := os.Getenv("HOME")
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("failed to set HOME: %v", err)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if drive := filepath.VolumeName(home); drive != "" {
+		t.Setenv("HOMEDRIVE", drive)
+		t.Setenv("HOMEPATH", strings.TrimPrefix(home[len(drive):], `\`))
 	}
-	defer func() {
-		_ = os.Setenv("HOME", oldHome)
-	}()
 
 	msg := daemon.GenericMessagePayload{
 		Title:    "Build complete",
@@ -1059,6 +1057,10 @@ func (c *testClipboard) Type() (daemon.ClipboardInfo, error) {
 
 func (c *testClipboard) ImageBytes() ([]byte, error) {
 	return nil, nil
+}
+
+func (c *testClipboard) Text() (string, error) {
+	return "", nil
 }
 
 // extractPort extracts the port number from an httptest server URL.

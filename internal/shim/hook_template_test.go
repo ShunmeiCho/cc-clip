@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,9 @@ func TestHookScriptDoesNotUseSessionToken(t *testing.T) {
 }
 
 func TestHookScriptKeepsNonceOutOfCurlArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash integration path semantics are covered on Unix platforms")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -90,6 +94,9 @@ func TestHookScriptKeepsNonceOutOfCurlArgv(t *testing.T) {
 }
 
 func TestHookScriptKeepsPayloadOutOfCurlArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash integration path semantics are covered on Unix platforms")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -156,6 +163,9 @@ func TestHookScriptDoesNotInterpolateHostIntoPythonSource(t *testing.T) {
 }
 
 func TestHookScriptHandlesHostAliasWithSingleQuoteSafely(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash integration path semantics are covered on Unix platforms")
+	}
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}

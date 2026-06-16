@@ -45,6 +45,8 @@ release-preflight: test vet
 		|| { echo "FAIL: name_template drift in .goreleaser.yaml"; exit 1; }
 	@grep -Fq 'cc-clip_$${VERSION#v}_$${PLATFORM}.tar.gz' scripts/install.sh \
 		|| { echo "FAIL: scripts/install.sh archive name drift"; exit 1; }
+	@grep -Fq '$$archiveName = "cc-clip_$$($$version.TrimStart("v"))_$${platform}.zip"' scripts/install.ps1 \
+		|| { echo "FAIL: scripts/install.ps1 archive name drift"; exit 1; }
 	@grep -Fq 'formats: [tar.gz]' .goreleaser.yaml \
 		|| { echo "FAIL: .goreleaser.yaml no longer declares formats: [tar.gz]"; exit 1; }
 	@grep -Fq 'formats: [zip]' .goreleaser.yaml \

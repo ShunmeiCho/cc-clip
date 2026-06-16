@@ -65,9 +65,10 @@ When running Claude Code, Codex CLI, or opencode on a remote server via SSH, **i
 ```text
 Image paste:
   Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim        → Claude Code
-  Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP    → remote file path  → Claude Code
+  Claude Code (Windows): Windows clipboard → hotkey/send    → SSH upload → remote file path  → Claude Code
+  Windows direct (unreleased): Windows clipboard → cc-clip daemon → SSH tunnel → xclip shim → Claude Code
   Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb   → Codex CLI
-  opencode:              Mac clipboard     → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
+  opencode:              local clipboard   → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
 
 Notifications (Claude Code + Codex CLI + opencode + Antigravity):
   Claude Code hook → cc-clip-hook → SSH tunnel → local daemon → macOS/cmux notification
@@ -117,7 +118,12 @@ Follow the dedicated guide:
 
 - [Windows Quick Start](docs/windows-quickstart.md)
 
-> **Windows support is experimental.** v0.6.0 ships the hotkey-conflict validation fix; clipboard persistence hardening is still being verified on real Windows hosts (tracked in [#30](https://github.com/ShunmeiCho/cc-clip/pull/30)).
+> **Windows support is experimental.** The default Windows workflow remains the
+> explicit `send`/`hotkey` upload path. The SSH RemoteForward + remote shim
+> path is not included in the latest stable release. Test it only
+> from a source build of a commit that includes this feature, or from a later
+> prerelease/release whose changelog explicitly mentions Windows direct clipboard
+> support.
 
 On macOS / Linux, add `~/.local/bin` to your PATH if prompted:
 
@@ -167,7 +173,7 @@ Pick the row that matches your remote workflow. These are the only decisions you
 | Claude Code + Codex CLI | `cc-clip setup myserver --all` | Claude shim **plus** Codex (Xvfb + x11-bridge) | ✅ **Yes** — same Xvfb requirement as `--codex` |
 | opencode | `cc-clip setup myserver` (paste); add `--opencode` for idle notifications | xclip / wl-paste shim, plus opencode-notify when `--opencode` is set | ❌ No |
 | Antigravity (agy) | `cc-clip setup myserver --agy` | agy-notify plugin (notify-only) | ❌ No |
-| Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | different workflow — do not use `--codex` | ❌ No |
+| Windows local machine | See [Windows Quick Start](docs/windows-quickstart.md) | hotkey/send upload path by default; unreleased direct remote shim path is source/prerelease testing only | ❌ No |
 
 > **Upgrading from v0.8.x?** `--codex` changed meaning. In v0.8.x it added Codex **on top of** the Claude shim; in **v0.9.0** it installs **Codex only**. To get both Claude and Codex on one host, use `--all`. Full notes: [Upgrading from v0.8.x to v0.9.0](docs/upgrading.md#upgrading-from-v08x-to-v090).
 
@@ -196,7 +202,9 @@ You do not need to understand any of this to use Codex paste — it's listed so 
   <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows demo" width="720">
 </p>
 
-Note: the Windows workflow is orthogonal to `--codex`. The Windows local machine uploads images via SCP; there is no Xvfb path on the local side.
+Note: Windows defaults to the hotkey/upload workflow. The Windows guide
+documents the SSH RemoteForward + remote shim workflow as an unreleased
+experimental option for source/prerelease testing only.
 
 </details>
 
@@ -278,21 +286,23 @@ graph LR
     end
 
     subgraph win ["Local Windows"]
-        J["Clipboard"] --> K["cc-clip hotkey / send"]
+        J["Clipboard"] --> N["cc-clip hotkey / send<br/>(default)"]
+        J -. "experimental direct" .-> K["cc-clip daemon<br/>127.0.0.1:18339"]
     end
 
     subgraph remote ["Remote Linux"]
         F["Claude Code"] -- "Ctrl+V" --> E["xclip / wl-paste shim"]
         M["opencode"] -- "Ctrl+V" --> E
         E -- "curl" --> D["127.0.0.1:18339"]
-        K -- "ssh/scp upload" --> L["~/.cache/cc-clip/uploads"]
-        L -- "paste path" --> F
+        N -- "ssh upload + paste path" --> L["~/.cache/cc-clip/uploads"]
+        L -- "remote image path" --> F
         G["Codex CLI"] -- "Ctrl+V / arboard" --> H["Xvfb CLIPBOARD"]
         H -- "SelectionRequest" --> I["x11-bridge"]
         I -- "HTTP" --> D
     end
 
     C == "SSH RemoteForward" ==> D
+    K -. "experimental SSH RemoteForward" .-> D
 
     style local fill:#1a1a2e,stroke:#e94560,color:#eee
     style remote fill:#1a1a2e,stroke:#0f3460,color:#eee
@@ -302,11 +312,12 @@ graph LR
     style M fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
-1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback, and the remote `xclip` / `wl-paste` shim fetches images through the SSH tunnel
-2. **opencode path:** same shim as the Claude Code path — opencode reads the clipboard through `xclip` (X11) or `wl-paste` (Wayland), so cc-clip's shim transparently serves the Mac clipboard without any opencode-specific configuration
-3. **Windows Claude path:** the local hotkey reads your Windows clipboard, uploads the image over SSH/SCP, and pastes the remote file path into the active terminal
-4. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11 (via the `arboard` crate, which cannot be shim-intercepted like `xclip`)
-5. **Notification path:** remote Claude Code hooks and Codex notify pipe events through `cc-clip-hook` → SSH tunnel → local daemon → macOS Notification Center or cmux
+1. **macOS Claude path:** the local daemon reads your Mac clipboard via `pbpaste` / `pngpaste`, serves clipboard data over HTTP on loopback, and the remote `xclip` / `wl-paste` shim fetches text or images through the SSH tunnel
+2. **opencode path:** same shim as the Claude Code path — opencode reads the clipboard through `xclip` (X11) or `wl-paste` (Wayland), so cc-clip's shim transparently serves the local clipboard without any opencode-specific configuration
+3. **Windows default path:** the local `hotkey` / `send --paste` flow reads your Windows clipboard, uploads the image over SSH, pastes the remote file path into the active terminal, and restores the image clipboard afterward
+4. **Windows experimental direct path:** the local daemon reads your Windows clipboard through native Win32 clipboard APIs, serves text or images over HTTP on loopback, and the remote `xclip` / `wl-paste` shim fetches clipboard data through the SSH tunnel. This path is not included in the latest stable release.
+5. **Codex CLI path:** x11-bridge claims CLIPBOARD ownership on a headless Xvfb, serves images on-demand when Codex reads the clipboard via X11 (via the `arboard` crate, which cannot be shim-intercepted like `xclip`)
+6. **Notification path:** remote Claude Code hooks, Codex notify, opencode idle, and Antigravity stop events flow through `cc-clip-hook` / `cc-clip notify` / plugin → SSH tunnel → local daemon → macOS Notification Center or cmux
 
 ## SSH Notifications
 
@@ -341,9 +352,13 @@ Full setup, adapter details, manual fallback, nonce registration, and troublesho
 | Notification auth | Dedicated nonce per-connect session (separate from clipboard token) |
 | Args hygiene | Neither the auth token nor the hook payload appears in command-line args (token via stdin, payload via a temp file) |
 | Notification trust | Hook notifications marked `verified`; generic JSON shows `[unverified]` prefix |
-| Transparency | Non-image calls pass through to real `xclip` unchanged |
+| Transparency | Managed clipboard reads are intercepted; unrelated `xclip` / `wl-paste` calls pass through |
 
 On a shared remote host, loopback is still shared by local users on that host. The token file is written `0600`, but cc-clip does not try to protect you from other users who can read your files, ptrace your processes, or otherwise act as your Unix account. See [SECURITY.md](SECURITY.md) for the explicit threat model.
+
+For the Windows direct RemoteForward/shim path, the daemon token lets the remote
+shim request the current local Windows clipboard **text and image** content
+while the SSH tunnel is open. Use that path only with trusted remote hosts.
 
 ## Daily Usage
 
@@ -364,13 +379,19 @@ The local daemon runs as a macOS launchd service and starts automatically on log
 
 ### Windows workflow
 
-On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore provides a Windows-native workflow that does not depend on remote clipboard interception.
+On Windows, the default workflow is the explicit hotkey/upload path. It is less
+magical than the macOS/Linux direct shim model, but it is more predictable
+across Windows Terminal, tmux, SSH clients, and Windows clipboard providers.
 
 For first-time setup and day-to-day usage, use:
 
 - [Windows Quick Start](docs/windows-quickstart.md)
 
-The Windows workflow uses a dedicated remote-paste hotkey (default: `Alt+Shift+V`) so it does not collide with local Claude Code's native `Alt+V`.
+That guide documents the Windows direct RemoteForward + `xclip`/`wl-paste` shim
+path as an unreleased experimental option for source/prerelease testing only.
+Do not rely on it as the default until it has more real-world coverage across
+Windows versions and clipboard providers. The daemon token lets the remote shim
+request local Windows clipboard text and images while the SSH tunnel is open.
 
 ## Commands
 
@@ -406,7 +427,7 @@ All settings have sensible defaults. Override via environment variables. Full li
 | Local | Remote | Status |
 |-------|--------|--------|
 | macOS (Apple Silicon / Intel) | Linux (amd64/arm64) | Stable |
-| Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
+| Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey` default; direct shim path unreleased/source/prerelease only) |
 
 ### Supported Remote CLIs
 
@@ -427,7 +448,7 @@ cc-clip works with **any coding agent that reads the clipboard via `xclip` or `w
 
 **Local (Windows):** Windows 10/11 with PowerShell, `ssh`, and `scp` available in `PATH`
 
-**Remote:** Linux with SSH access, `curl`, `bash`, and at least one clipboard backend: `xclip` for X11 consumers or `wl-paste` for Wayland consumers. The macOS tunnel/shim path is auto-configured by `cc-clip connect`; the Windows upload/hotkey path uses SSH/SCP directly.
+**Remote:** Linux with SSH access, `curl`, `bash`, and at least one clipboard backend: `xclip` for X11 consumers or `wl-paste` for Wayland consumers. The macOS tunnel/shim path is auto-configured by `cc-clip setup` / `cc-clip connect`; the Windows tunnel/shim path is unreleased and experimental, and the Windows upload/hotkey path remains the default.
 
 **Remote (Codex targets `--codex` / `--all`):** Additionally requires `Xvfb`. Auto-installed if passwordless sudo is available, otherwise: `sudo apt install xvfb` (Debian/Ubuntu) or `sudo dnf install xorg-x11-server-Xvfb` (RHEL/Fedora).
 

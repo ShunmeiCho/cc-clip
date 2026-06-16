@@ -19,4 +19,5 @@ type ClipboardInfo struct {
 type ClipboardReader interface {
 	Type() (ClipboardInfo, error)
 	ImageBytes() ([]byte, error)
+	Text() (string, error)
 }

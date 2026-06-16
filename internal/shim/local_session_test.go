@@ -2,9 +2,10 @@ package shim
 
 import (
 	"io"
-	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/shunmei/cc-clip/internal/testshell"
 )
 
 // localSession is a SessionExecutor that runs commands locally via bash -c
@@ -15,15 +16,13 @@ type localSession struct {
 }
 
 func (l *localSession) Exec(cmd string) (string, error) {
-	c := exec.Command("bash", "-c", cmd)
-	c.Env = append(c.Env, "HOME="+l.home, "PATH=/usr/bin:/bin")
+	c := testshell.Command(l.home, cmd)
 	out, err := c.Output() // stdout only, matches *SSHSession.Exec semantics
 	return strings.TrimSpace(string(out)), err
 }
 
 func (l *localSession) ExecWithStdin(cmd string, stdin io.Reader) (string, error) {
-	c := exec.Command("bash", "-c", cmd)
-	c.Env = append(c.Env, "HOME="+l.home, "PATH=/usr/bin:/bin")
+	c := testshell.Command(l.home, cmd)
 	c.Stdin = stdin
 	out, err := c.CombinedOutput() // combined, matches *SSHSession.ExecWithStdin
 	return string(out), err

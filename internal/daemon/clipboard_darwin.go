@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,7 +19,7 @@ const clipboardTimeout = 5 * time.Second
 // in launchd environments where PATH doesn't include Homebrew directories.
 var pngpasteFallbackPaths = []string{
 	"/opt/homebrew/bin/pngpaste", // Apple Silicon Homebrew
-	"/usr/local/bin/pngpaste",   // Intel Homebrew
+	"/usr/local/bin/pngpaste",    // Intel Homebrew
 }
 
 type darwinClipboard struct{}
@@ -59,7 +60,10 @@ func (c *darwinClipboard) Type() (ClipboardInfo, error) {
 
 	// Check for text via pbpaste
 	cmd := exec.CommandContext(ctx, "pbpaste")
-	out, err := cmd.Output()
+	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
+	if errors.Is(err, errClipboardOutputTooLarge) {
+		return ClipboardInfo{Type: ClipboardText}, nil
+	}
 	if err != nil {
 		return ClipboardInfo{Type: ClipboardEmpty}, nil
 	}
@@ -79,7 +83,7 @@ func (c *darwinClipboard) ImageBytes() ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, pngpastePath, "-")
-	out, err := cmd.Output()
+	out, err := limitedCommandOutput(cmd, maxImageSize(), fmt.Sprintf("clipboard image exceeds %dMB limit", maxImageMB()))
 	if err != nil {
 		return nil, fmt.Errorf("no image in clipboard: %w", err)
 	}
@@ -87,4 +91,19 @@ func (c *darwinClipboard) ImageBytes() ([]byte, error) {
 		return nil, fmt.Errorf("clipboard image is empty")
 	}
 	return out, nil
+}
+
+func (c *darwinClipboard) Text() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "pbpaste")
+	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
+	if err != nil {
+		return "", fmt.Errorf("no text in clipboard: %w", err)
+	}
+	if len(out) == 0 {
+		return "", fmt.Errorf("clipboard text is empty")
+	}
+	return string(out), nil
 }

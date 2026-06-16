@@ -3,6 +3,7 @@ package setup
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -216,6 +217,9 @@ func TestEnsureSSHConfig_CreatesBackup(t *testing.T) {
 }
 
 func TestEnsureSSHConfig_BackupFailureAbortsBeforeMutation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory chmod write-denial is POSIX-specific")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root bypasses directory permission checks")
 	}
@@ -272,7 +276,8 @@ func TestEnsureSSHConfig_BackupModeIs0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup not created: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		perm := info.Mode().Perm()
 		t.Fatalf("backup mode = %o, want 0600", perm)
 	}
 }
