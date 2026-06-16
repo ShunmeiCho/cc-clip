@@ -505,7 +505,9 @@ if printf '%%s\n' "$stripped" | awk '
   in_section == 0 && /^[[:space:]]*(notify|"notify"|'"'"'notify'"'"')[[:space:]]*=/ { found = 1 }
   END { exit !found }
 '; then
-  echo "existing top-level notify setting found in $config -- refusing to inject duplicate. Remove or comment out the top-level notify line first ([agents.X].notify is fine)" >&2
+  # Fold the refusal reason to stdout (2>&1) so it survives RemoteExecutor.Exec,
+  # which captures only stdout. Without this the caller sees a bare "exit status 7".
+  { echo "existing top-level notify setting found in $config -- refusing to inject duplicate. Remove or comment out the top-level notify line first ([agents.X].notify is fine)" >&2; } 2>&1
   exit 7
 fi
 
@@ -529,7 +531,10 @@ mv "$tmp" "$config"
 trap - EXIT
 `, sedEscape(markerStart), sedEscape(markerEnd), managedBlock)
 
-	if _, err := session.Exec(script); err != nil {
+	if out, err := session.Exec(script); err != nil {
+		if reason := strings.TrimSpace(out); reason != "" {
+			return fmt.Errorf("failed to inject notify config into ~/.codex/config.toml: %s: %w", reason, err)
+		}
 		return fmt.Errorf("failed to inject notify config into ~/.codex/config.toml: %w", err)
 	}
 

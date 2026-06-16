@@ -446,8 +446,16 @@ func TestEnsureRemoteCodexNotifyConfigRefusesUserNotify(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
 	writeTestCodexConfig(t, s.home, `notify = ["custom", "notify"]`)
 
-	if err := EnsureRemoteCodexNotifyConfig(s, 18339); err == nil {
+	err := EnsureRemoteCodexNotifyConfig(s, 18339)
+	if err == nil {
 		t.Fatal("EnsureRemoteCodexNotifyConfig should refuse an existing user notify setting")
+	}
+	// The refusal reason is written to the injection script's stderr then
+	// exit 7. RemoteExecutor.Exec captures only stdout, so the reason must be
+	// folded to stdout (2>&1) on the refusal path and surfaced in the wrapped
+	// error. Otherwise the user sees only an opaque "exit status 7".
+	if !strings.Contains(err.Error(), "existing top-level notify setting found") {
+		t.Fatalf("error must carry the refusal reason, got: %v", err)
 	}
 }
 
