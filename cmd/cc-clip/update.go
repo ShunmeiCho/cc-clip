@@ -445,13 +445,39 @@ func displayVersion(v string) string {
 	return v
 }
 
-func fetchLatestReleaseTag(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", updateAPIURL+"/latest", nil)
+// newReleaseRequest builds a GET request for the GitHub releases API with the
+// standard Accept and User-Agent headers. When a GitHub token is present in the
+// environment it adds an Authorization header, lifting the unauthenticated
+// 60/hr rate limit to 5000/hr so repeated `cc-clip update` runs (common behind
+// a shared NAT) do not hit 403s. GITHUB_TOKEN takes priority over GH_TOKEN; an
+// empty/unset token leaves the request unauthenticated (unchanged behavior).
+func newReleaseRequest(ctx context.Context, url string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "cc-clip-updater")
+	if token := githubToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req, nil
+}
+
+// githubToken returns the GitHub API token from the environment, preferring
+// GITHUB_TOKEN over GH_TOKEN, or "" when neither is set to a non-empty value.
+func githubToken() string {
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("GH_TOKEN")
+}
+
+func fetchLatestReleaseTag(ctx context.Context) (string, error) {
+	req, err := newReleaseRequest(ctx, updateAPIURL+"/latest")
+	if err != nil {
+		return "", err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
@@ -852,11 +878,21 @@ func printPostUpdateReminders(targetTag, binaryPath string, serviceRestarted boo
 	// never regress into silence.
 	printed := printPerHostRedeployReminders()
 	if !printed {
-		fmt.Println("* Redeploy to every remote host you use with cc-clip:")
-		fmt.Println("    cc-clip connect <host> --force")
-		fmt.Println("    cc-clip connect <host> --codex --force   # if you use Codex CLI there")
+		fallbackRedeployReminder(os.Stdout)
 	}
 
 	fmt.Println()
 	fmt.Printf("cc-clip %s installed at %s.\n", strings.TrimPrefix(targetTag, "v"), binaryPath)
+}
+
+// fallbackRedeployReminder writes the generic post-update redeploy block used
+// when the host registry is empty (fresh install, or `cc-clip update` from a
+// pre-registry build). Since v0.9.0 `--codex` is Codex-ONLY and no longer
+// installs the Claude shim, so the Codex line defaults to `--all --force` to
+// preserve the Claude shim, noting that Codex-only users can use
+// `--codex --force` instead.
+func fallbackRedeployReminder(w io.Writer) {
+	fmt.Fprintln(w, "* Redeploy to every remote host you use with cc-clip:")
+	fmt.Fprintln(w, "    cc-clip connect <host> --force")
+	fmt.Fprintln(w, "    cc-clip connect <host> --all --force   # if you use Codex CLI there (Codex-only: --codex --force)")
 }

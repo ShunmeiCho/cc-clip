@@ -1,12 +1,31 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
+
+// TestFallbackRedeployReminder pins the generic redeploy block printed when the
+// host registry is empty. Since v0.9.0 `--codex` is Codex-ONLY (it no longer
+// installs the Claude shim), so the Codex line must default to `--all --force`
+// to preserve the Claude shim, with a note that Codex-only users can use
+// `--codex --force` instead.
+func TestFallbackRedeployReminder(t *testing.T) {
+	var buf bytes.Buffer
+	fallbackRedeployReminder(&buf)
+	got := buf.String()
+	want := "* Redeploy to every remote host you use with cc-clip:\n" +
+		"    cc-clip connect <host> --force\n" +
+		"    cc-clip connect <host> --all --force   # if you use Codex CLI there (Codex-only: --codex --force)\n"
+	if got != want {
+		t.Errorf("fallback reminder mismatch\ngot:\n%q\nwant:\n%q", got, want)
+	}
+}
 
 // TestReleaseArchiveName pins the exact filename the updater expects at
 // `<release>/cc-clip_<version>_<os>_<arch>.tar.gz`. If this shape ever
@@ -109,6 +128,60 @@ func TestNormalizeReleaseTag(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Errorf("normalizeReleaseTag(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewReleaseRequestAuth verifies that newReleaseRequest attaches an
+// Authorization header only when a GitHub token env var is present. An
+// authenticated request lifts the GitHub API rate limit from 60/hr to
+// 5000/hr, which dodges the 403s users hit when `cc-clip update` is run
+// repeatedly behind a shared NAT.
+func TestNewReleaseRequestAuth(t *testing.T) {
+	cases := []struct {
+		name        string
+		githubToken string
+		ghToken     string
+		setGithub   bool
+		setGh       bool
+		wantAuth    string // "" means the header must be absent
+	}{
+		{name: "no token unsets header", wantAuth: ""},
+		{name: "github token set", githubToken: "ght_abc", setGithub: true, wantAuth: "Bearer ght_abc"},
+		{name: "gh token set", ghToken: "gh_xyz", setGh: true, wantAuth: "Bearer gh_xyz"},
+		{name: "github token wins over gh", githubToken: "ght_abc", ghToken: "gh_xyz", setGithub: true, setGh: true, wantAuth: "Bearer ght_abc"},
+		{name: "empty github falls through to gh", githubToken: "", ghToken: "gh_xyz", setGithub: true, setGh: true, wantAuth: "Bearer gh_xyz"},
+		{name: "both empty unsets header", githubToken: "", ghToken: "", setGithub: true, setGh: true, wantAuth: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// t.Setenv restores the prior value automatically.
+			if tc.setGithub {
+				t.Setenv("GITHUB_TOKEN", tc.githubToken)
+			} else {
+				os.Unsetenv("GITHUB_TOKEN")
+			}
+			if tc.setGh {
+				t.Setenv("GH_TOKEN", tc.ghToken)
+			} else {
+				os.Unsetenv("GH_TOKEN")
+			}
+
+			req, err := newReleaseRequest(context.Background(), "https://example.test/x")
+			if err != nil {
+				t.Fatalf("newReleaseRequest error: %v", err)
+			}
+			if got := req.Header.Get("Authorization"); got != tc.wantAuth {
+				t.Errorf("Authorization = %q, want %q", got, tc.wantAuth)
+			}
+			// Unconditional headers must always be present so the seam never
+			// regresses the existing request shape.
+			if got := req.Header.Get("Accept"); got != "application/vnd.github+json" {
+				t.Errorf("Accept = %q, want application/vnd.github+json", got)
+			}
+			if got := req.Header.Get("User-Agent"); got != "cc-clip-updater" {
+				t.Errorf("User-Agent = %q, want cc-clip-updater", got)
 			}
 		})
 	}
