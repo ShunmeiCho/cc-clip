@@ -153,7 +153,7 @@ func TestDeduperDifferentMessagesNotMerged(t *testing.T) {
 	}
 }
 
-func TestDeduperNilGenericMessagePassesThrough(t *testing.T) {
+func TestDeduperImageTransferDedup(t *testing.T) {
 	d := NewDeduper(15 * time.Second)
 	now := time.Unix(1000, 0)
 
@@ -161,21 +161,28 @@ func TestDeduperNilGenericMessagePassesThrough(t *testing.T) {
 		Kind:   KindImageTransfer,
 		Source: "clipboard",
 		ImageTransfer: &ImageTransferPayload{
-			SessionID: "abc",
-			Seq:       1,
-			Format:    "png",
+			SessionID:   "abc",
+			Seq:         1,
+			Fingerprint: "deadbeef",
+			Format:      "png",
 		},
 	}
 
 	allowed, merged := d.AllowAt(env, now)
 	if !allowed || merged != nil {
-		t.Fatal("envelope without GenericMessage should always pass")
+		t.Fatal("first image transfer should pass")
 	}
 
-	// Second identical should also pass (no GenericMessage to dedup on)
-	allowed, merged = d.AllowAt(env, now.Add(1*time.Second))
+	// Second identical fingerprint within window should be suppressed
+	allowed, _ = d.AllowAt(env, now.Add(1*time.Second))
+	if allowed {
+		t.Fatal("repeated image transfer with same fingerprint should be suppressed within dedup window")
+	}
+
+	// After the window expires, same fingerprint should pass again
+	allowed, merged = d.AllowAt(env, now.Add(17*time.Second))
 	if !allowed || merged != nil {
-		t.Fatal("envelope without GenericMessage should always pass, even repeated")
+		t.Fatal("image transfer should pass after dedup window expires")
 	}
 }
 

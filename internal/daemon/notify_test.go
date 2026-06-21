@@ -431,20 +431,20 @@ func TestDuplicateDetectionViaNotification(t *testing.T) {
 		srv.mux.ServeHTTP(w, req)
 	}
 
+	// Only the first fetch should produce a notification; the second
+	// has the same fingerprint within the dedup window and is suppressed.
 	deadline := time.Now().Add(2 * time.Second)
-	for notifier.count.Load() < 2 && time.Now().Before(deadline) {
+	for notifier.count.Load() < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
+	time.Sleep(100 * time.Millisecond)
 
-	if notifier.count.Load() != 2 {
-		t.Fatalf("expected 2 notifications, got %d", notifier.count.Load())
+	if notifier.count.Load() != 1 {
+		t.Fatalf("expected 1 notification (duplicate suppressed), got %d", notifier.count.Load())
 	}
 
 	evt := notifier.last.Load().(NotifyEvent)
-	if evt.Seq != 2 {
-		t.Errorf("expected seq 2, got %d", evt.Seq)
-	}
-	if evt.DuplicateOf != 1 {
-		t.Errorf("expected duplicate of seq 1, got %d", evt.DuplicateOf)
+	if evt.Seq != 1 {
+		t.Errorf("expected seq 1, got %d", evt.Seq)
 	}
 }
