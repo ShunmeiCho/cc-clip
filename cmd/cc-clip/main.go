@@ -764,7 +764,12 @@ func runConnect(opts connectOpts) {
 	fmt.Println("[N0] Checking for v0.7.0 wrapper corruption...")
 	state, diag, err := shim.DetectV070State(session)
 	if err != nil {
-		log.Fatalf("      N0 detection failed: %v", err)
+		// Detection failed (e.g. minimal container missing head/readlink/grep).
+		// The v0.7.0 bug only affects existing installs — a fresh remote can't
+		// be corrupted. Warn and continue rather than blocking setup entirely.
+		fmt.Printf("      N0 detection skipped: %v\n", err)
+		state = shim.V070NotCorrupted
+		diag = "detection_skipped"
 	}
 	switch state {
 	case shim.V070NotCorrupted:
