@@ -4,10 +4,10 @@ export PS1='$ '
 
 case "$1" in
   title)
-    echo "# cc-clip: Paste images into remote Claude Code over SSH"
+    echo "# cc-clip: Paste images into remote AI coding sessions over SSH"
     ;;
   install)
-    echo "cc-clip v0.4.0 installed to ~/.local/bin/cc-clip"
+    echo "cc-clip v0.9.0 installed to ~/.local/bin/cc-clip"
     ;;
   setup)
     sleep 0.1; echo "[1/4] Checking SSH config... done"

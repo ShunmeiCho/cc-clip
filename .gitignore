@@ -21,6 +21,9 @@ AGENTS.md
 .claude/
 .playwright-mcp/
 .understand-anything/
+docs/marketing/hyperframes/.agents/
+docs/marketing/hyperframes/AGENTS.md
+docs/marketing/hyperframes/CLAUDE.md
 
 # Local planning scratch files (use docs/ for anything worth keeping)
 /findings.md

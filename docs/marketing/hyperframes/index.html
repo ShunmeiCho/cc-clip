@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>cc-clip Promo</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #11100e;
+        color: #f7f0e6;
+        font-family: sans-serif;
+      }
+
+      #promo {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #11100e;
+      }
+
+      .hero-bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.6;
+        transform: scale(1.03);
+      }
+
+      .scrim {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 26% 24%, rgba(217, 119, 6, 0.22), transparent 24%),
+          radial-gradient(circle at 76% 60%, rgba(20, 184, 166, 0.16), transparent 28%),
+          linear-gradient(90deg, rgba(17, 16, 14, 0.95), rgba(17, 16, 14, 0.42) 48%, rgba(17, 16, 14, 0.88));
+      }
+
+      .grid {
+        position: absolute;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(247, 240, 230, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(247, 240, 230, 0.05) 1px, transparent 1px);
+        background-size: 96px 96px;
+        mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.8), transparent 78%);
+      }
+
+      .beam {
+        position: absolute;
+        left: 520px;
+        right: 420px;
+        top: 500px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #d97706 22%, #f7c46b 50%, #14b8a6 78%, transparent);
+        box-shadow: 0 0 18px rgba(217, 119, 6, 0.78);
+        opacity: 0.78;
+        transform-origin: center;
+      }
+
+      .beam.two {
+        top: 532px;
+        opacity: 0.46;
+        filter: blur(3px);
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        padding: 118px 132px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 34px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .brand img {
+        width: 74px;
+        height: 74px;
+        object-fit: contain;
+      }
+
+      .brand-name {
+        font-size: 34px;
+        font-weight: 800;
+        line-height: 1;
+      }
+
+      .kicker {
+        color: #d97706;
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1.2;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 940px;
+        font-size: 104px;
+        font-weight: 850;
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 760px;
+        color: #d9d0c4;
+        font-size: 34px;
+        line-height: 1.28;
+        font-weight: 500;
+      }
+
+      .proof-row {
+        display: flex;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .proof-card,
+      .node,
+      .target-chip,
+      .command-strip {
+        border: 1px solid rgba(247, 240, 230, 0.16);
+        background: rgba(29, 27, 24, 0.72);
+        backdrop-filter: blur(16px);
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+      }
+
+      .proof-card {
+        width: 356px;
+        min-height: 178px;
+        border-radius: 8px;
+        padding: 28px;
+      }
+
+      .proof-card strong {
+        display: block;
+        margin-bottom: 16px;
+        color: #f7f0e6;
+        font-size: 24px;
+        line-height: 1.16;
+      }
+
+      .proof-card span {
+        color: #b7afa3;
+        font-size: 20px;
+        line-height: 1.35;
+      }
+
+      .demo-shell {
+        position: absolute;
+        right: 130px;
+        top: 154px;
+        width: 900px;
+        height: 470px;
+        border-radius: 8px;
+        border: 1px solid rgba(247, 240, 230, 0.18);
+        background: rgba(10, 10, 10, 0.74);
+        box-shadow: 0 30px 100px rgba(0, 0, 0, 0.52);
+        overflow: hidden;
+      }
+
+      .demo-video {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .demo-label {
+        position: absolute;
+        right: 154px;
+        top: 654px;
+        display: flex;
+        gap: 12px;
+      }
+
+      .step-pill {
+        min-width: 130px;
+        border-radius: 8px;
+        padding: 13px 18px;
+        color: #f7f0e6;
+        background: rgba(217, 119, 6, 0.2);
+        border: 1px solid rgba(217, 119, 6, 0.48);
+        font-family: monospace;
+        font-size: 19px;
+        text-align: center;
+      }
+
+      .flow {
+        position: absolute;
+        left: 132px;
+        right: 132px;
+        top: 355px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 26px;
+        align-items: center;
+      }
+
+      #scene-flow {
+        justify-content: flex-start;
+        padding-top: 116px;
+      }
+
+      #scene-flow h1 {
+        max-width: 1180px;
+        font-size: 72px;
+        line-height: 1.04;
+      }
+
+      .node {
+        min-height: 188px;
+        border-radius: 8px;
+        padding: 28px;
+      }
+
+      .node-number {
+        color: #d97706;
+        font-family: monospace;
+        font-size: 20px;
+        margin-bottom: 34px;
+      }
+
+      .node-title {
+        font-size: 28px;
+        font-weight: 800;
+        line-height: 1.12;
+      }
+
+      .node-detail {
+        margin-top: 12px;
+        color: #b7afa3;
+        font-size: 18px;
+        line-height: 1.32;
+      }
+
+      .target-row {
+        position: absolute;
+        left: 132px;
+        right: 132px;
+        bottom: 174px;
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+      }
+
+      .target-chip {
+        border-radius: 8px;
+        padding: 16px 22px;
+        color: #f7f0e6;
+        font-size: 22px;
+        font-weight: 700;
+      }
+
+      .target-chip.notify {
+        color: #b7afa3;
+        border-color: rgba(20, 184, 166, 0.35);
+      }
+
+      .cta {
+        align-items: center;
+        text-align: center;
+        gap: 28px;
+      }
+
+      .cta h2 {
+        margin: 0;
+        max-width: 980px;
+        font-size: 82px;
+        font-weight: 850;
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .cta-copy {
+        max-width: 860px;
+        color: #d9d0c4;
+        font-size: 31px;
+        line-height: 1.26;
+        font-weight: 500;
+      }
+
+      .command-strip {
+        width: 980px;
+        border-radius: 8px;
+        padding: 22px 28px;
+        color: #f7f0e6;
+        font-family: monospace;
+        font-size: 24px;
+        line-height: 1.35;
+        text-align: left;
+      }
+
+      .url {
+        color: #14b8a6;
+        font-size: 27px;
+        font-weight: 700;
+      }
+
+      .quiet-note {
+        color: #b7afa3;
+        font-size: 19px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="promo"
+      data-composition-id="cc-clip-promo"
+      data-start="0"
+      data-duration="24"
+      data-width="1920"
+      data-height="1080"
+    >
+      <img class="hero-bg" src="assets/cc-clip-ssh-clipboard-hero.png" alt="" />
+      <div class="scrim"></div>
+      <div class="grid" data-layout-ignore></div>
+      <div class="beam"></div>
+      <div class="beam two"></div>
+
+      <section id="scene-hook" class="scene">
+        <div class="brand">
+          <img src="assets/cc-clip-logo.png" alt="" />
+          <div>
+            <div class="brand-name">cc-clip</div>
+            <div class="kicker">remote AI coding over SSH</div>
+          </div>
+        </div>
+        <h1>Screenshots should cross SSH too.</h1>
+        <div class="lead">
+          Paste local images into remote Claude Code, Codex CLI, and opencode
+          sessions without manual upload detours.
+        </div>
+      </section>
+
+      <section id="scene-proof" class="scene">
+        <div class="kicker">the workflow problem</div>
+        <h1>Local image. Remote agent. One paste.</h1>
+        <div class="proof-row">
+          <div class="proof-card">
+            <strong>Your screenshot stays local.</strong>
+            <span>The remote Linux session cannot see the Mac clipboard by default.</span>
+          </div>
+          <div class="proof-card">
+            <strong>cc-clip bridges only the needed path.</strong>
+            <span>A local daemon and SSH RemoteForward carry image data on demand.</span>
+          </div>
+          <div class="proof-card">
+            <strong>The remote tool keeps its normal paste flow.</strong>
+            <span>Shims and bridges serve the clipboard reads the agent already makes.</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="scene-demo" class="scene">
+        <div class="kicker">demo</div>
+        <h1>Install. Setup. Paste.</h1>
+        <div class="lead">
+          A stable `v0.9.0` path for the common macOS to remote Linux workflow.
+        </div>
+      </section>
+
+      <div id="demo-shell" class="demo-shell">
+        <video
+          id="quick-demo"
+          class="clip demo-video"
+          data-start="7"
+          data-duration="7.5"
+          data-track-index="1"
+          data-media-start="0"
+          src="assets/demo-quick.mp4"
+          muted
+          playsinline
+        ></video>
+      </div>
+      <div id="demo-label" class="demo-label">
+        <div class="step-pill">install</div>
+        <div class="step-pill">setup</div>
+        <div class="step-pill">paste</div>
+      </div>
+
+      <section id="scene-flow" class="scene">
+        <div class="kicker">how it works</div>
+        <h1>One tunnel, narrow clipboard intent.</h1>
+      </section>
+      <div id="flow" class="flow">
+        <div class="node">
+          <div class="node-number">01</div>
+          <div class="node-title">Local clipboard</div>
+          <div class="node-detail">Image copied on your Mac.</div>
+        </div>
+        <div class="node">
+          <div class="node-number">02</div>
+          <div class="node-title">cc-clip daemon</div>
+          <div class="node-detail">Serves image bytes on loopback.</div>
+        </div>
+        <div class="node">
+          <div class="node-number">03</div>
+          <div class="node-title">SSH tunnel</div>
+          <div class="node-detail">RemoteForward carries the request.</div>
+        </div>
+        <div class="node">
+          <div class="node-number">04</div>
+          <div class="node-title">Remote agent</div>
+          <div class="node-detail">Paste resolves through the expected clipboard path.</div>
+        </div>
+      </div>
+      <div id="targets" class="target-row">
+        <div class="target-chip">Claude Code</div>
+        <div class="target-chip">Codex CLI</div>
+        <div class="target-chip">opencode</div>
+        <div class="target-chip notify">Antigravity notifications</div>
+      </div>
+
+      <section id="scene-cta" class="scene cta">
+        <div class="brand">
+          <div>
+            <div class="brand-name">cc-clip v0.9.0</div>
+            <div class="kicker">open source SSH clipboard bridge</div>
+          </div>
+        </div>
+        <h2>Paste images over SSH for remote AI coding.</h2>
+        <div class="cta-copy">
+          Small tool, narrow scope: image paste for Claude Code, Codex CLI, and
+          opencode; notifications for all four targets.
+        </div>
+        <div class="command-strip">curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh</div>
+        <div class="url">github.com/ShunmeiCho/cc-clip</div>
+        <div class="quiet-note">Independent project. Not an official integration.</div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      const tl = gsap.timeline({
+        paused: true,
+        defaults: { ease: "power3.out" },
+      });
+
+      gsap.set(["#scene-proof", "#scene-demo", "#demo-shell", "#demo-label", "#scene-flow", "#flow", "#targets", "#scene-cta"], {
+        opacity: 0,
+        y: 36,
+      });
+
+      tl.from(".hero-bg", { scale: 1.09, opacity: 0, duration: 1.1 }, 0);
+      tl.from(".brand", { y: 24, opacity: 0, duration: 0.55 }, 0.25);
+      tl.from("#scene-hook h1", { y: 36, opacity: 0, duration: 0.68 }, 0.42);
+      tl.from("#scene-hook .lead", { y: 26, opacity: 0, duration: 0.58 }, 0.72);
+      tl.to(".beam", { scaleX: 1.08, opacity: 0.92, duration: 2.4, repeat: 9, yoyo: true, ease: "sine.inOut" }, 0);
+
+      tl.to("#scene-hook", { opacity: 0, y: -30, duration: 0.45, ease: "power2.in" }, 3.55);
+      tl.to("#scene-proof", { opacity: 1, y: 0, duration: 0.58 }, 3.95);
+      tl.from("#scene-proof .proof-card", { y: 34, opacity: 0, duration: 0.55, stagger: 0.1 }, 4.35);
+      tl.to("#scene-proof", { opacity: 0, y: -26, duration: 0.42, ease: "power2.in" }, 6.55);
+      tl.set("#scene-proof", { opacity: 0 }, 7.0);
+
+      tl.to("#scene-demo", { opacity: 1, y: 0, duration: 0.5 }, 6.85);
+      tl.to("#demo-shell", { opacity: 1, y: 0, duration: 0.55 }, 7.05);
+      tl.to("#demo-label", { opacity: 1, y: 0, duration: 0.42 }, 7.35);
+      tl.from("#demo-label .step-pill", { y: 22, opacity: 0, duration: 0.38, stagger: 0.12 }, 7.48);
+      tl.to(["#scene-demo", "#demo-shell", "#demo-label"], { opacity: 0, y: -26, duration: 0.48, ease: "power2.in" }, 14.15);
+
+      tl.to("#scene-flow", { opacity: 1, y: 0, duration: 0.52 }, 14.45);
+      tl.to("#flow", { opacity: 1, y: 0, duration: 0.5 }, 14.85);
+      tl.from("#flow .node", { y: 44, opacity: 0, duration: 0.55, stagger: 0.13 }, 15.05);
+      tl.to("#targets", { opacity: 1, y: 0, duration: 0.45 }, 16.5);
+      tl.from("#targets .target-chip", { y: 20, opacity: 0, duration: 0.36, stagger: 0.09 }, 16.62);
+      tl.to(["#scene-flow", "#flow", "#targets"], { opacity: 0, y: -24, duration: 0.45, ease: "power2.in" }, 19.15);
+
+      tl.to("#scene-cta", { opacity: 1, y: 0, duration: 0.62 }, 19.55);
+      tl.from("#scene-cta h2", { y: 28, opacity: 0, duration: 0.58 }, 19.85);
+      tl.from("#scene-cta .cta-copy", { y: 22, opacity: 0, duration: 0.5 }, 20.22);
+      tl.from("#scene-cta .command-strip", { y: 24, opacity: 0, duration: 0.48 }, 20.62);
+      tl.from("#scene-cta .url", { y: 18, opacity: 0, duration: 0.42 }, 20.95);
+      tl.from("#scene-cta .quiet-note", { opacity: 0, duration: 0.4 }, 21.25);
+
+      window.__timelines["cc-clip-promo"] = tl;
+    </script>
+  </body>
+</html>

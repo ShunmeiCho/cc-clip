@@ -1,7 +1,7 @@
 #!/bin/bash
 case "$1" in
   install)
-    echo "cc-clip v0.4.0 installed to ~/.local/bin/cc-clip"
+    echo "cc-clip v0.9.0 installed to ~/.local/bin/cc-clip"
     ;;
   setup)
     echo "[1/4] Checking SSH config... done"
@@ -11,7 +11,7 @@ case "$1" in
     echo ""
     echo "Setup complete! Paste images from your local clipboard."
     echo ""
-    echo "# Copy image on Mac/Windows -> Ctrl+V in remote Claude Code"
+    echo "# Copy image on Mac -> Ctrl+V in remote Claude Code"
     echo "# Clipboard works over SSH now."
     ;;
 esac
