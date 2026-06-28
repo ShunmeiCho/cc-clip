@@ -1,0 +1,390 @@
+# Instincts generated from https://github.com/ShunmeiCho/cc-clip
+# Generated: 2026-06-28T11:27:10.469Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cc-clip-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, docs
+
+## Evidence
+
+- 3 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix(update): redeploy reminder defaults to --all; authenticate /releases/latest with GITHUB_TOKEN, docs: v0.9.0 beta->stable upgrade note, clipboard-manager troubleshooting, refresh stale example
+
+---
+id: cc-clip-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Length
+
+## Action
+
+Write moderate-length commit messages (~90 characters)
+
+## Evidence
+
+- Average commit message length: 90 chars
+- Based on 3 commits
+
+---
+id: cc-clip-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: cc-clip-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cc-clip-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: cc-clip-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cc-clip-workflow-code-change-with-corresponding-tests
+trigger: "when doing code change with corresponding tests"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Code Change With Corresponding Tests
+
+## Action
+
+Follow the code-change-with-corresponding-tests workflow:
+1. Edit implementation file(s) to add or fix functionality.
+2. Edit or add corresponding test file(s) to cover the changes.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: cmd/cc-clip/update.go, cmd/cc-clip/update_test.go, internal/hosts/registry.go
+
+---
+id: cc-clip-instinct-file-naming
+trigger: "When creating or renaming files in the repository"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct File Naming
+
+## Action
+
+Use snake_case for file names
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in files: internal/hosts/registry.go, internal/shim/ssh.go
+
+---
+id: cc-clip-instinct-function-naming
+trigger: "When defining new functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Function Naming
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Pattern in namingConventions.functions
+- Observed in Go codebase
+
+---
+id: cc-clip-instinct-class-naming
+trigger: "When defining new structs or types that act as classes"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Class Naming
+
+## Action
+
+Use PascalCase for class/type names
+
+## Evidence
+
+- Pattern in namingConventions.classes
+- Observed in Go codebase
+
+---
+id: cc-clip-instinct-constant-naming
+trigger: "When defining constants"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern in namingConventions.constants
+- Observed in Go codebase
+
+---
+id: cc-clip-instinct-import-style
+trigger: "When importing modules or packages"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: relative
+- Observed in Go source files
+
+---
+id: cc-clip-instinct-export-style
+trigger: "When exporting functions or types"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+- Observed in Go source files
+
+---
+id: cc-clip-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Location
+
+## Action
+
+Place test files in separate files alongside implementation files, using _test.go suffix
+
+## Evidence
+
+- Pattern in architecture.testLocation: separate
+- Seen in files: internal/hosts/registry_test.go, cmd/cc-clip/update_test.go
+
+---
+id: cc-clip-instinct-test-coverage
+trigger: "When modifying core logic"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Coverage
+
+## Action
+
+Add or update corresponding test files to cover the changes
+
+## Evidence
+
+- Workflow: code-change-with-corresponding-tests
+- Seen in commit sequences involving both implementation and test files
+
+---
+id: cc-clip-instinct-git-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Format
+
+## Action
+
+Use the conventional commit format: <type>(<scope>): <description>
+
+## Evidence
+
+- Pattern in commits.type: conventional
+- Examples: fix(update): ..., docs: ...
+
+---
+id: cc-clip-instinct-git-commit-prefixes
+trigger: "When describing a fix or documentation change in a commit"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Prefixes
+
+## Action
+
+Use 'fix' or 'docs' as the commit type prefix
+
+## Evidence
+
+- Pattern in commits.prefixes: fix, docs
+- Examples: fix(update): ..., docs: ...
+
+---
+id: cc-clip-instinct-git-commit-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Length
+
+## Action
+
+Aim for a commit message length around 90 characters
+
+## Evidence
+
+- Pattern in commits.averageLength: 90
+- Examples: fix(update): redeploy reminder defaults to --all; ...
+
+---
+id: cc-clip-instinct-code-change-with-tests
+trigger: "When someone modifies core logic and wants to ensure it is tested"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Code Change With Tests
+
+## Action
+
+Edit implementation file(s) to add or fix functionality, then edit or add corresponding test file(s) to cover the changes
+
+## Evidence
+
+- Workflow: code-change-with-corresponding-tests
+- Seen in commit sequences involving both implementation and test files
+
