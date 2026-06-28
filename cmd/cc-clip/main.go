@@ -775,18 +775,11 @@ func runConnect(opts connectOpts) {
 	fmt.Println("[N0] Checking for v0.7.0 wrapper corruption...")
 	state, diag, err := shim.DetectV070State(session)
 	if err != nil {
-		// Detection could not run — most often coreutils missing from the
-		// non-interactive SSH PATH (DetectV070State now hardens PATH, so this is
-		// rare). Skipping the gate is safe ONLY when the remote has no existing
-		// claude install: a fresh remote cannot be in a v0.7.0 corrupted state.
-		// If claude IS present (or we cannot probe it), fail closed — we must not
-		// layer a wrapper onto a remote we cannot prove is uncorrupted.
+		// Detection could not run (rare; WrapRemoteShell hardens PATH). Skip only
+		// when decideN0SkipOnDetectError proves the remote is fresh; otherwise
+		// fail closed rather than guess. See that helper for the policy rationale.
 		exists, probeErr := shim.RemoteClaudeProbe(session)
-		if decideN0SkipOnDetectError(exists, probeErr) {
-			fmt.Fprintf(os.Stderr, "      WARN: N0 detection could not run (%v); remote has no existing claude install — continuing\n", err)
-			state = shim.V070NotCorrupted
-			diag = "detection_skipped_fresh"
-		} else {
+		if !decideN0SkipOnDetectError(exists, probeErr) {
 			fmt.Fprintf(os.Stderr, `
 error: N0 v0.7.0 detection could not run on remote (%v), and cc-clip could not
        confirm the remote has no existing claude install, so it will not
@@ -798,6 +791,9 @@ error: N0 v0.7.0 detection could not run on remote (%v), and cc-clip could not
 `, err, host)
 			os.Exit(3)
 		}
+		fmt.Fprintf(os.Stderr, "      WARN: N0 detection could not run (%v); remote has no existing claude install — continuing\n", err)
+		state = shim.V070NotCorrupted
+		diag = "detection_skipped_fresh"
 	}
 	switch state {
 	case shim.V070NotCorrupted:
