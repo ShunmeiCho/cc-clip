@@ -44,15 +44,25 @@ func (d *Deduper) AllowAt(env NotifyEnvelope, now time.Time) (bool, *NotifyEnvel
 		return true, nil
 	}
 	msg := env.GenericMessage
-	if msg == nil {
-		return true, nil
-	}
 
-	key := DedupKey{
-		Source:   env.Source,
-		Type:     dedupType(env),
-		Title:    msg.Title,
-		BodyHash: md5.Sum([]byte(msg.Body)),
+	var key DedupKey
+	switch {
+	case env.ImageTransfer != nil:
+		key = DedupKey{
+			Source:   env.Source,
+			Type:     string(KindImageTransfer),
+			Title:    env.ImageTransfer.SessionID,
+			BodyHash: md5.Sum([]byte(env.ImageTransfer.Fingerprint)),
+		}
+	case msg != nil:
+		key = DedupKey{
+			Source:   env.Source,
+			Type:     dedupType(env),
+			Title:    msg.Title,
+			BodyHash: md5.Sum([]byte(msg.Body)),
+		}
+	default:
+		return true, nil
 	}
 
 	d.mu.Lock()
@@ -79,6 +89,9 @@ func (d *Deduper) AllowAt(env NotifyEnvelope, now time.Time) (bool, *NotifyEnvel
 	entry.SeenAt = now
 	d.items[key] = entry
 
+	if msg == nil {
+		return false, nil
+	}
 	merged := env
 	clone := *msg
 	clone.DedupCount = entry.Count
