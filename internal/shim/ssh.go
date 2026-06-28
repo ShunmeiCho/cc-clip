@@ -790,6 +790,12 @@ func (s V070State) String() string {
 // after C1+C2 hold do C3/C4/C5 distinguish recoverable from non-recoverable.
 func DetectV070State(s SessionExecutor) (V070State, string, error) {
 	out, err := s.Exec(`set -e
+# Non-interactive SSH often runs with a minimal PATH that omits the standard
+# coreutils locations, making readlink/head/grep/wc/tr resolve to "command not
+# found" (exit 127) even though the tools are installed. Prepend the canonical
+# bin dirs so detection works on minimal containers (e.g. Coder workspaces)
+# instead of fatally aborting connect.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 claude="$HOME/.local/bin/claude"
 bak="$HOME/.local/bin/claude.cc-clip-bak"
 # C1: claude is a symlink.
@@ -824,6 +830,20 @@ echo recoverable`)
 	default:
 		return V070NotCorrupted, diag, fmt.Errorf("detect v0.7.0 state: unexpected diag %q", diag)
 	}
+}
+
+// RemoteClaudeProbe reports whether ~/.local/bin/claude exists on the remote
+// (as a regular file, directory, or symlink — including a broken symlink). It
+// uses only POSIX shell builtins (`[`, `echo`), so it still works when the full
+// DetectV070State detector cannot run because coreutils are absent from the
+// non-interactive PATH. It is the fail-safe classifier for the N0 gate: if no
+// claude install is present, a v0.7.0 wrapper corruption is impossible.
+func RemoteClaudeProbe(s SessionExecutor) (bool, error) {
+	out, err := s.Exec(`if [ -e "$HOME/.local/bin/claude" ] || [ -L "$HOME/.local/bin/claude" ]; then echo present; else echo absent; fi`)
+	if err != nil {
+		return false, fmt.Errorf("probe claude presence: %w", err)
+	}
+	return strings.TrimSpace(out) == "present", nil
 }
 
 // DetectV070Corruption is the boolean compat wrapper kept for RecoverV070Corruption's

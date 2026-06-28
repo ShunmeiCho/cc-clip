@@ -723,6 +723,17 @@ func cmdConnect() {
 	})
 }
 
+// decideN0SkipOnDetectError reports whether the N0 v0.7.0 gate may be safely
+// skipped after DetectV070State returned an error. Skipping is safe ONLY when
+// the remote has no existing claude install (claudeExists == false) AND that
+// fact was determined reliably (probeErr == nil): with nothing installed, a
+// v0.7.0 wrapper corruption is impossible. In every other case — claude is
+// present, or its presence could not be probed — the gate fails closed because
+// the remote cannot be proven uncorrupted.
+func decideN0SkipOnDetectError(claudeExists bool, probeErr error) bool {
+	return probeErr == nil && !claudeExists
+}
+
 func runConnect(opts connectOpts) {
 	host := opts.host
 	port := opts.port
@@ -764,7 +775,29 @@ func runConnect(opts connectOpts) {
 	fmt.Println("[N0] Checking for v0.7.0 wrapper corruption...")
 	state, diag, err := shim.DetectV070State(session)
 	if err != nil {
-		log.Fatalf("      N0 detection failed: %v", err)
+		// Detection could not run — most often coreutils missing from the
+		// non-interactive SSH PATH (DetectV070State now hardens PATH, so this is
+		// rare). Skipping the gate is safe ONLY when the remote has no existing
+		// claude install: a fresh remote cannot be in a v0.7.0 corrupted state.
+		// If claude IS present (or we cannot probe it), fail closed — we must not
+		// layer a wrapper onto a remote we cannot prove is uncorrupted.
+		exists, probeErr := shim.RemoteClaudeProbe(session)
+		if decideN0SkipOnDetectError(exists, probeErr) {
+			fmt.Fprintf(os.Stderr, "      WARN: N0 detection could not run (%v); remote has no existing claude install — continuing\n", err)
+			state = shim.V070NotCorrupted
+			diag = "detection_skipped_fresh"
+		} else {
+			fmt.Fprintf(os.Stderr, `
+error: N0 v0.7.0 detection could not run on remote (%v), and cc-clip could not
+       confirm the remote has no existing claude install, so it will not
+       continue — a present install might be in a corrupted v0.7.0 state.
+       Ensure POSIX coreutils (readlink, head, grep, wc, tr) are available on
+       the non-interactive SSH PATH, then retry:
+
+    cc-clip connect %s
+`, err, host)
+			os.Exit(3)
+		}
 	}
 	switch state {
 	case shim.V070NotCorrupted:
