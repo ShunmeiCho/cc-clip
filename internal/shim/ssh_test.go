@@ -173,19 +173,20 @@ func TestWrapRemoteShell(t *testing.T) {
 		{
 			name: "simple command",
 			cmd:  "uname -sm",
-			want: `/bin/sh -c 'uname -sm'`,
+			want: "/bin/sh -c '" + remotePathPrelude + "uname -sm'",
 		},
 		{
 			name: "embedded single quotes use close-escape-reopen idiom",
 			cmd:  "echo 'hi'",
-			want: `/bin/sh -c 'echo '\''hi'\'''`,
+			want: "/bin/sh -c '" + remotePathPrelude + `echo '\''hi'\'''`,
 		},
 		{
 			// sh syntax that a fish login shell mis-parses (exit 127) must end up
 			// fully inside the single-quoted token, never bare on the command line.
+			// The PATH prelude is part of the same single-quoted token.
 			name: "posix sh script is fully quoted",
 			cmd:  "set -e\n[ -L \"$HOME/x\" ] || exit 0",
-			want: "/bin/sh -c 'set -e\n[ -L \"$HOME/x\" ] || exit 0'",
+			want: "/bin/sh -c '" + remotePathPrelude + "set -e\n[ -L \"$HOME/x\" ] || exit 0'",
 		},
 	}
 	for _, tc := range cases {

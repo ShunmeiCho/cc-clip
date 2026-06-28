@@ -130,9 +130,20 @@ func sshHostArgs(prefix []string, host string, remoteArgs ...string) []string {
 // any other) login shell. The single-quote escaping in shSingleQuote is
 // interpreted identically by POSIX shells and fish, so the wrapper line itself
 // parses correctly no matter which shell sshd invokes.
+//
+// It also prepends remotePathPrelude so every remote command finds coreutils
+// under a minimal non-interactive PATH (another exit-127 source).
 func WrapRemoteShell(cmd string) string {
-	return "/bin/sh -c " + shSingleQuote(cmd)
+	return "/bin/sh -c " + shSingleQuote(remotePathPrelude+cmd)
 }
+
+// remotePathPrelude prepends the canonical system bin directories to PATH for
+// every remote command. Non-interactive SSH often runs with a minimal PATH that
+// omits these dirs, so coreutils (readlink, head, grep, wc, tr, ...) resolve to
+// "command not found" (exit 127) even when installed — which previously aborted
+// connect on minimal images (e.g. Coder workspaces). $PATH stays last so the
+// remote's own entries and their relative order are preserved.
+const remotePathPrelude = "export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH\"\n"
 
 // shSingleQuote renders s as a single single-quoted shell token, escaping any
 // embedded single quote via the portable '\'' close-escape-reopen idiom.
@@ -790,12 +801,6 @@ func (s V070State) String() string {
 // after C1+C2 hold do C3/C4/C5 distinguish recoverable from non-recoverable.
 func DetectV070State(s SessionExecutor) (V070State, string, error) {
 	out, err := s.Exec(`set -e
-# Non-interactive SSH often runs with a minimal PATH that omits the standard
-# coreutils locations, making readlink/head/grep/wc/tr resolve to "command not
-# found" (exit 127) even though the tools are installed. Prepend the canonical
-# bin dirs so detection works on minimal containers (e.g. Coder workspaces)
-# instead of fatally aborting connect.
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 claude="$HOME/.local/bin/claude"
 bak="$HOME/.local/bin/claude.cc-clip-bak"
 # C1: claude is a symlink.
