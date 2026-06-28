@@ -1,0 +1,368 @@
+# Instincts generated from https://github.com/ShunmeiCho/cc-clip
+# Generated: 2026-06-28T11:07:59.541Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: cc-clip-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix
+
+## Evidence
+
+- 2 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix: skip N0 detection instead of fatal-exiting when remote lacks tools, fix: harden N0 detection PATH and fail closed when it cannot verify
+
+---
+id: cc-clip-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Commit Length
+
+## Action
+
+Write moderate-length commit messages (~69 characters)
+
+## Evidence
+
+- Average commit message length: 69 chars
+- Based on 2 commits
+
+---
+id: cc-clip-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: cc-clip-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: cc-clip-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: cc-clip-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: cc-clip-workflow-harden-and-fix-remote-detection
+trigger: "when doing harden and fix remote detection"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/ShunmeiCho/cc-clip
+---
+
+# Cc Clip Workflow Harden And Fix Remote Detection
+
+## Action
+
+Follow the harden-and-fix-remote-detection workflow:
+1. Update detection logic in main command file
+2. Modify or extend error handling for detection failures
+3. Add or update tests for new detection logic or edge cases
+4. Update internal SSH or probe utilities if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: cmd/cc-clip/main.go, cmd/cc-clip/n0_test.go, internal/shim/ssh.go
+
+---
+id: cc-clip-instinct-file-naming
+trigger: "When creating a new source code file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct File Naming
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in 'cmd/cc-clip/main.go', 'internal/shim/ssh.go'
+
+---
+id: cc-clip-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: cc-clip-instinct-class-naming
+trigger: "When defining a new class or struct"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Class Naming
+
+## Action
+
+Name the class or struct using PascalCase
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: cc-clip-instinct-constant-naming
+trigger: "When declaring a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: cc-clip-instinct-import-style
+trigger: "When importing modules in Go code"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle
+- Observed in 'cmd/cc-clip/main.go'
+
+---
+id: cc-clip-instinct-export-style
+trigger: "When exporting functions or types"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle
+
+---
+id: cc-clip-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Location
+
+## Action
+
+Place test files in a separate directory from source files
+
+## Evidence
+
+- Pattern in architecture.folderStructure.testLocation
+- Seen in 'cmd/cc-clip/n0_test.go', 'internal/shim/v070_probe_test.go'
+
+---
+id: cc-clip-instinct-test-update-on-detection-change
+trigger: "When updating detection logic"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Test Update On Detection Change
+
+## Action
+
+Add or update tests to cover new detection logic or edge cases
+
+## Evidence
+
+- Workflow: harden-and-fix-remote-detection
+- Files: 'cmd/cc-clip/n0_test.go', 'internal/shim/v070_probe_test.go'
+
+---
+id: cc-clip-instinct-git-conventional-commits
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Conventional Commits
+
+## Action
+
+Use the conventional commit format with a 'fix:' prefix for bug fixes
+
+## Evidence
+
+- Pattern in commits.type and prefixes
+- Examples: 'fix: skip N0 detection...'
+- fix: harden N0 detection PATH...'
+
+---
+id: cc-clip-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Git Commit Length
+
+## Action
+
+Keep the commit message concise, around 69 characters on average
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: cc-clip-instinct-harden-remote-detection
+trigger: "When someone wants to improve or fix the detection of remote environments, especially to handle edge cases or failures in minimal setups"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: ShunmeiCho/cc-clip
+---
+
+# Cc Clip Instinct Harden Remote Detection
+
+## Action
+
+Follow the workflow: update detection logic in main command file, modify or extend error handling for detection failures, add or update tests for new detection logic or edge cases, update internal SSH or probe utilities if needed
+
+## Evidence
+
+- Workflow: harden-and-fix-remote-detection
+- Files: 'cmd/cc-clip/main.go', 'cmd/cc-clip/n0_test.go', 'internal/shim/ssh.go', 'internal/shim/v070_probe_test.go'
+
