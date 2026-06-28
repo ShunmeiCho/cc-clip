@@ -219,11 +219,17 @@ func (r *Registry) FormatRedeployReminder(w io.Writer) bool {
 	}
 	fmt.Fprintln(w, "* Redeploy to every remote host you use with cc-clip:")
 	for _, e := range entries {
-		flags := "--force"
+		// Since v0.9.0, `--codex` is Codex-ONLY and no longer reinstalls the
+		// Claude shim. The registry only records a single Codex bool, so it
+		// cannot tell a Codex-only host from a Claude+Codex host. We default
+		// to `--all --force` (deploys both Claude and Codex) so the Claude
+		// shim is never silently dropped, and note that Codex-only users can
+		// use `--codex --force` instead.
 		if e.Codex {
-			flags = "--codex --force"
+			fmt.Fprintf(w, "    cc-clip connect %s --all --force   # Codex-only users: --codex --force\n", e.Host)
+			continue
 		}
-		fmt.Fprintf(w, "    cc-clip connect %s %s\n", e.Host, flags)
+		fmt.Fprintf(w, "    cc-clip connect %s --force\n", e.Host)
 	}
 	return true
 }

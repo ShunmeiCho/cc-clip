@@ -222,8 +222,12 @@ func TestFormatRedeployReminderMixed(t *testing.T) {
 		t.Fatal("non-empty registry returned false")
 	}
 	got := buf.String()
+	// A Codex host gets `--all --force` (preserves the Claude shim, since the
+	// registry cannot tell Codex-only from Claude+Codex), with a note that
+	// Codex-only users can use `--codex --force` instead. Non-Codex hosts keep
+	// the plain `--force`.
 	want := "* Redeploy to every remote host you use with cc-clip:\n" +
-		"    cc-clip connect alpha --codex --force\n" +
+		"    cc-clip connect alpha --all --force   # Codex-only users: --codex --force\n" +
 		"    cc-clip connect mid --force\n" +
 		"    cc-clip connect zeta --force\n"
 	if got != want {
