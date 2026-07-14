@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ 3e1205421522e1cd6ddae7dbbccab95bab16e357 -->
+<!-- i18n-source: README.md @ e0d18e6b560626a997c53511e858452d9c40a9a4 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -7,694 +7,257 @@
 </p>
 
 <p align="center">
-  <img src="docs/logo.png" alt="cc-clip 标志" width="200">
+  <img src="assets/readme/hero.svg" width="100%" alt="cc-clip 通过仅限回环地址的 SSH 隧道，将本地剪贴板传送给远程 AI 编程代理">
 </p>
-<h1 align="center">cc-clip</h1>
+
+> 本文是英文原文的简体中文翻译。若内容有差异，以 [English 原文](README.md) 为准。翻译版本可能晚于英文主线更新。
+
 <p align="center">
-  <b>为 Claude Code、Codex CLI 和 opencode 通过 SSH 粘贴图片，并为 Claude Code、Codex CLI、opencode 和 Antigravity 提供桌面通知。</b>
-</p>
-<p align="center">
-  <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8.svg" alt="Go"></a>
-  <a href="https://github.com/ShunmeiCho/cc-clip/stargazers"><img src="https://img.shields.io/github/stars/ShunmeiCho/cc-clip?style=social" alt="Stars"></a>
+  <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=F97316" alt="最新版本"></a>
+  <a href="https://github.com/ShunmeiCho/cc-clip/actions/workflows/ci.yml"><img src="https://github.com/ShunmeiCho/cc-clip/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-18181B.svg" alt="MIT 许可证"></a>
 </p>
 
 <p align="center">
-  <img src="docs/marketing/demo-quick.gif" alt="cc-clip 演示" width="720">
+  <b>通过 SSH 将图片粘贴到远程 Claude Code、Codex CLI 和 opencode 会话中。</b><br>
+  可选集成还能把任务完成和授权请求通知发送回桌面。
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#选择目标">选择目标</a> ·
+  <a href="#工作原理">工作原理</a> ·
+  <a href="#文档">文档</a>
+</p>
+
+<p align="center">
+  <img src="docs/marketing/demo-quick.gif" alt="展示 cc-clip 安装、设置和远程图片粘贴的终端演示" width="720">
   <br>
-  <em>安装 → 初始化 → 粘贴。剪贴板可跨 SSH 工作。</em>
+  <em>安装 → 设置 → 打开 SSH → 粘贴。</em>
 </p>
 
-<p align="center">
-  <b>v0.9.0 新增：</b>按目标安装（<code>--claude</code> / <code>--codex</code> / <code>--opencode</code> / <code>--agy</code> / <code>--all</code>），并为 Codex CLI、opencode 和 Antigravity 接入通知。<b>从 v0.8.x 升级？</b><code>--codex</code> 现在是 <b>仅 Codex</b> — Claude&nbsp;+&nbsp;Codex 请使用 <code>--all</code>。见<a href="docs/upgrading.md#upgrading-from-v08x-to-v090">升级指南</a>。
-</p>
-
-> 这是英文 README 的简体中文翻译。如果翻译版与 [English README](README.md) 存在差异，以英文原版为准。翻译版本可能晚于英文主线更新。
->
-> *This is the Simplified Chinese translation of the English README. If any content differs, the [English README](README.md) is authoritative. This translation may lag behind the English main line.*
-
----
-
-<details>
-<summary><b>目录</b></summary>
-
-- [问题](#问题)
-- [解决方案](#解决方案)
-- [前置条件](#前置条件)
-- [快速开始](#快速开始)
-- [为什么选择 cc-clip？](#为什么选择-cc-clip)
-- [工作原理](#工作原理)
-- [SSH 通知](#ssh-通知)
-- [安全性](#安全性)
-- [日常使用](#日常使用)
-- [命令](#命令)
-- [配置](#配置)
-- [平台支持](#平台支持)
-- [要求](#要求)
-- [替代方案，以及什么时候不该用 cc-clip](#替代方案以及什么时候不该用-cc-clip)
-- [故障排查](#故障排查)
-- [贡献](#贡献)
-- [相关问题](#相关问题)
-- [许可证](#许可证)
-
-</details>
-
----
-
-## 问题
-
-通过 SSH 在远程服务器上运行 Claude Code、Codex CLI 或 opencode 时，**图片粘贴经常无法工作**，**通知也到不了本地**。远程剪贴板是空的，截图和图表都传不过去。当 coding agent 完成任务或需要授权时，如果你没有盯着终端，就很难知道发生了什么。
-
-## 解决方案
-
-```text
-图片粘贴:
-  Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim        → Claude Code
-  Claude Code (Windows): Windows clipboard → hotkey/send    → SSH upload → remote file path  → Claude Code
-  Windows 直传（未发布）: Windows clipboard → cc-clip daemon → SSH tunnel → xclip shim → Claude Code
-  Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb   → Codex CLI
-  opencode:              local clipboard   → cc-clip daemon → SSH tunnel → xclip/wl-paste shim → opencode
-
-通知 (Claude Code + Codex CLI + opencode + Antigravity):
-  Claude Code hook → cc-clip-hook → SSH tunnel → local daemon → macOS/cmux notification
-  Codex notify     → cc-clip notify             → SSH tunnel → local daemon → macOS/cmux notification
-  opencode idle    → cc-clip plugin run opencode-notify → SSH tunnel → local daemon → macOS/cmux notification
-  Antigravity stop → cc-clip-notify agy plugin  → SSH tunnel → local daemon → macOS/cmux notification
-```
-
-一个工具即可。无需修改 Claude Code、Codex、opencode 或 Antigravity。Claude Code、Codex CLI 和 opencode 都能使用剪贴板；通知已为四者接好（Antigravity 目前仅通知）。
-
-## 前置条件
-
-- **本地机器：** macOS 13+ 或 Windows 10/11
-- **远程服务器：** 可通过 SSH 访问的 Linux（amd64 或 arm64）
-- **SSH 配置：** 远程服务器必须在 `~/.ssh/config` 中有一个 Host 条目
-- **远程剪贴板路径：** X11 consumer 使用 `xclip`，Wayland consumer 使用 `wl-paste`；使用 Codex CLI 的 `--codex` 或 `--all` 时还需要 `Xvfb`
-
-如果还没有 SSH config 条目，添加一个：
-
-```
-# ~/.ssh/config
-Host myserver
-    HostName 10.0.0.1       # 你的服务器 IP 或域名
-    User your-username
-    IdentityFile ~/.ssh/id_rsa  # 可选，如果使用密钥认证
-```
-
-如果你在 Windows 上使用 SSH/Claude Code 工作流，请阅读专门的指南：
-
-- [Windows Quick Start](docs/windows-quickstart.md)
+> **从 v0.8.x 升级？** 在 v0.9.0 中，`--codex` 改为仅配置 Codex。如果
+> 同一台主机还需要 Claude 集成，请使用 `--all`。参见
+> [升级指南](docs/upgrading.md#upgrading-from-v08x-to-v090)。
 
 ## 快速开始
 
-### 第 1 步：安装 cc-clip
+这是稳定的 macOS 到 Linux 路径。需要：
 
-macOS / Linux:
+- macOS 13 或更高版本；
+- 一台 amd64 或 arm64 Linux 远程主机，并安装 `curl`、`bash`，以及 `xclip` 或 `wl-paste`；
+- `~/.ssh/config` 中有一个命名的 `Host` 条目。
+
+### 1. 安装
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
-```
-
-Windows:
-
-请阅读专门的指南：
-
-- [Windows Quick Start](docs/windows-quickstart.md)
-
-> **Windows 支持仍处于实验阶段。** 默认 Windows 工作流仍是显式的
-> `send`/`hotkey` 上传路径。SSH RemoteForward + 远程 shim 直传路径在最新
-> 稳定版中尚未发布；请仅通过包含此功能的源码 commit 构建，
-> 或等待明确声明支持该功能的后续 prerelease/release。
-
-在 macOS / Linux 上，如果安装脚本提示，请把 `~/.local/bin` 加到 PATH：
-
-```bash
-# 添加到你的 shell profile（~/.zshrc 或 ~/.bashrc）
-export PATH="$HOME/.local/bin:$PATH"
-
-# 重新加载 shell
-source ~/.zshrc  # 或: source ~/.bashrc
-```
-
-验证安装：
-
-```bash
 cc-clip --version
 ```
 
-> **macOS 出现 “killed” 错误？** 如果看到 `zsh: killed cc-clip`，说明 macOS Gatekeeper 阻止了这个二进制。修复：`xattr -d com.apple.quarantine ~/.local/bin/cc-clip`
+如果安装程序提示，请先将 `~/.local/bin` 添加到 `PATH`，再继续。
 
-### 第 2 步：初始化（一个命令）
+### 2. 设置一台主机
 
 ```bash
 cc-clip setup myserver
 ```
 
-这个命令会处理所有事情：
-1. 安装本地依赖（`pngpaste`）
-2. 配置 SSH（`RemoteForward`、`ControlMaster no`）
-3. 启动本地 daemon（通过 macOS launchd）
-4. 把二进制和 shim 部署到远程服务器
+默认目标是 Claude Code。设置过程会检查本地依赖、添加仅绑定回环地址的
+`RemoteForward`、启动本地守护进程并部署远程 shim。若要配置 Codex、
+opencode 或通知，请使用下一节中的目标选项。
 
-<details>
-<summary>查看效果（macOS）</summary>
-<p align="center">
-  <img src="docs/marketing/demo-macos.gif" alt="cc-clip macOS 演示" width="720">
-</p>
-</details>
-
-#### 我该运行哪个 setup 命令？
-
-选择与你的远程工作流匹配的一行。你只需要做这些决策：
-
-| 远程 CLI | 命令 | 会增加什么 | 远程需要 `sudo` 吗？ |
-|---|---|---|---|
-| Claude Code（默认） | `cc-clip setup myserver` | xclip / wl-paste shim | ❌ 不需要 |
-| 只用 Codex CLI | `cc-clip setup myserver --codex` | 仅 Codex — 远程 Xvfb + x11-bridge，**不安装 Claude shim**（见下文） | ✅ **需要** — 用于 `apt`/`dnf install xvfb` 的 passwordless `sudo`，或先手动安装 |
-| Claude Code + Codex CLI | `cc-clip setup myserver --all` | Claude shim **加上** Codex（Xvfb + x11-bridge） | ✅ **需要** — 与 `--codex` 相同的 Xvfb 要求 |
-| opencode | `cc-clip setup myserver`（粘贴）；加 `--opencode` 开启 idle 通知 | xclip / wl-paste shim；设置 `--opencode` 时还会加入 opencode-notify | ❌ 不需要 |
-| Antigravity (agy) | `cc-clip setup myserver --agy` | agy-notify plugin（仅通知） | ❌ 不需要 |
-| Windows 本地机器 | 见 [Windows Quick Start](docs/windows-quickstart.md) | 默认使用 hotkey/send 上传路径；Windows 剪切板直通支持（Windows direct clipboard support）仅用于源码构建或后续 prerelease 测试 | ❌ 不需要 |
-
-> **从 v0.8.x 升级？** `--codex` 的含义变了。v0.8.x 中它是在 Claude shim **之上追加** Codex；在 **v0.9.0** 中它安装**仅 Codex**。同一台 host 同时要 Claude 和 Codex，请使用 `--all`。完整说明见：[从 v0.8.x 升级到 v0.9.0](docs/upgrading.md#upgrading-from-v08x-to-v090)。
-
-> **Codex 目标的前置条件**（`--codex` 或 `--all` — 上面两行需要 `sudo` 的目标）：远程必须已安装 Xvfb。带 Codex 目标的 `cc-clip setup` 会尝试为你运行 `sudo apt install xvfb`（Debian/Ubuntu）或 `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）。但如果没有 passwordless `sudo`，它会中止并打印需要手动运行的准确命令。安装 Xvfb 后，重新运行同一个 Codex-target 命令。
->
-> 如果远程既不允许 passwordless `sudo`，也不能进行一次性手动安装，请使用 `cc-clip setup myserver`（不要加 `--codex`）。Claude Code 和 opencode 的剪贴板粘贴仍然可用；只有 Codex CLI 路径需要 Xvfb。
-
-> **经验规则：** 只有当你真的在远程运行 Codex CLI 时，才添加 Codex 目标（仅 Codex 用 `--codex`，Claude + Codex 用 `--all`）。否则它只是额外开销。
-
-### 第 3 步（仅 Codex CLI）：`--codex` 会增加什么
-
-Codex CLI 会通过 X11 直接读取剪贴板（通过 `arboard` crate），而不是调用 `xclip`，所以透明 shim 无法拦截它。`--codex` 会在远程增加这些组件来补上这个缺口：
-
-1. **Xvfb** — 一个 headless X server。**需要 `sudo`：** 如果你有 passwordless `sudo`，`cc-clip` 会自动尝试 `sudo apt install xvfb` 或 `sudo dnf install xorg-x11-server-Xvfb`。如果没有，它会中止并打印需要手动运行的准确命令；运行后重新执行同一个 Codex-target 命令（仅 Codex 用 `--codex`，如果这台 host 也跑 Claude Code 则用 `--all`）。
-2. **`cc-clip x11-bridge`** — 一个后台进程，负责占用 Xvfb 的剪贴板，并在 Codex 需要时提供图片数据；数据通过和 Claude Code 路径相同的 SSH tunnel 获取。
-3. **`DISPLAY=127.0.0.1:N`** — 注入到远程 shell rc 中，让 Codex 的下一个进程自动获得它。（使用 TCP loopback 形式，而不是 Unix socket 的 `:N` 形式，因为 Codex CLI sandbox 会阻止访问 `/tmp/.X11-unix/`。）
-
-不需要理解这些细节也能使用 Codex 粘贴。这里列出来，是为了让你知道 `--codex` 会在服务器上触碰什么，以及之后如何诊断。
-
-<details>
-<summary>Windows 本地？使用专门指南</summary>
-
-- [Windows Quick Start](docs/windows-quickstart.md)
-
-<p align="center">
-  <img src="docs/marketing/demo-windows.gif" alt="cc-clip Windows 演示" width="720">
-</p>
-
-注意：Windows 默认使用 hotkey/upload 工作流。SSH RemoteForward + 远程
-shim 工作流在最新稳定版中尚未发布，Windows 快速入门指南仅将其作为
-source/prerelease 测试路径记录。
-
-</details>
-
-### 第 4 步：连接并使用
-
-打开一个**新的** SSH 会话连接到服务器（tunnel 会在 SSH 连接建立时激活）：
+### 3. 打开新的 SSH 会话
 
 ```bash
 ssh myserver
 ```
 
-然后像平时一样使用 Claude Code、Codex CLI 或 opencode。`Ctrl+V`（或 agent 绑定的剪贴板粘贴键）现在会从你的 Mac 剪贴板粘贴图片。
+启动编程代理，然后照常粘贴。新的 SSH 连接很重要：
+它会保持反向隧道打开。
 
-> **重要：** 图片粘贴依赖 SSH tunnel。你必须通过 `ssh myserver`（你设置的那个 host）连接。每个 SSH 连接都会建立自己的 tunnel。
+### 4. 验证完整链路
 
-### 验证是否可用
-
-从本地机器运行通用端到端检查（适用于 Claude Code、Codex 和 opencode）：
+将一张图片复制到 Mac 剪贴板，然后在本地运行：
 
 ```bash
-# 先把一张图片复制到 Mac 剪贴板（Cmd+Shift+Ctrl+4），然后运行：
 cc-clip doctor --host myserver
 ```
 
-#### Codex 专用验证
+## 选择目标
 
-如果你使用了 `--codex` 或 `--all`，在远程服务器上运行下面四个命令，确认 Codex 专属组件健康。先在 Mac 上复制一张图片，然后 SSH 进去：
+每次设置选择一个目标选项。不指定目标选项时，cc-clip 会配置 Claude Code。
 
-```bash
-ssh myserver
+| 远程工作流 | 设置命令 | 图片粘贴 | 桌面通知 | 额外要求 |
+|---|---|:---:|:---:|---|
+| Claude Code | `cc-clip setup myserver` | 是 | 是 | `xclip` 或 `wl-paste` |
+| 仅 Codex CLI | `cc-clip setup myserver --codex` | 是 | 是 | Xvfb；设置过程可能需要远程 `sudo` |
+| 所有集成 | `cc-clip setup myserver --all` | 是 | 是 | Codex 需要 Xvfb |
+| opencode | `cc-clip setup myserver --opencode` | 是 | 是 | `xclip` 或 `wl-paste` |
+| Antigravity | `cc-clip setup myserver --agy` | 否 | 是 | 仅通知集成 |
 
-# 1. DISPLAY 已注入
-echo $DISPLAY                   # 预期: 127.0.0.1:0（或 :1, :2, …）
+对于 Codex 目标，cc-clip 会尝试使用 `apt` 或 `dnf` 安装 Xvfb。如果
+无法使用免密码 `sudo`，它会停止并输出准确的安装命令；
+手动运行该命令，然后重新执行设置。
 
-# 2. Xvfb 正在运行
-ps aux | grep Xvfb | grep -v grep
+Claude 和 opencode 路径使用远程 `xclip` 或 `wl-paste` shim。Codex
+直接读取 X11，因此其目标会额外配置 Xvfb 和 `cc-clip x11-bridge`。
 
-# 3. x11-bridge 正在运行
-ps aux | grep 'cc-clip x11-bridge' | grep -v grep
+> opencode 和 Antigravity 的集成生成已有测试覆盖，但尚未在代表性主机上
+> 对事件交付进行冒烟测试。请
+> [报告测试结果](https://github.com/ShunmeiCho/cc-clip/issues)。
 
-# 4. 剪贴板协商端到端可用
-xclip -selection clipboard -t TARGETS -o    # 预期: image/png
-```
+### 其他本地平台
 
-如果任一步失败，最常见的修复是在本地机器运行 `cc-clip connect myserver --codex --force`（如果这台 host 也跑 Claude Code，则用 `--all --force`）。完整步骤见 [故障排查](#故障排查) → “Ctrl+V 无法粘贴图片（Codex CLI）”。
+| 本地机器 | 远程主机 | 支持级别 | 推荐路径 |
+|---|---|---|---|
+| macOS 13+ | Linux | 稳定 | `cc-clip setup HOST` |
+| Windows 10/11 | Linux | 实验性 | [`send` / `hotkey` 快速开始](docs/windows-quickstart.md) |
+| Linux | Linux | 手动运行守护进程 | 运行 `cc-clip serve`，然后在另一个 shell 中运行 `cc-clip setup HOST` |
 
-### `setup` 和 `connect`：什么时候用哪个
-
-只需要记住这三种情况。如果这台 host **也**运行 Codex CLI，请用 `--all`（Claude + Codex）替代普通命令；如果这台 host 只跑 Codex，则改用 `--codex`。
-
-| 场景 | 命令（只用 Claude Code） | 命令（也运行 Codex CLI） |
-|---|---|---|
-| **首次在这个 host 上安装** | `cc-clip setup myserver` | `cc-clip setup myserver --all` |
-| **状态损坏**（DISPLAY 为空、x11-bridge 缺失、tunnel 探测失败） | `cc-clip connect myserver --force` | `cc-clip connect myserver --all --force` |
-| **Daemon 轮换了 token，而远程仍是旧 token** | `cc-clip connect myserver --token-only` | `cc-clip connect myserver --token-only` |
-
-`setup` 是首次使用路径（依赖 + SSH config + daemon + deploy）。`connect` 是修复/重新部署路径，部署步骤相同，但假设 SSH config 和本地 daemon 已经存在。
-
-Windows 上的等价快速检查见：
-
-- [Windows Quick Start](docs/windows-quickstart.md)
-
-## 为什么选择 cc-clip？
-
-| 方案 | 可跨 SSH？ | 任意终端？ | 支持图片？ | 设置复杂度 |
-|----------|:-:|:-:|:-:|:--:|
-| 原生 Ctrl+V | 仅本地 | 部分 | 是 | 无 |
-| X11 Forwarding | 是（慢） | N/A | 是 | 复杂 |
-| OSC 52 clipboard | 部分 | 部分 | 仅文本 | 无 |
-| **cc-clip** | **是** | **是** | **是** | **一个命令** |
+Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/windows-quickstart.md)
+中的显式上传并粘贴工作流。v0.9.1 也包含可选的直接 RemoteForward 传输，
+但它不是默认方案。
 
 ## 工作原理
 
-```mermaid
-graph LR
-    subgraph local ["Local Mac"]
-        A["Clipboard"] --> B["pngpaste"]
-        B --> C["cc-clip daemon<br/>127.0.0.1:18339"]
-    end
+cc-clip 将传输范围限制在 SSH 连接的本地范围内：
 
-    subgraph win ["Local Windows"]
-        J["Clipboard"] --> N["cc-clip hotkey / send<br/>(default)"]
-        J -. "experimental direct" .-> K["cc-clip daemon<br/>127.0.0.1:18339"]
-    end
+```text
+Image paste
+  local clipboard
+      → cc-clip daemon on 127.0.0.1:18339
+      → SSH RemoteForward
+      → remote xclip/wl-paste shim or Xvfb bridge
+      → remote coding agent
 
-    subgraph remote ["Remote Linux"]
-        F["Claude Code"] -- "Ctrl+V" --> E["xclip / wl-paste shim"]
-        M["opencode"] -- "Ctrl+V" --> E
-        E -- "curl" --> D["127.0.0.1:18339"]
-        N -- "ssh upload + paste path" --> L["~/.cache/cc-clip/uploads"]
-        L -- "remote image path" --> F
-        G["Codex CLI"] -- "Ctrl+V / arboard" --> H["Xvfb CLIPBOARD"]
-        H -- "SelectionRequest" --> I["x11-bridge"]
-        I -- "HTTP" --> D
-    end
-
-    C == "SSH RemoteForward" ==> D
-    K -. "experimental SSH RemoteForward" .-> D
-
-    style local fill:#1a1a2e,stroke:#e94560,color:#eee
-    style remote fill:#1a1a2e,stroke:#0f3460,color:#eee
-    style A fill:#e94560,stroke:#e94560,color:#fff
-    style F fill:#0f3460,stroke:#0f3460,color:#fff
-    style G fill:#0f3460,stroke:#0f3460,color:#fff
-    style M fill:#0f3460,stroke:#0f3460,color:#fff
+Notifications
+  remote hook / notify command / plugin
+      → SSH tunnel
+      → local cc-clip daemon
+      → macOS Notification Center or cmux
 ```
 
-1. **macOS Claude path：** 本地 daemon 通过 `pbpaste` / `pngpaste` 读取 Mac 剪贴板，在 loopback 上通过 HTTP 提供剪贴板数据，远程 `xclip` / `wl-paste` shim 通过 SSH tunnel 拉取文本或图片。
-2. **opencode path：** 与 Claude Code path 使用同一个 shim。opencode 通过 `xclip`（X11）或 `wl-paste`（Wayland）读取剪贴板，因此 cc-clip 的 shim 会透明地提供本地剪贴板内容，不需要 opencode 专属配置。
-3. **Windows 默认路径：** 本地 `hotkey` / `send --paste` 读取 Windows 剪贴板，通过 SSH 上传图片，把远程文件路径粘贴到当前终端，然后恢复原始图片剪贴板。
-4. **Windows 直传路径：** 本地 daemon 通过原生 Win32 剪贴板 API 读取 Windows 剪贴板，在 loopback 上提供文本或图片，远程 `xclip` / `wl-paste` shim 通过 SSH tunnel 拉取剪贴板数据。此路径在最新稳定版中尚未发布。
-5. **Codex CLI path：** x11-bridge 在 headless Xvfb 上占用 CLIPBOARD，当 Codex 通过 X11 读取剪贴板时按需提供图片（通过 `arboard` crate；它不像 `xclip` 那样能被 shim 拦截）。
-6. **Notification path：** 远程 Claude Code hooks、Codex notify、opencode idle 和 Antigravity stop 事件通过 `cc-clip-hook` / `cc-clip notify` / plugin → SSH tunnel → 本地 daemon → macOS Notification Center 或 cmux。
+1. 只有远程端请求时，本地守护进程才会读取剪贴板数据。
+2. SSH 在远程回环地址上暴露该守护进程；不会创建公开监听端口。
+3. Claude Code 和 opencode 通过透明的剪贴板 shim 访问它。
+4. Codex 通过 Xvfb 剪贴板所有者访问它，因为 Codex 会直接读取 X11，
+   而不是调用 `xclip`。
+5. 无法识别的 `xclip` / `wl-paste` 调用会转交给真正的远程工具。
 
-## SSH 通知
+## 通知
 
-远程 hook 事件（Claude 完成、工具授权请求、图片粘贴事件、Codex 任务完成）会通过和剪贴板相同的 SSH tunnel，到达本地机器并显示为 macOS / cmux 原生通知。这解决了常见的 SSH 通知失败：`TERM_PROGRAM` 不会转发、远程没有 `terminal-notifier`、tmux 会吞掉 OSC 序列。
+剪贴板数据和代理事件共享 SSH 隧道，但使用独立的
+认证材料。`cc-clip connect` 可以接入：
 
-| 事件 | 通知 |
-|-------|-------------|
-| Claude 完成回复 | “Claude stopped” + 最后一条消息预览 |
-| Claude 需要工具授权 | “Tool approval needed” + 工具名 |
-| Codex 任务完成 | “Codex” + 完成消息 |
-| 通过 Ctrl+V 粘贴图片 | “cc-clip #N” + 指纹 + 尺寸 |
+| 来源 | 集成方式 | 事件示例 |
+|---|---|---|
+| Claude Code | 托管 hook | 停止、授权请求、图片粘贴 |
+| Codex CLI | `notify` 命令 | 任务完成 |
+| opencode | 生成的 plugin | 会话空闲 |
+| Antigravity | 生成的 plugin | 代理停止 |
 
-**按 CLI 覆盖范围：**
+有关适配器细节、手动配置、nonce 注册和诊断，请参见
+[SSH 通知](docs/notifications.md)。
 
-| CLI | 是否由 `cc-clip connect` 接好？ |
-|-----|------------------------------|
-| Claude Code | ✅ 合并托管 hooks 到 `~/.claude/settings.json` |
-| Codex CLI | ✅ 如果选择了 Codex 目标（`--codex`/`--all`）且远程存在 `~/.codex/` |
-| opencode | ✅ 如果选择了 `--opencode`/`--all` 且检测到 opencode ¹ |
-| Antigravity (agy) | ✅ 如果选择了 `--agy`/`--all` 且检测到 agy ¹ |
+## 安全模型
 
-¹ “Wired” 表示 `cc-clip connect` 会安装集成。plugin 生成和 runner 路径已有测试覆盖，但 opencode 和 Antigravity 的 host 端到端事件投递尚未在代表性宿主上 smoke 验证 — 如遇问题请反馈。
+| 边界 | 防护措施 |
+|---|---|
+| 网络 | 守护进程和转发端口仅绑定回环地址 |
+| 剪贴板 | 使用 30 天滑动过期时间的 Bearer token |
+| 通知 | 每次部署使用独立 nonce |
+| 进程列表 | token 和 hook payload 不会放入命令行参数 |
+| 回退 | 无关剪贴板调用会转交给真正的远程二进制文件 |
 
-完整设置、adapter 细节、手动 fallback、nonce 注册和故障排查见：**[docs/notifications.md](docs/notifications.md)**。
+同一台远程主机上的用户共享回环网络。token 文件权限为
+`0600`，但 cc-clip 无法防御以你的 Unix 账户身份运行或能够读取
+你文件的其他进程。在共享或不受信任的主机上使用 cc-clip 前，
+请阅读明确的[威胁模型](SECURITY.md)。
 
-## 安全性
+## 核心命令
 
-| 层 | 保护 |
-|-------|-----------|
-| 网络 | 仅 loopback（`127.0.0.1`），不会暴露到外部 |
-| 剪贴板认证 | Bearer token，30 天滑动过期（使用时自动续期） |
-| 通知认证 | 每次 connect 独立 nonce（与剪贴板 token 分离） |
-| Token 传递 | 通过 stdin，绝不出现在命令行参数中 |
-| 通知信任 | Hook 通知标记为 `verified`；通用 JSON 显示 `[unverified]` 前缀 |
-| 透明性 | cc-clip 只拦截受管理的剪贴板读取；无关的 `xclip` / `wl-paste` 调用会原样传递 |
+| 命令 | 用途 |
+|---|---|
+| `cc-clip setup HOST [target]` | 首次配置依赖、SSH config、守护进程和部署 |
+| `cc-clip connect HOST --force [target]` | 修复或完整重新部署主机 |
+| `cc-clip connect HOST --token-only` | 同步已轮换或过期的 token |
+| `cc-clip doctor --host HOST` | 端到端诊断 |
+| `cc-clip status` | 查看本地组件状态 |
+| `cc-clip hosts list` | 查看已知主机注册表 |
+| `cc-clip update --check` | 检查发布渠道中的最新版本 |
+| `cc-clip update` | 安装最新发布版本 |
 
-在共享远程主机上，loopback 仍对该主机上的本地用户可见。token 文件会以 `0600` 写入，但 cc-clip 无法防御那些能读取你的文件、ptrace 你的进程，或以你的 Unix 账号身份行动的用户。
+运行 `cc-clip --help` 查看权威命令列表。
+[命令指南](docs/commands.md)涵盖常用选项和环境变量。
 
-对于 Windows 直传路径，daemon token 允许远程 shim 在 SSH tunnel 打开期间请求当前本地 Windows 剪贴板的**文本和图片**内容。只在可信远程主机上使用该路径。
-
-## 日常使用
-
-初始化后，你的日常工作流是：
-
-```bash
-# 1. SSH 到服务器（tunnel 自动激活）
-ssh myserver
-
-# 2. 像平时一样使用 Claude Code 或 Codex CLI
-claude          # Claude Code
-codex           # Codex CLI
-
-# 3. Ctrl+V 从 Mac 剪贴板粘贴图片
-```
-
-本地 daemon 会作为 macOS launchd 服务运行，并在登录时自动启动。无需重复运行 setup。
-
-### Windows 工作流
-
-在 Windows 上，默认工作流是显式的 hotkey/upload 路径。它没有 macOS/Linux direct shim 模型那么“无感”，但在 Windows Terminal、tmux、SSH client 和 Windows 剪贴板 provider 之间更可预测。
-
-首次设置和日常使用请阅读：
-
-- [Windows Quick Start](docs/windows-quickstart.md)
-
-Windows 直传路径在该指南中作为未发布的实验选项记录，仅用于源码构建或后续 beta 测试。在它覆盖更多 Windows 版本和剪贴板提供方之前，不要把它当作默认路径。此路径下，daemon token 允许远程 shim 在 SSH tunnel 打开期间请求本地 Windows 剪贴板文本和图片。
-
-## 命令
-
-实际最常用的 10 个：
-
-| 命令 | 说明 |
-|---------|-------------|
-| `cc-clip setup <host>` | **完整初始化**：依赖、SSH config、daemon、deploy |
-| `cc-clip setup <host> --codex` | 完整初始化，**仅 Codex CLI**（不安装 Claude shim；两者都要请用 `--all`） |
-| `cc-clip connect <host> --force` | 修复/重新部署（DISPLAY、x11-bridge 或 tunnel 卡住时） |
-| `cc-clip connect <host> --token-only` | 只同步轮换后的 token，不重新部署二进制 |
-| `cc-clip doctor --host <host>` | 端到端健康检查 |
-| `cc-clip status` | 显示本地组件状态 |
-| `cc-clip service install` / `service uninstall` | 管理 macOS launchd daemon 自动启动 |
-| `cc-clip notify --title T --body B` | 通过 tunnel 发送通用通知 |
-| `cc-clip send [<host>] [<file>] --paste` | Windows：上传剪贴板图片或已保存文件，并粘贴远程路径 |
-| `cc-clip hotkey [<host>]` | Windows：注册远程上传/粘贴 hotkey |
-
-完整命令参考（包括所有 flag 和环境变量）：**[docs/commands.md](docs/commands.md)**。或运行 `cc-clip --help` 查看已安装版本的权威列表。
-
-## 配置
-
-所有设置都有合理默认值。可通过环境变量覆盖。完整列表见 [docs/commands.md](docs/commands.md#environment-variables)：
+### 配置
 
 | 设置 | 默认值 | 环境变量 |
-|---------|---------|---------|
-| Port | 18339 | `CC_CLIP_PORT` |
-| Token TTL | 30d | `CC_CLIP_TOKEN_TTL` |
-| Debug logs | off | `CC_CLIP_DEBUG=1` |
-
-## 平台支持
-
-| 本地 | 远程 | 状态 |
-|-------|--------|--------|
-| macOS (Apple Silicon / Intel) | Linux (amd64/arm64) | Stable |
-| Windows 10/11 | Linux (amd64/arm64) | Experimental（`send` / `hotkey` 默认；Windows 直传路径未发布，仅用于源码测试） |
-
-### 支持的远程 CLI
-
-cc-clip 支持**任何在 Linux 上通过 `xclip` 或 `wl-paste` 读取剪贴板的 coding agent**。无需按 CLI 做配置，透明 shim 会拦截任何调用这些二进制的进程的剪贴板读取。
-
-| CLI | 图片粘贴 | 通知 |
-|-----|-------------|----------------|
-| [Claude Code](https://www.anthropic.com/claude-code) | ✅ 开箱可用（xclip / wl-paste shim） | ✅ 通过 `Stop` / `Notification` hooks 中的 `cc-clip-hook` |
-| [Codex CLI](https://github.com/openai/codex) | ✅ 开箱可用（Xvfb + x11-bridge；需要 `--codex` 或 `--all`） | ✅ 如果选择了 Codex 目标且远程存在 `~/.codex/`，会在 `cc-clip connect` 时接好 |
-| [opencode](https://opencode.ai) | ✅ 开箱可用（X11 上 xclip shim，Wayland 上 wl-paste shim） | ✅ 使用 `--opencode`/`--all` 时由 `cc-clip connect` 接好（投递尚未 host 验证） |
-| 任何其他 `xclip`/`wl-paste` consumer | ✅ 应该可以直接工作；如果不行，请[开启 discussion](https://github.com/ShunmeiCho/cc-clip/discussions) | — |
-
-`cc-clip setup HOST` 会安装 xclip 和 wl-paste shim，不管你使用哪个 CLI；opencode 下一次读取剪贴板时会自动用上它们。
-
-## 要求
-
-**本地（macOS）：** macOS 13+（`pngpaste` 会由 `cc-clip setup` 自动安装）
-
-**本地（Windows）：** Windows 10/11，PowerShell、`ssh` 和 `scp` 在 `PATH` 中可用
-
-**远程：** Linux，具备 SSH 访问、`curl`、`bash`，以及至少一种剪贴板 backend：X11 consumer 使用 `xclip`，Wayland consumer 使用 `wl-paste`。本地 macOS tunnel/shim 路径由 `cc-clip setup` / `cc-clip connect` 自动配置；Windows 直传路径尚未发布且仍属实验，Windows 上传/hotkey 路径仍是默认。
-
-**远程（Codex 目标 `--codex` / `--all`）：** 额外需要 `Xvfb`。如果有 passwordless sudo 会自动安装；否则运行：`sudo apt install xvfb`（Debian/Ubuntu）或 `sudo dnf install xorg-x11-server-Xvfb`（RHEL/Fedora）。
-
-## 替代方案，以及什么时候不该用 cc-clip
-
-如果下面的简单路径已经满足需求，优先使用它们：
-
-- **VS Code Remote-SSH：** 如果你的工作流本来就在 VS Code 里，直接使用编辑器内置的剪贴板行为。
-- **OSC52：** 适合文本剪贴板同步，但不是这些 CLI agent 可靠的二进制图片粘贴路径。
-- **`scp` 或手动上传文件：** 如果很少粘贴图片，而且保留 `Ctrl+V` 不值得额外设置，这是最简单的方式。
-- **lemonade 或 piknik 这类通用剪贴板桥：** 如果你想要宽泛的双向剪贴板系统，而不是针对 agent 图片粘贴的窄桥接，选择它们更合适。
-- **不可信的共享跳板机：** 如果远程 host 上的其他本地用户不应该访问仅由你用户级 token 保护的 loopback tunnel，请避免使用 cc-clip。
-
-cc-clip 针对的是一个很窄但常见的场景：你通过 SSH 运行 coding agent，希望图片粘贴以及可选通知像本地会话一样工作，同时不改 agent 本身。
+|---|---:|---|
+| 隧道端口 | `18339` | `CC_CLIP_PORT` |
+| token 有效期 | `30d` | `CC_CLIP_TOKEN_TTL` |
+| 调试日志 | 关闭 | `CC_CLIP_DEBUG=1` |
 
 ## 故障排查
 
+先运行内置诊断：
+
 ```bash
-# 一个命令检查所有内容
 cc-clip doctor --host myserver
 ```
 
-### 运行 v0.7.0 后出现 `cc-clip: real claude binary not found in PATH`
+最常见的三个修复方法是：
 
-如果你曾在远程 Claude Code 由 Anthropic Native Installer（`curl https://claude.ai/install.sh`）安装的环境里安装 cc-clip v0.7.0，v0.7.0 有一个 bug（[#55](https://github.com/ShunmeiCho/cc-clip/issues/55)）会覆盖 symlink target 上的真实 Claude binary。恢复方式：
+- **隧道不可用：**保持一个新的 `ssh myserver` 会话打开。
+  `RemoteForward` 仅在 SSH 连接持有它时存在。
+- **守护进程重启后 token 被拒绝：**运行
+  `cc-clip connect myserver --token-only`。
+- **Codex 没有剪贴板：**打开新的 SSH 会话，以加载注入的 `DISPLAY`；
+  如果缺少 Xvfb 或 x11-bridge，运行
+  `cc-clip connect myserver --codex --force`（或 `--all --force`）。
 
-```
-cc-clip setup <host> --auto-recover
-```
+如果新的 SSH 标签页报告 `remote port forwarding failed for listen port 18339`，
+说明另一个活动或残留的 SSH 会话已经占用固定远程端口。使用仍可工作的会话、
+关闭旧会话，或按照[故障排查指南](docs/troubleshooting.md)中的端口清理步骤操作。
 
-它会检测损坏状态，把原始 binary 从 `~/.local/bin/claude.cc-clip-bak` 迁回去，并安装已修复的 v0.7.1+ wrapper。`--auto-recover` 与 `--token-only` 互斥，因为它们表达的是不同意图。
+## 不适合使用 cc-clip 的场景
 
-如果远程缺少 `~/.local/bin/claude.cc-clip-bak`，则无法自动恢复该 binary。请通过 `curl https://claude.ai/install.sh` 重新安装 Claude Code，然后重新运行 `cc-clip setup`。
+如果有更简单的方案，请优先使用：
 
-<details>
-<summary><b>安装后出现 “zsh: killed”</b></summary>
+- 如果整个工作流已经在编辑器内，使用编辑器内置的远程剪贴板；
+- 仅同步文本剪贴板时，使用 OSC 52；
+- 很少传输图片，且不值得为保留粘贴行为运行守护进程和 SSH 转发时，使用 `scp`；
+- 需要广泛的双向剪贴板同步，而不是针对代理的窄工作流时，使用通用剪贴板桥接器；
+- 如果远程本地用户不能访问你的用户级回环隧道，请避免在不受信任的共享主机上使用 cc-clip。
 
-**症状：** 运行任何 `cc-clip` 命令都会立刻显示 `zsh: killed cc-clip ...`
+## 文档
 
-**原因：** macOS Gatekeeper 阻止了从互联网下载的未签名二进制。
-
-**修复：**
-
-```bash
-xattr -d com.apple.quarantine ~/.local/bin/cc-clip
-```
-
-或者重新安装（最新版安装脚本会自动处理这个问题）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
-```
-
-</details>
-
-<details>
-<summary><b>`cc-clip` 不在 PATH 中</b></summary>
-
-**症状：** 运行 `cc-clip` 时显示 `command not found`。
-
-**修复：**
-
-```bash
-# 添加到你的 shell profile
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-如果使用 bash，把 `~/.zshrc` 换成 `~/.bashrc`。
-
-</details>
-
-<details>
-<summary><b>Ctrl+V 无法粘贴图片（Claude Code）</b></summary>
-
-**逐步验证：**
-
-```bash
-# 1. Local: daemon 是否在运行？
-curl -s http://127.0.0.1:18339/health
-# 预期: {"status":"ok"}
-
-# 2. Remote: tunnel 是否在转发？
-ssh myserver "curl -s http://127.0.0.1:18339/health"
-# 预期: {"status":"ok"}
-
-# 3. Remote: shim 是否优先？
-ssh myserver "which xclip"
-# 预期: ~/.local/bin/xclip  (不是 /usr/bin/xclip)
-
-# 4. Remote: shim 是否正确拦截？
-# （先把图片复制到 Mac 剪贴板）
-ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
-# 预期: image/png
-```
-
-如果第 2 步失败，需要打开一个**新的** SSH 连接（tunnel 会在连接建立时创建）。
-
-如果第 3 步失败，说明 PATH 修复没有生效。退出后重新登录，或运行：`source ~/.bashrc`
-
-</details>
-
-<details>
-<summary><b>新 SSH 标签页提示 “remote port forwarding failed for listen port 18339”</b></summary>
-
-**症状：** 新开的 SSH 标签页警告 `remote port forwarding failed for listen port 18339`，这个标签页里的图片粘贴没有反应。
-
-**原因：** `cc-clip` 为反向 tunnel 使用固定远程端口（`18339`）。如果同一 host 的另一个 SSH 会话已经占用了该端口，或远程有 stale `sshd` 子进程仍在持有它，新标签页就无法建立自己的 tunnel。
-
-**修复：**
-
-```bash
-# 不打开额外 forward，检查远程端口：
-ssh -o ClearAllForwardings=yes myserver "ss -tln | grep 18339 || true"
-```
-
-- 如果另一个活跃 SSH 标签页已经拥有 tunnel，就使用那个标签页/会话，或先关闭它再打开新的。
-- 如果断开后端口仍卡住，请按 stale `sshd` cleanup 步骤处理。
-- 如果确实需要多个并发 SSH 会话都支持图片粘贴，请为每个 host alias 配置不同的 `cc-clip` 端口，而不是共用 `18339`。
-
-</details>
-
-<details>
-<summary><b>Ctrl+V 无法粘贴图片（Codex CLI）</b></summary>
-
-> **最常见原因：** DISPLAY 环境变量为空。setup 后必须打开一个**新的** SSH 会话；已有会话不会自动拿到更新后的 shell rc。
-
-**逐步验证（在远程服务器上运行）：**
-
-```bash
-# 1. DISPLAY 是否已设置？
-echo $DISPLAY
-# 预期: 127.0.0.1:0（或 127.0.0.1:1 等）
-# 如果为空 → 打开一个新的 SSH 会话，或运行: source ~/.bashrc
-
-# 2. SSH tunnel 是否正常？
-curl -s http://127.0.0.1:18339/health
-# 预期: {"status":"ok"}
-# 如果失败 → 打开新的 SSH 连接（tunnel 会在连接时激活）
-
-# 3. Xvfb 是否在运行？
-ps aux | grep Xvfb | grep -v grep
-# 预期: 一个 Xvfb 进程
-# 如果缺失 → 从本地重新运行: cc-clip connect myserver --all --force  （仅 Codex 则用 --codex --force）
-
-# 4. x11-bridge 是否在运行？
-ps aux | grep 'cc-clip x11-bridge' | grep -v grep
-# 预期: 一个 cc-clip x11-bridge 进程
-# 如果缺失 → 从本地重新运行: cc-clip connect myserver --all --force  （仅 Codex 则用 --codex --force）
-
-# 5. X11 socket 是否存在？
-ls -la /tmp/.X11-unix/
-# 预期: X0 文件（与你的 display number 对应）
-
-# 6. xclip 是否能通过 X11 读取剪贴板？（先在 Mac 上复制一张图片）
-xclip -selection clipboard -t TARGETS -o
-# 预期: image/png
-```
-
-**常见修复：**
-
-| 失败步骤 | 修复 |
-|-----------|-----|
-| 第 1 步（DISPLAY 为空） | 打开一个**新的** SSH 会话。如果仍为空：`source ~/.bashrc` |
-| 第 2 步（tunnel down） | 打开一个**新的** SSH 连接 — tunnel 是每个连接独立的 |
-| 第 3-4 步（进程缺失） | 在本地运行 `cc-clip connect myserver --all --force`（仅 Codex 则用 `--codex --force`） |
-| 第 6 步（没有 image/png） | 先在 Mac 上复制图片：`Cmd+Shift+Ctrl+4` |
-
-> **注意：** DISPLAY 使用 TCP loopback 格式（`127.0.0.1:N`），而不是 Unix socket 格式（`:N`），因为 Codex CLI 的 sandbox 会阻止访问 `/tmp/.X11-unix/`。如果你曾用旧版本设置过 cc-clip，请重新运行 `cc-clip connect myserver --all --force`（仅 Codex 则用 `--codex --force`）更新配置。
-
-</details>
-
-<details>
-<summary><b>Setup 重新部署时失败并显示 “killed”</b></summary>
-
-**症状：** `cc-clip setup` 以前能工作，但重新运行时显示 `zsh: killed`。
-
-**原因：** launchd service 正在运行旧二进制。daemon 持有旧文件时替换二进制可能导致冲突。
-
-**修复：**
-
-```bash
-cc-clip service uninstall
-curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
-cc-clip setup myserver
-```
-
-</details>
-
-<details>
-<summary><b>更多问题</b></summary>
-
-查看 [Troubleshooting Guide](docs/troubleshooting.md) 获取详细诊断，或运行 `cc-clip doctor --host myserver`。
-
-</details>
+| 指南 | 内容 |
+|---|---|
+| [Windows 快速开始](docs/windows-quickstart.md) | Windows 上传、粘贴和热键工作流 |
+| [升级](docs/upgrading.md) | 破坏性变更和特定版本迁移 |
+| [命令](docs/commands.md) | 常用命令、选项和环境变量 |
+| [通知](docs/notifications.md) | hook 和 plugin 集成 |
+| [故障排查](docs/troubleshooting.md) | 按症状诊断 |
+| [安全](SECURITY.md) | 威胁模型和信任边界 |
 
 ## 贡献
 
-欢迎贡献。Bug 报告和功能请求请[开启 issue](https://github.com/ShunmeiCho/cc-clip/issues)。
+欢迎提交 bug 报告和范围明确的 pull request。对于较大的功能，请先创建
+[issue](https://github.com/ShunmeiCho/cc-clip/issues)，以便讨论实现方案。
 
-代码贡献（从源码构建需要 Go 1.25.10+，以 `go.mod` 为准）：
+从源代码构建需要使用 `go.mod` 中声明的 Go 版本：
 
 ```bash
 git clone https://github.com/ShunmeiCho/cc-clip.git
 cd cc-clip
-make build && make test
+make build
+make test
 ```
 
-- **Bug fixes：** 直接开 PR，并清楚描述修复内容
-- **New features：** 先开 issue 讨论方案
-- **Commit style：** [Conventional Commits](https://www.conventionalcommits.org/)（`feat:`、`fix:`、`docs:` 等）
-
-## 相关问题
-
-**Claude Code — Clipboard:**
-- [anthropics/claude-code#5277](https://github.com/anthropics/claude-code/issues/5277) — Image paste in SSH sessions
-- [anthropics/claude-code#29204](https://github.com/anthropics/claude-code/issues/29204) — xclip/wl-paste dependency
-
-**Claude Code — Notifications:**
-- [anthropics/claude-code#19976](https://github.com/anthropics/claude-code/issues/19976) — Terminal notifications fail in tmux/SSH
-- [anthropics/claude-code#29928](https://github.com/anthropics/claude-code/issues/29928) — Built-in completion notifications
-- [anthropics/claude-code#36885](https://github.com/anthropics/claude-code/issues/36885) — Notification when waiting for input (headless/SSH)
-- [anthropics/claude-code#29827](https://github.com/anthropics/claude-code/issues/29827) — Webhook/push notification for permission requests
-- [anthropics/claude-code#36850](https://github.com/anthropics/claude-code/issues/36850) — Terminal bell on tool approval prompt
-- [anthropics/claude-code#32610](https://github.com/anthropics/claude-code/issues/32610) — Terminal bell on completion
-- [anthropics/claude-code#40165](https://github.com/anthropics/claude-code/issues/40165) — OSC-99 notification support assumed, not queried
-
-**Codex CLI — Clipboard:**
-- [openai/codex#6974](https://github.com/openai/codex/issues/6974) — Linux: cannot paste image
-- [openai/codex#6080](https://github.com/openai/codex/issues/6080) — Image pasting issue
-- [openai/codex#13716](https://github.com/openai/codex/issues/13716) — Clipboard image paste failure on Linux
-- [openai/codex#7599](https://github.com/openai/codex/issues/7599) — Image clipboard does not work in WSL
-
-**Codex CLI — Notifications:**
-- [openai/codex#3962](https://github.com/openai/codex/issues/3962) — Play a sound when Codex finishes (34 comments)
-- [openai/codex#8929](https://github.com/openai/codex/issues/8929) — Notify hook not getting triggered
-- [openai/codex#8189](https://github.com/openai/codex/issues/8189) — WSL2: notifications fail for approval prompts
-
-**opencode — Clipboard:**
-- [anomalyco/opencode#19294](https://github.com/anomalyco/opencode/issues/19294) — Image paste works over SSH, but sending fails with "invalid image data"
-- [anomalyco/opencode#16962](https://github.com/anomalyco/opencode/issues/16962) — Clipboard copy not working over SSH (Mac-to-Mac)
-- [anomalyco/opencode#15907](https://github.com/anomalyco/opencode/issues/15907) — Clipboard copy not working over SSH + tmux in Ghostty
-- [anomalyco/opencode#19502](https://github.com/anomalyco/opencode/issues/19502) — Windows Terminal + WSL: Ctrl+V image paste is inconsistent
-- [anomalyco/opencode#17616](https://github.com/anomalyco/opencode/issues/17616) — Image paste from clipboard broken on Windows
-
-**opencode — Notifications:**
-- [anomalyco/opencode#18004](https://github.com/anomalyco/opencode/issues/18004) — Allow notifications even when opencode is focused
-
-**Terminal / Multiplexer:**
-- [manaflow-ai/cmux#833](https://github.com/manaflow-ai/cmux/issues/833) — Notifications over SSH+tmux sessions
-- [manaflow-ai/cmux#559](https://github.com/manaflow-ai/cmux/issues/559) — Better SSH integration
-- [ghostty-org/ghostty#10517](https://github.com/ghostty-org/ghostty/discussions/10517) — SSH image paste discussion
+提交消息请遵循 [Conventional Commits](https://www.conventionalcommits.org/)
+规范（`feat:`、`fix:`、`docs:` 等）。
 
 ## 许可证
 
