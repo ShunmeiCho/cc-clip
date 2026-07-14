@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
+  <title id="title">cc-clip — clipboard over SSH for remote AI coding agents</title>
+  <desc id="desc">A local clipboard travels through a loopback-only SSH tunnel to Claude Code, Codex CLI, and opencode on remote Linux.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316"/>
+    </marker>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#252525" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="380" rx="28" fill="#0B0B0C"/>
+  <rect width="1200" height="380" rx="28" fill="url(#grid)" opacity="0.55"/>
+  <path d="M 596 44 V 336" stroke="#2F2F31" stroke-width="1"/>
+
+  <g id="title-block" transform="translate(56 48)">
+    <text x="0" y="18" fill="#F97316" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" font-weight="700" letter-spacing="2">SSH CLIPBOARD BRIDGE</text>
+    <text x="0" y="104" fill="#F5F3EE" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="76" font-weight="760" letter-spacing="-3">cc-clip</text>
+    <text x="0" y="150" fill="#D4D4D4" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="520">Paste local images into remote coding agents.</text>
+    <text x="0" y="184" fill="#8F8F92" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21">No agent patches. No public clipboard endpoint.</text>
+
+    <g transform="translate(0 238)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">
+      <rect width="164" height="36" rx="18" fill="#171718" stroke="#3A3A3C"/>
+      <circle cx="20" cy="18" r="4" fill="#86EFAC"/>
+      <text x="34" y="23" fill="#D4D4D4">LOOPBACK ONLY</text>
+
+      <g transform="translate(176 0)">
+        <rect width="134" height="36" rx="18" fill="#171718" stroke="#3A3A3C"/>
+        <text x="18" y="23" fill="#D4D4D4">PORT 18339</text>
+      </g>
+
+      <g transform="translate(322 0)">
+        <rect width="164" height="36" rx="18" fill="#171718" stroke="#3A3A3C"/>
+        <text x="18" y="23" fill="#D4D4D4">REMOTE LINUX</text>
+      </g>
+    </g>
+  </g>
+
+  <g id="project-proof" transform="translate(644 46)">
+    <g id="local-clipboard">
+      <text x="0" y="16" fill="#8F8F92" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1.5">LOCAL</text>
+      <rect x="0" y="34" width="194" height="108" rx="18" fill="#141415" stroke="#3A3A3C"/>
+      <rect x="20" y="54" width="48" height="58" rx="8" fill="none" stroke="#F97316" stroke-width="3"/>
+      <rect x="32" y="47" width="24" height="13" rx="6" fill="#F97316"/>
+      <path d="M 79 77 H 160 M 79 96 H 140" stroke="#6B6B6E" stroke-width="4" stroke-linecap="round"/>
+      <text x="20" y="130" fill="#D4D4D4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">clipboard / image</text>
+    </g>
+
+    <g id="ssh-tunnel" transform="translate(220 54)">
+      <path d="M 0 32 C 42 0, 78 0, 120 32" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+      <path d="M 0 58 C 42 90, 78 90, 120 58" fill="none" stroke="#4A4A4D" stroke-width="2" stroke-dasharray="7 8"/>
+      <text x="24" y="118" fill="#F97316" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">SSH TUNNEL</text>
+      <text x="12" y="140" fill="#7D7D80" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">127.0.0.1:18339</text>
+    </g>
+
+    <g id="remote-agents" transform="translate(366 0)">
+      <text x="0" y="16" fill="#8F8F92" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="1.5">REMOTE</text>
+      <rect x="0" y="34" width="142" height="196" rx="18" fill="#141415" stroke="#3A3A3C"/>
+      <text x="18" y="68" fill="#F5F3EE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">Claude Code</text>
+      <path d="M 18 83 H 124" stroke="#303033"/>
+      <text x="18" y="112" fill="#F5F3EE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">Codex CLI</text>
+      <path d="M 18 127 H 124" stroke="#303033"/>
+      <text x="18" y="156" fill="#F5F3EE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">opencode</text>
+      <path d="M 18 171 H 124" stroke="#303033"/>
+      <text x="18" y="203" fill="#86EFAC" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">image ready</text>
+    </g>
+
+    <g id="terminal-proof" transform="translate(0 252)">
+      <rect width="508" height="70" rx="15" fill="#101011" stroke="#2F2F31"/>
+      <circle cx="22" cy="20" r="4" fill="#F97316"/>
+      <circle cx="36" cy="20" r="4" fill="#555559"/>
+      <circle cx="50" cy="20" r="4" fill="#555559"/>
+      <text x="20" y="51" fill="#86EFAC" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">$</text>
+      <text x="42" y="51" fill="#D4D4D4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">cc-clip doctor --host myserver</text>
+      <text x="450" y="51" fill="#86EFAC" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">OK</text>
+    </g>
+  </g>
+</svg>
