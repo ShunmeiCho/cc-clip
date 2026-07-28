@@ -25,9 +25,16 @@ func RunRemote(host string, port int) []CheckResult {
 	results = append(results, CheckResult{"ssh", true, fmt.Sprintf("connected to %s", host)})
 
 	// Check remote binary
-	out, err = remoteExecNoForward(host, "~/.local/bin/cc-clip version")
+	out, err = remoteExecNoForward(
+		host,
+		"if command -v cc-clip >/dev/null 2>&1; then cc-clip version; else ~/.local/bin/cc-clip version; fi",
+	)
 	if err != nil {
-		results = append(results, CheckResult{"remote-bin", false, "cc-clip not found at ~/.local/bin/cc-clip"})
+		results = append(results, CheckResult{
+			"remote-bin",
+			false,
+			"cc-clip not found in remote PATH or at ~/.local/bin/cc-clip",
+		})
 	} else {
 		results = append(results, CheckResult{"remote-bin", true, strings.TrimSpace(out)})
 	}

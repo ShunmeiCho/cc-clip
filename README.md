@@ -99,6 +99,12 @@ run that command manually, then repeat setup.
 The Claude and opencode paths use the remote `xclip` or `wl-paste` shim. Codex
 reads X11 directly, so its target adds Xvfb and `cc-clip x11-bridge` instead.
 
+If a package manager already owns `cc-clip` on the remote, preserve that
+ownership with `cc-clip setup myserver --use-remote-bin`. Setup resolves
+`cc-clip` from the remote PATH, records its version and hash, and performs the
+normal integration setup without uploading a replacement binary. The flag
+cannot be combined with `--local-bin`.
+
 > opencode and Antigravity integration generation is covered by tests, but host
 > event delivery has not yet been smoke-tested on a representative machine.
 > Please [report what you find](https://github.com/ShunmeiCho/cc-clip/issues).
@@ -176,6 +182,7 @@ before using cc-clip on a shared or untrusted host.
 | Command | Use it for |
 |---|---|
 | `cc-clip setup HOST [target]` | First-time dependencies, SSH config, daemon, and deploy |
+| `cc-clip setup HOST --use-remote-bin` | Configure a host whose remote binary is package-managed |
 | `cc-clip connect HOST --force [target]` | Repair or fully redeploy a host |
 | `cc-clip connect HOST --token-only` | Sync a rotated or expired token |
 | `cc-clip doctor --host HOST` | End-to-end diagnosis |

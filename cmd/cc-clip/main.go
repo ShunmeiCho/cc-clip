@@ -132,6 +132,7 @@ One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
     --claude/--codex/--opencode/--agy/--all   Deployment target (see "Deployment targets" below)
+    --use-remote-bin Use cc-clip from the remote PATH; skip binary upload
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
 Known hosts (per-user registry):
@@ -149,6 +150,7 @@ Deploy (local -> remote):
   connect <host>     Deploy cc-clip to remote and establish session
     --port           Tunnel port (default: 18339)
     --local-bin      Path to pre-downloaded remote binary
+    --use-remote-bin Use cc-clip from the remote PATH; skip binary upload
     --force          Ignore remote state, full redeploy
     --token-only     Only sync token, skip binary/shim deploy
     --no-hooks       Persistently disable Claude Code hook injection (Claude target only)
@@ -625,15 +627,16 @@ func cmdUninstallCodexLocal() {
 }
 
 type connectOpts struct {
-	host        string
-	port        int
-	force       bool
-	tokenOnly   bool
-	targets     DeployTargets // resolved deployment target set (parse + TTY menu); codex/claude/shim phases gate on its membership
-	noNotify    bool
-	noHooks     bool
-	hooks       bool
-	autoRecover bool
+	host         string
+	port         int
+	force        bool
+	tokenOnly    bool
+	useRemoteBin bool
+	targets      DeployTargets // resolved deployment target set (parse + TTY menu); codex/claude/shim phases gate on its membership
+	noNotify     bool
+	noHooks      bool
+	hooks        bool
+	autoRecover  bool
 }
 
 // rejectAutoRecoverWithTokenOnly enforces the spec-mandated mutual
@@ -672,16 +675,27 @@ func rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly bool) {
 	}
 }
 
+func rejectRemoteBinWithLocalBin(useRemoteBin bool, localBin string) {
+	if !useRemoteBin || localBin == "" {
+		return
+	}
+	fmt.Fprintln(os.Stderr, `error: --use-remote-bin cannot be combined with --local-bin
+       --use-remote-bin uses the cc-clip executable already on the remote PATH,
+       while --local-bin selects a local executable to upload.`)
+	os.Exit(2)
+}
+
 func cmdConnect() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--use-remote-bin] [--no-notify] [--no-hooks|--hooks]")
 	}
 	host, err := hostFromArgs(os.Args[2:])
 	if err != nil {
-		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--no-notify] [--no-hooks|--hooks]")
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only] [--use-remote-bin] [--no-notify] [--no-hooks|--hooks]")
 	}
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
+	useRemoteBin := hasFlag("use-remote-bin")
 	noHooks := hasFlag("no-hooks")
 	hooks := hasFlag("hooks")
 	if noHooks && hooks {
@@ -689,6 +703,7 @@ func cmdConnect() {
 	}
 	rejectAutoRecoverWithTokenOnly("connect", autoRecover, tokenOnly)
 	rejectHookControlWithTokenOnly(noHooks, hooks, tokenOnly)
+	rejectRemoteBinWithLocalBin(useRemoteBin, getFlag("local-bin", ""))
 
 	// Resolve deployment targets BEFORE any SSH/daemon activity so the
 	// interactive menu (design §5) precedes the passphrase prompt. A multi-
@@ -711,15 +726,16 @@ func cmdConnect() {
 	maybeLegacyCodexNotice(os.Stderr, os.Args[2:], targets)
 
 	runConnect(connectOpts{
-		host:        host,
-		port:        getPort(),
-		force:       hasFlag("force"),
-		tokenOnly:   tokenOnly,
-		targets:     targets,
-		noNotify:    hasFlag("no-notify"),
-		noHooks:     noHooks,
-		hooks:       hooks,
-		autoRecover: autoRecover,
+		host:         host,
+		port:         getPort(),
+		force:        hasFlag("force"),
+		tokenOnly:    tokenOnly,
+		useRemoteBin: useRemoteBin,
+		targets:      targets,
+		noNotify:     hasFlag("no-notify"),
+		noHooks:      noHooks,
+		hooks:        hooks,
+		autoRecover:  autoRecover,
 	})
 }
 
@@ -850,10 +866,38 @@ remote has a valid claude binary installed.
 		os.Exit(3)
 	}
 
+	remoteBin := "~/.local/bin/cc-clip"
+	var existingRemoteBin *shim.RemoteBinaryInfo
+	if opts.useRemoteBin {
+		existingRemoteBin, err = shim.InspectRemoteBinary(session)
+		if err != nil {
+			log.Fatalf("      failed to resolve remote binary: %v", err)
+		}
+		remoteBin = existingRemoteBin.Command()
+		localVersion := normalizeVersion(version)
+		remoteVersion := normalizeVersion(existingRemoteBin.Version)
+		if localVersion != "" && remoteVersion != "" && localVersion != remoteVersion {
+			log.Printf(
+				"      warning: local version is %s, remote version is %s; continuing with the remote binary",
+				localVersion,
+				remoteVersion,
+			)
+		}
+	}
+
 	// --token-only: skip binary/shim, just sync token and verify tunnel
 	if tokenOnly {
-		fmt.Println("[3/7] Skipping binary check (--token-only)")
-		fmt.Println("[4/7] Skipping binary upload (--token-only)")
+		if existingRemoteBin != nil {
+			fmt.Printf(
+				"[3/7] Using remote binary %s (%s)\n",
+				existingRemoteBin.Path,
+				existingRemoteBin.Version,
+			)
+			fmt.Println("[4/7] Skipping binary upload (--use-remote-bin)")
+		} else {
+			fmt.Println("[3/7] Skipping binary check (--token-only)")
+			fmt.Println("[4/7] Skipping binary upload (--token-only)")
+		}
 		fmt.Println("[5/7] Skipping shim install (--token-only)")
 
 		fmt.Printf("[6/7] Syncing token and session...\n")
@@ -882,7 +926,7 @@ remote has a valid claude binary installed.
 			}
 		}
 
-		connectVerifyTunnel(session, port, host, opts.targets)
+		connectVerifyTunnel(session, port, host, opts.targets, remoteBin)
 
 		// Record this host even on the --token-only path so `hosts list` and
 		// per-host update reminders reflect the most recent successful sync.
@@ -926,42 +970,51 @@ remote has a valid claude binary installed.
 		fmt.Println("      no previous deploy state")
 	}
 
-	remoteOS, remoteArch, err := shim.DetectRemoteArchViaSession(session)
-	if err != nil {
-		log.Fatalf("      failed to detect remote arch: %v", err)
-	}
-	fmt.Printf("      %s/%s\n", remoteOS, remoteArch)
-
-	remoteBin := "~/.local/bin/cc-clip"
-
 	// Step 4: Prepare and upload binary (skip if hash matches)
-	localBin, err := prepareBinaryLocal(host, remoteOS, remoteArch)
-	if err != nil {
-		log.Fatalf("[4/7] Prepare binary failed: %v", err)
-	}
-
-	needsUpload := force || shim.NeedsUpload(localBin, remoteState)
-	if !needsUpload {
-		// Verify the remote binary actually exists — deploy state can be stale.
-		if _, err := session.Exec(fmt.Sprintf("test -x %s", remoteBin)); err != nil {
-			fmt.Println("[4/7] Remote binary missing despite cached state, re-uploading")
-			needsUpload = true
-		}
-	}
-	if needsUpload {
-		fmt.Printf("[4/7] Uploading cc-clip binary...\n")
-		// Stop bridge if running — it holds the binary open, preventing overwrite.
-		stopBridgeRemote(session)
-		// Ensure remote directory exists
-		if _, err := session.Exec("mkdir -p ~/.local/bin"); err != nil {
-			log.Fatalf("      failed to create remote binary directory: %v", err)
-		}
-		if err := shim.UploadBinaryViaSession(session, localBin, remoteBin); err != nil {
-			log.Fatalf("      failed: %v", err)
-		}
-		fmt.Printf("      uploaded to %s\n", remoteBin)
+	var localBin string
+	var needsUpload bool
+	if existingRemoteBin != nil {
+		fmt.Printf(
+			"      remote binary: %s (%s)\n",
+			existingRemoteBin.Path,
+			existingRemoteBin.Version,
+		)
+		fmt.Println("[4/7] Using existing remote binary, skipping upload")
 	} else {
-		fmt.Println("[4/7] Binary up to date, skipping upload")
+		remoteOS, remoteArch, err := shim.DetectRemoteArchViaSession(session)
+		if err != nil {
+			log.Fatalf("      failed to detect remote arch: %v", err)
+		}
+		fmt.Printf("      %s/%s\n", remoteOS, remoteArch)
+
+		localBin, err = prepareBinaryLocal(host, remoteOS, remoteArch)
+		if err != nil {
+			log.Fatalf("[4/7] Prepare binary failed: %v", err)
+		}
+
+		needsUpload = force || shim.NeedsUpload(localBin, remoteState)
+		if !needsUpload {
+			// Verify the remote binary actually exists — deploy state can be stale.
+			if _, err := session.Exec(fmt.Sprintf("test -x %s", remoteBin)); err != nil {
+				fmt.Println("[4/7] Remote binary missing despite cached state, re-uploading")
+				needsUpload = true
+			}
+		}
+		if needsUpload {
+			fmt.Printf("[4/7] Uploading cc-clip binary...\n")
+			// Stop bridge if running — it holds the binary open, preventing overwrite.
+			stopBridgeRemote(session)
+			// Ensure remote directory exists
+			if _, err := session.Exec("mkdir -p ~/.local/bin"); err != nil {
+				log.Fatalf("      failed to create remote binary directory: %v", err)
+			}
+			if err := shim.UploadBinaryViaSession(session, localBin, remoteBin); err != nil {
+				log.Fatalf("      failed: %v", err)
+			}
+			fmt.Printf("      uploaded to %s\n", remoteBin)
+		} else {
+			fmt.Println("[4/7] Binary up to date, skipping upload")
+		}
 	}
 
 	// Step 5: Install shim — only for targets that use the clipboard shim
@@ -1053,16 +1106,35 @@ remote has a valid claude binary installed.
 	} else if remoteState != nil && remoteState.ShimTarget != "" {
 		shimTarget = remoteState.ShimTarget
 	}
-	newState, err := newDeployState(localBin, version, shimTarget, pathFixed, remoteState, opts.targets)
-	if err != nil {
-		log.Fatalf("      failed to prepare remote deploy state: %v", err)
+	var newState *shim.DeployState
+	if existingRemoteBin != nil {
+		newState = newDeployStateFromBinary(
+			existingRemoteBin.Hash,
+			existingRemoteBin.Version,
+			shimTarget,
+			pathFixed,
+			remoteState,
+			opts.targets,
+		)
+	} else {
+		newState, err = newDeployState(
+			localBin,
+			version,
+			shimTarget,
+			pathFixed,
+			remoteState,
+			opts.targets,
+		)
+		if err != nil {
+			log.Fatalf("      failed to prepare remote deploy state: %v", err)
+		}
 	}
 	if err := shim.WriteRemoteState(session, newState); err != nil {
 		log.Printf("      warning: could not write remote deploy state: %v", err)
 	}
 
 	// Step 7: Verify tunnel
-	connectVerifyTunnel(session, port, host, opts.targets)
+	connectVerifyTunnel(session, port, host, opts.targets, remoteBin)
 
 	// Notification bridge setup (unless --no-notify)
 	if !opts.noNotify {
@@ -1074,7 +1146,7 @@ remote has a valid claude binary installed.
 
 	// Steps 8-11: Codex support (only if Codex is among the resolved targets)
 	if codexTargeted(opts.targets) {
-		codexOk := runConnectCodex(session, opts, needsUpload, newState)
+		codexOk := runConnectCodex(session, opts, needsUpload, newState, remoteBin)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not update deploy state: %v", err)
 		}
@@ -1107,8 +1179,19 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 		return nil, err
 	}
 
+	return newDeployStateFromBinary(
+		localHash,
+		binaryVersion,
+		shimTarget,
+		pathFixed,
+		remoteState,
+		targets,
+	), nil
+}
+
+func newDeployStateFromBinary(binaryHash, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, targets DeployTargets) *shim.DeployState {
 	state := &shim.DeployState{
-		BinaryHash:    localHash,
+		BinaryHash:    binaryHash,
 		BinaryVersion: binaryVersion,
 		// Only claim a shim when this run targeted it (Claude/opencode). A
 		// shim-less target (pure --codex/--agy) preserves any prior shim below
@@ -1133,7 +1216,7 @@ func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, 
 			}
 		}
 	}
-	return state, nil
+	return state
 }
 
 // adapterOutcome captures one detect-install adapter's per-connect result.
@@ -1619,7 +1702,9 @@ func cmdSetup() {
 	// setup to fail-fast just like connect does.
 	autoRecover := hasFlag("auto-recover")
 	tokenOnly := hasFlag("token-only")
+	useRemoteBin := hasFlag("use-remote-bin")
 	rejectAutoRecoverWithTokenOnly("setup", autoRecover, tokenOnly)
+	rejectRemoteBinWithLocalBin(useRemoteBin, getFlag("local-bin", ""))
 
 	// Resolve deployment targets BEFORE any local dependency / daemon / SSH
 	// activity so the interactive menu (design §5) precedes any prompt, and a
@@ -1692,10 +1777,11 @@ func cmdSetup() {
 	// Step 4: Deploy to remote
 	fmt.Printf("\n[4/4] Deploying to %s...\n", host)
 	runConnect(connectOpts{
-		host:        host,
-		port:        port,
-		targets:     targets,
-		autoRecover: autoRecover,
+		host:         host,
+		port:         port,
+		targets:      targets,
+		useRemoteBin: useRemoteBin,
+		autoRecover:  autoRecover,
 	})
 }
 
@@ -1720,9 +1806,7 @@ func connectSuccessSummary(t DeployTargets) string {
 }
 
 // connectVerifyTunnel verifies the SSH tunnel from the remote side.
-func connectVerifyTunnel(session *shim.SSHSession, port int, host string, targets DeployTargets) {
-	remoteBin := "~/.local/bin/cc-clip"
-
+func connectVerifyTunnel(session *shim.SSHSession, port int, host string, targets DeployTargets, remoteBin string) {
 	fmt.Printf("[7/7] Verifying tunnel from remote...\n")
 	probeCmd := fmt.Sprintf(
 		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>/dev/null && echo 'tunnel:ok' || echo 'tunnel:fail'",
@@ -2164,7 +2248,7 @@ const codexStateDir = "~/.cache/cc-clip/codex"
 
 // runConnectCodex executes steps 8-11 of the Codex deploy flow.
 // Returns true on success, false on failure (Claude path is preserved).
-func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded bool, state *shim.DeployState) bool {
+func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded bool, state *shim.DeployState, remoteBin string) bool {
 	port := opts.port
 
 	if opts.tokenOnly {
@@ -2230,7 +2314,7 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 		// Stop any existing bridge first.
 		stopBridgeRemote(session)
 
-		if err := startBridgeRemote(session, xvfbState.Display, port); err != nil {
+		if err := startBridgeRemote(session, xvfbState.Display, port, remoteBin); err != nil {
 			fmt.Printf("      x11-bridge start failed: %v\n", err)
 			dumpRemoteLog(session, codexStateDir+"/bridge.log")
 			return false
@@ -2260,13 +2344,13 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 }
 
 // startBridgeRemote starts the x11-bridge daemon on the remote.
-func startBridgeRemote(session *shim.SSHSession, display string, port int) error {
+func startBridgeRemote(session *shim.SSHSession, display string, port int, remoteBin string) error {
 	startScript := fmt.Sprintf(
-		`nohup env DISPLAY=":%s" ~/.local/bin/cc-clip x11-bridge --display ":%s" --port %d > %s/bridge.log 2>&1 < /dev/null &
+		`nohup env DISPLAY=":%s" %s x11-bridge --display ":%s" --port %d > %s/bridge.log 2>&1 < /dev/null &
 echo $! > %s/bridge.pid
 sleep 0.3
 kill -0 $(cat %s/bridge.pid 2>/dev/null) 2>/dev/null && echo 'bridge:ok' || echo 'bridge:fail'`,
-		display, display, port,
+		display, remoteBin, display, port,
 		codexStateDir, codexStateDir, codexStateDir,
 	)
 	out, err := session.Exec(startScript)

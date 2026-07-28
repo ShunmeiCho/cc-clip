@@ -37,6 +37,16 @@ func TestCLIMutex(t *testing.T) {
 			args:    []string{"connect", "fakehost.invalid", "--token-only", "--hooks"},
 			wantErr: "--no-hooks/--hooks cannot be combined with --token-only",
 		},
+		{
+			name:    "connect_remote_bin_with_local_bin",
+			args:    []string{"connect", "fakehost.invalid", "--use-remote-bin", "--local-bin", "/tmp/cc-clip"},
+			wantErr: "--use-remote-bin cannot be combined with --local-bin",
+		},
+		{
+			name:    "setup_remote_bin_with_local_bin",
+			args:    []string{"setup", "fakehost.invalid", "--use-remote-bin", "--local-bin", "/tmp/cc-clip"},
+			wantErr: "--use-remote-bin cannot be combined with --local-bin",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
