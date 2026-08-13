@@ -7,6 +7,7 @@ import (
 
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
+	"github.com/shunmei/cc-clip/internal/tunnel"
 )
 
 func RunRemote(host string, port int) []CheckResult {
@@ -59,9 +60,10 @@ func RunRemote(host string, port int) []CheckResult {
 		results = append(results, CheckResult{"path-order", false, fmt.Sprintf("%s resolves to %s (shim not first)", checkTarget, strings.TrimSpace(out))})
 	}
 
-	// Check tunnel from remote side
-	out, err = remoteExecNoForward(host, fmt.Sprintf(
-		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>&1 && echo 'tunnel ok' || echo 'tunnel fail'", port))
+	// Check tunnel from remote side. A TCP-only probe is not enough: a stale
+	// sshd forward keeps the port in LISTEN after its session is gone, so the
+	// handshake succeeds while nothing reaches the daemon.
+	out, err = remoteExecNoForward(host, tunnel.RemoteHealthProbeCommand(port))
 	results = append(results, classifyTunnelCheck(out, err, port))
 
 	// Check token on remote
@@ -89,14 +91,17 @@ func RunRemote(host string, port int) []CheckResult {
 // CheckResult. An SSH transport failure (err != nil) is reported as a distinct
 // "check did not run" result so it is not confused with the legitimate
 // "check ran and the port is not reachable" outcome.
+//
+// Only tunnel.RemoteTunnelOK — a cc-clip daemon answering GET /health through
+// the forward — counts as OK. Reachable-but-silent and unrecognized output
+// both fail closed, so a stale sshd holding the port can no longer be reported
+// as a working tunnel.
 func classifyTunnelCheck(out string, err error, port int) CheckResult {
 	if err != nil {
 		return CheckResult{"tunnel", false, fmt.Sprintf("remote check could not run over SSH: %v (%s)", err, strings.TrimSpace(out))}
 	}
-	if strings.Contains(out, "tunnel ok") {
-		return CheckResult{"tunnel", true, fmt.Sprintf("port %d forwarded", port)}
-	}
-	return CheckResult{"tunnel", false, fmt.Sprintf("port %d not reachable from remote", port)}
+	state := tunnel.ClassifyRemoteProbeOutput(out)
+	return CheckResult{"tunnel", state.Healthy(), state.Summary(port)}
 }
 
 // classifyRemoteTokenCheck turns the result of the remote token-presence probe
