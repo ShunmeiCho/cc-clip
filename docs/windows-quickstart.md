@@ -109,6 +109,20 @@ The hotkey/send path is static: it sends to the configured host. If you use
 several remote hosts at the same time, run an explicit one-shot command with
 the host you want, or use separate hotkey configuration per workflow.
 
+> **Focus guard.** The paste is delivered as a synthesized `Ctrl+Shift+V`, which
+> goes to whichever window is focused when it fires — and the gap is not only
+> the configured `--delay-ms`, it also covers the PowerShell process start.
+> `cc-clip` therefore records the focused window before writing the clipboard
+> and re-checks it immediately before the keystroke. If focus moved, the paste
+> is **aborted and nothing is typed**, so the remote path cannot land in a
+> password field, a chat input, or a browser URL bar.
+>
+> An aborted paste reports `focus changed during paste` and is logged to
+> `~/.cache/cc-clip/hotkey.log`. Re-focus the target window and press the
+> hotkey again. The guard also aborts when Windows reports no foreground
+> window at all, which happens briefly while a window is losing activation —
+> retrying with the window focused is the fix.
+
 ## Experimental: Direct Remote Clipboard
 
 This section is for source builds and future explicit prereleases only. It is
