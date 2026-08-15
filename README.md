@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <b>Paste images into remote Claude Code, Codex CLI, and opencode sessions over SSH.</b><br>
+  <b>Paste images into remote Claude Code, Codex CLI, opencode, and Cursor sessions over SSH — and copy text back out, free of terminal soft-wrap.</b><br>
   Optional integrations bring completion and approval notifications back to your desktop.
 </p>
 
@@ -136,8 +136,9 @@ binaries. The flag cannot be combined with `--local-bin` in the same run.
 | Linux | Linux | Manual daemon | Run `cc-clip serve`, then `cc-clip setup HOST` in another shell |
 
 Windows support remains experimental. Start with the explicit upload-and-paste
-workflow in the [Windows Quick Start](docs/windows-quickstart.md). v0.9.1 also
-includes an opt-in direct RemoteForward transport, but it is not the default.
+workflow in the [Windows Quick Start](docs/windows-quickstart.md). An opt-in
+direct RemoteForward transport also exists (since v0.9.1), but it is not the
+default.
 
 ## How It Works
 
