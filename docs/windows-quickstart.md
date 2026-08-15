@@ -109,6 +109,20 @@ The hotkey/send path is static: it sends to the configured host. If you use
 several remote hosts at the same time, run an explicit one-shot command with
 the host you want, or use separate hotkey configuration per workflow.
 
+> **Focus guard.** The paste is delivered as a synthesized `Ctrl+Shift+V`, which
+> goes to whichever window is focused when it fires — and the gap is not only
+> the configured `--delay-ms`, it also covers the PowerShell process start.
+> `cc-clip` therefore records the focused window before writing the clipboard
+> and re-checks it immediately before the keystroke. If focus moved, the paste
+> is **aborted and nothing is typed**, so the remote path cannot land in a
+> password field, a chat input, or a browser URL bar.
+>
+> An aborted paste reports `focus changed during paste` and is logged to
+> `~/.cache/cc-clip/hotkey.log`. Re-focus the target window and press the
+> hotkey again. The guard also aborts when Windows reports no foreground
+> window at all, which happens briefly while a window is losing activation —
+> retrying with the window focused is the fix.
+
 ## Experimental: Direct Remote Clipboard
 
 This section is for source builds and future explicit prereleases only. It is
@@ -232,11 +246,19 @@ If experimental direct paste does not work:
     type $HOME\.ssh\config
     ```
 
-3. Open a new SSH session and check the remote can see the tunnel:
+3. Open a new SSH session and check the remote can reach the daemon through
+   the tunnel:
 
     ```sh
-    bash -c 'echo >/dev/tcp/127.0.0.1/18339' && echo ok
+    curl -sf http://127.0.0.1:18339/health
     ```
+
+    A healthy tunnel answers `{"service":"cc-clip","status":"ok"}`. Do not use
+    a bare TCP check such as `bash -c 'echo >/dev/tcp/127.0.0.1/18339'` — a
+    stale `sshd` from an earlier session keeps the port open after its client
+    is gone, so the handshake succeeds while nothing reaches the daemon. That
+    is why `cc-clip connect` and `cc-clip doctor` ask the daemon to identify
+    itself instead.
 
 4. Confirm the shim is first in `PATH`:
 

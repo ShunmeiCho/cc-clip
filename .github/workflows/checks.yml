@@ -1,0 +1,98 @@
+name: Checks
+
+# The single definition of "does this commit pass". Called by ci.yml on pull
+# requests and pushes to main, and by release.yml before it publishes a tag.
+#
+# It lives in its own reusable workflow rather than being duplicated so the two
+# callers cannot drift. A tag push does not trigger ci.yml (that fires on
+# pull_request and push to main only), so before this existed the release
+# commit was published without ever running the race tests, staticcheck,
+# govulncheck, or the agent-config policy check.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # Builds and tests against the toolchain go.mod declares. This job answers
+  # "does the project build and pass on the version we promise to support".
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # These paths are per-machine agent tooling, excluded by .gitignore.
+      # Enforced here because .gitignore only stops accidental adds — a
+      # forced add or an API-created commit walks straight past it, which is
+      # how #99 landed and had to be reverted in #102.
+      - name: Policy - agent tool config stays untracked
+        run: |
+          matches=$(git ls-files -- .claude .codex .agents AGENTS.md '*/AGENTS.md')
+          if [ -n "$matches" ]; then
+            echo "::error::Per-machine agent tool config must not be committed (see .gitignore):"
+            echo "$matches"
+            exit 1
+          fi
+
+      # goreleaser's archive naming and the two installers must agree, or
+      # published assets 404 on download. Checked on every commit rather than
+      # only at tag time, so a PR that breaks the contract fails while it is
+      # still cheap to fix.
+      - name: Policy - release asset naming contract
+        run: |
+          # goreleaser must produce cc-clip_{version}_{os}_{arch}.tar.gz
+          # -E (ERE) rather than -P (PCRE) so the same pattern is portable
+          # between the Ubuntu runner's GNU grep and BSD grep on developer
+          # macOS machines running `make release-preflight`.
+          grep -qE 'name_template:.*ProjectName.*Version.*Os.*Arch' .goreleaser.yaml
+          # install.sh must expect the same format with version stripped of v prefix
+          # (-F is literal match: the pattern contains ${...} / . which are
+          #  regex metacharacters — -F keeps this robust across grep flavors.)
+          grep -Fq 'cc-clip_${VERSION#v}_${PLATFORM}.tar.gz' scripts/install.sh
+          # Windows installer must expect the matching zip artifact.
+          grep -Fq '$archiveName = "cc-clip_$($version.TrimStart("v"))_${platform}.zip"' scripts/install.ps1
+          # goreleaser archives must default to tar.gz (darwin/linux); windows
+          # uses the `formats: [zip]` override in the same block. Schema is the
+          # plural GoReleaser v2 form introduced in PR #33.
+          grep -Fq 'formats: [tar.gz]' .goreleaser.yaml
+          grep -Fq 'formats: [zip]' .goreleaser.yaml
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race)
+        run: go test ./... -race -count=1
+
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+  # Scans against the CURRENT Go release, not the pinned floor.
+  #
+  # These are deliberately separate concerns. go.mod pins a full patch version,
+  # so running govulncheck under it evaluates a rolling advisory database
+  # against a frozen toolchain: every new stdlib advisory turns CI red with no
+  # source change and no action available except bumping the pin. That happened
+  # twice in three days (#113, then #119 two days later).
+  #
+  # Reading it here means "current Go has a vulnerability this code actually
+  # reaches", which is actionable. Bumping the go.mod floor stays a deliberate
+  # compatibility decision instead of being forced by the advisory schedule.
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: stable
+
+      - name: Govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

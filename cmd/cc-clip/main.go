@@ -1808,10 +1808,11 @@ func connectSuccessSummary(t DeployTargets) string {
 // connectVerifyTunnel verifies the SSH tunnel from the remote side.
 func connectVerifyTunnel(session *shim.SSHSession, port int, host string, targets DeployTargets, remoteBin string) {
 	fmt.Printf("[7/7] Verifying tunnel from remote...\n")
-	probeCmd := fmt.Sprintf(
-		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>/dev/null && echo 'tunnel:ok' || echo 'tunnel:fail'",
-		port)
-	probeOut, probeErr := session.Exec(probeCmd)
+	// Ask the daemon to identify itself through the forward rather than only
+	// completing a TCP handshake. A stale sshd from a previous session keeps
+	// the port in LISTEN, which satisfied the old /dev/tcp probe and made
+	// connect print "tunnel verified" for a tunnel that carried nothing.
+	probeOut, probeErr := session.Exec(tunnel.RemoteHealthProbeCommand(port))
 
 	if probeErr != nil {
 		// The probe itself could not run — the SSH master is dead, not the
@@ -1820,17 +1821,10 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string, target
 		// exist; name the real failure instead.
 		fmt.Printf("      tunnel probe could not be executed over SSH: %v\n", probeErr)
 		fmt.Println("      The SSH session appears to be down; re-run 'cc-clip connect' once SSH is reachable.")
-	} else if probeOut == "tunnel:ok" {
-		fmt.Println("      tunnel verified (via existing SSH session)")
 	} else {
-		fmt.Println("      tunnel not detected (this is normal if no interactive SSH session is open)")
-		fmt.Println("      The tunnel is provided by your SSH connection, not by 'cc-clip connect'.")
-		fmt.Println("      Ensure your SSH session includes RemoteForward:")
-		fmt.Printf("        ssh -R %d:127.0.0.1:%d %s\n", port, port, host)
-		fmt.Println()
-		fmt.Println("      Or add to ~/.ssh/config:")
-		fmt.Printf("        Host %s\n", host)
-		fmt.Printf("            RemoteForward %d 127.0.0.1:%d\n", port, port)
+		for _, line := range tunnelVerificationReport(tunnel.ClassifyRemoteProbeOutput(probeOut), port, host) {
+			fmt.Println(line)
+		}
 	}
 
 	// Verify remote binary is functional

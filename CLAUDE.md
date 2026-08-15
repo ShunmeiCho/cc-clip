@@ -14,7 +14,8 @@ Codex CLI path (--codex):
   Local Mac clipboard → pngpaste → HTTP daemon (127.0.0.1:18339) → SSH RemoteForward → x11-bridge → Xvfb CLIPBOARD → arboard → Codex CLI
 
 Notification path:
-  Claude Code hook → cc-clip-hook (stdin JSON) → POST /notify via tunnel → classifier → dedup → DeliveryChain → native notification
+  Claude Code hook → cc-clip plugin run claude-notify (stdin JSON) → POST /notify via tunnel → classifier → dedup → DeliveryChain → native notification
+  (fallback when the settings.json merge fails: Claude Code hook → cc-clip-hook → same POST /notify)
 ```
 
 ## Build & Test Commands
@@ -68,7 +69,8 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 16. **deliver_cmux** (`internal/daemon/deliver_cmux.go`) — Cross-platform tmux `display-message` adapter. Falls through if not in tmux.
 17. **notify_darwin** (`internal/daemon/notify_darwin.go`) — macOS-specific: terminal-notifier or osascript fallback.
 18. **claude settings hooks** (`internal/shim/settings.go`) — `connect` merges managed Stop and Notification hooks into remote `~/.claude/settings.json` and cleans up legacy wrappers to avoid double delivery. The `~/.local/bin/claude` wrapper remains only as a fallback when settings merge fails.
-19. **cc-clip-hook** (`internal/shim/hook_template.go`) — Bash script installed to `~/.local/bin/cc-clip-hook` on remote. Reads hook JSON from stdin, injects hostname, POSTs to `/notify` endpoint with nonce auth. Logs failures to `~/.cache/cc-clip/notify-health.log`.
+19. **cc-clip-hook** (`internal/shim/hook_template.go`) — Bash script installed to `~/.local/bin/cc-clip-hook` on remote. Reads hook JSON from stdin, injects hostname, POSTs to `/notify` endpoint with nonce auth. Logs failures to `~/.cache/cc-clip/notify-health.log`. This is the **fallback** path; the managed settings.json hook runs the plugin runner below instead.
+20. **plugin runner** (`internal/plugin/`) — In-process notify adapters behind `cc-clip plugin run <name>` (`claude-notify` | `codex-notify` | `agy-notify` | `opencode-notify`). `Run()` reads the tool's hook JSON from stdin and `PostNotification()` POSTs it to `/notify` with nonce auth. This is what `settings.go`'s managed hook command (`env CC_CLIP_MANAGED=1 cc-clip plugin run claude-notify`) executes, so the remote binary — not the bash hook script — carries the payload. Note this is an internal Go dispatcher, **not** a Claude Code plugin (`.claude-plugin/` + `hooks/hooks.json`), which does not exist in this repo.
 
 ### Key Design Decisions
 
@@ -124,6 +126,7 @@ When `connect` detects a different remote arch (e.g., Mac arm64 → Linux amd64)
 ## Known Pitfalls
 
 - **SSH ControlMaster + RemoteForward**: If the user has `ControlMaster auto` globally, a pre-existing master connection without `RemoteForward` will be reused. The tunnel silently fails. Fix: set `ControlMaster no` and `ControlPath none` on hosts that need `RemoteForward`.
+- **Remote PATH prelude hides the user's own bin directories**: `WrapRemoteShell` prepends `remotePathPrelude` (`internal/shim/ssh.go`) to *every* remote command, and it puts `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` **ahead** of the inherited `$PATH`. That is deliberate — #106 added it so coreutils resolve on minimal images (Coder workspaces, slim containers) where non-interactive SSH has a near-empty PATH, and removing it brings back `exit 127`. The consequence is that `command -v <bin>` through `SSHSession.Exec` or `doctor`'s `remoteExecNoForward` can **never** see `~/.local/bin`, `~/.nix-profile/bin`, pipx, or asdf — a stale system copy silently wins instead. Any feature that must resolve a binary from the *user's* environment has to run it under the login shell; `resolveInInteractiveShell` (`internal/doctor/remote.go`) is the working precedent.
 - **Token rotation on daemon restart**: Mitigated by token persistence — `LoadOrGenerate` reuses unexpired tokens. Use `cc-clip connect <host> --token-only` if only the token changed.
 - **Empty image race condition**: The clipboard can change between the TARGETS check (returns "image") and the image fetch (returns 204 No Content). `curl -sf` treats 204 as success → shim outputs empty bytes → Claude Code API rejects empty base64. Guarded by `[ ! -s "$tmpfile" ]` check in `_cc_clip_fetch_binary()`.
 - **Remote xclip must exist**: The shim hardcodes the real xclip path at install time. If xclip is not installed on the remote, the shim fallback fails with "No such file or directory".
@@ -139,6 +142,6 @@ When `connect` detects a different remote arch (e.g., Mac arm64 → Linux amd64)
 - Adding a new exit code: `exitcode/exitcode.go` + `cmd/cc-clip/main.go:classifyError` + shim templates (return codes)
 - Changing Codex deploy flow: `cmd/cc-clip/main.go:runConnectCodex` + `xvfb/xvfb.go` + `x11bridge/bridge.go` + `shim/pathfix.go` (DISPLAY marker)
 - Adding a new notification kind: `daemon/envelope.go` (NotifyKind + payload struct) + `daemon/classifier.go` (hook→envelope mapping) + `daemon/deliver.go` (formatNotification display text)
-- Changing hook injection: `shim/claude_wrapper.go` (wrapper template) + `shim/hook_template.go` (hook script) + `shim/connect.go` (deploy steps)
+- Changing hook injection: `shim/settings.go` (managed `~/.claude/settings.json` merge — the durable path) + `cmd/cc-clip/main.go` (deploy steps N3/N4) + `shim/hook_template.go` (fallback hook script) + `shim/claude_wrapper.go` (fallback wrapper template)
 - Adding a notification adapter: implement `Deliverer` interface + register in `daemon/deliver.go:BuildDeliveryChain()`
 - Changing release asset format: `.goreleaser.yaml` (archive naming/format) + `scripts/install.sh` (download URL + extraction logic) — these MUST stay in sync

@@ -32,7 +32,13 @@ ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 
 ## SSH ControlMaster Breaks RemoteForward
 
-**Symptom:** `cc-clip connect` reports "tunnel verified", but the tunnel doesn't work in your interactive SSH session. `curl -s http://127.0.0.1:18339/health` hangs on the remote.
+**Symptom:** `cc-clip connect` warns that the port is held on the remote but no cc-clip daemon answered, and `curl -s http://127.0.0.1:18339/health` hangs on the remote:
+
+```
+      WARNING: port 18339 is held on the remote, but no cc-clip daemon answered.
+```
+
+(Before v0.9.2 this same situation was misreported as `tunnel verified`, because the check only completed a TCP handshake.)
 
 **Cause:** If you use SSH `ControlMaster auto` (connection multiplexing), the first SSH connection becomes the "master". All subsequent connections **reuse the master** — even if you later add `RemoteForward` to your config. The old master connection does not have the port forwarding, so the tunnel silently fails.
 

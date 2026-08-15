@@ -40,7 +40,7 @@ release-preflight: test vet
 		exit 1; \
 	}
 	@goreleaser check
-	@echo "==> release contract greps (mirrors .github/workflows/release.yml)"
+	@echo "==> release contract greps (mirrors .github/workflows/checks.yml)"
 	@grep -qE 'name_template:.*ProjectName.*Version.*Os.*Arch' .goreleaser.yaml \
 		|| { echo "FAIL: name_template drift in .goreleaser.yaml"; exit 1; }
 	@grep -Fq 'cc-clip_$${VERSION#v}_$${PLATFORM}.tar.gz' scripts/install.sh \
