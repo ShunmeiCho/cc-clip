@@ -77,3 +77,41 @@ func TestSendTextErrorMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestFetchHealth pins the /health probe used by `cc-clip status` for the
+// daemon-version mismatch check (#22 P2). Unknown fields must not break older
+// daemons' responses (version absent -> empty string).
+func TestFetchHealth(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"service":"cc-clip","status":"ok","version":"0.9.3"}`))
+	})
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	h, err := FetchHealth(strings.TrimPrefix(ts.URL, "http://"), 2*time.Second)
+	if err != nil {
+		t.Fatalf("FetchHealth: %v", err)
+	}
+	if h.Service != "cc-clip" || h.Status != "ok" || h.Version != "0.9.3" {
+		t.Fatalf("health = %+v", h)
+	}
+}
+
+func TestFetchHealthOldDaemonWithoutVersion(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"service":"cc-clip","status":"ok"}`))
+	})
+	ts := newIPv4TestServer(t, mux)
+	defer ts.Close()
+
+	h, err := FetchHealth(strings.TrimPrefix(ts.URL, "http://"), 2*time.Second)
+	if err != nil {
+		t.Fatalf("FetchHealth: %v", err)
+	}
+	if h.Version != "" {
+		t.Fatalf("old daemon must yield empty version, got %q", h.Version)
+	}
+}
