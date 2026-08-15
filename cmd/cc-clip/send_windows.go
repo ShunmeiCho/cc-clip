@@ -7,7 +7,18 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
+
+// systemFocusProbe is the production focusProbe. It lives here rather than
+// alongside the guard logic because Windows is the only platform that can
+// answer the question, and the guard's decision logic stays build-tag-free so
+// it remains testable everywhere.
+func systemFocusProbe() focusResult {
+	h, ok := win32.ForegroundWindow()
+	return focusResult{Handle: h, Known: ok}
+}
 
 // hiddenExec creates an exec.Cmd that won't flash a console window.
 func hiddenExec(name string, args ...string) *exec.Cmd {
@@ -28,12 +39,35 @@ func defaultRemoteHost() (string, bool, error) {
 }
 
 func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreClipboard bool) error {
+	// Pin the window this paste is aimed at BEFORE touching the clipboard.
+	// The keystroke below goes to whatever is focused when it fires, and the
+	// gap is wider than `delay` alone: windowsSendCtrlShiftV spawns a fresh
+	// PowerShell process, so its cold start counts too. Without this guard a
+	// window switch in that gap delivers the remote path into whatever the
+	// user moved to — a password manager, a chat box, a browser URL bar.
+	guard, err := newFocusGuard(systemFocusProbe)
+	if err != nil {
+		return err
+	}
+
 	if err := windowsSetClipboardText(remotePath); err != nil {
 		return err
 	}
 
 	if delay > 0 {
 		time.Sleep(delay)
+	}
+
+	if err := guard.verify(); err != nil {
+		// Withhold the keystroke. cc-clip never snapshots the user's prior
+		// clipboard, so the most we can undo is our own text write — put the
+		// image back when the caller asked for restoration.
+		if restoreClipboard {
+			if restoreErr := windowsSetClipboardImage(imagePath); restoreErr != nil {
+				return fmt.Errorf("%w (clipboard restore also failed: %v)", err, restoreErr)
+			}
+		}
+		return err
 	}
 
 	if err := windowsSendCtrlShiftV(); err != nil {
