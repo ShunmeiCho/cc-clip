@@ -74,6 +74,8 @@ func main() {
 		cmdUpdate()
 	case "notify":
 		cmdNotify()
+	case "copy":
+		cmdCopy()
 	case "plugin":
 		cmdPlugin()
 	case "x11-bridge":
@@ -176,6 +178,14 @@ Diagnostics:
   doctor             Local health check
   doctor --host H    Full end-to-end check via SSH
   version            Show version
+
+Copy (remote -> local):
+  copy               Read stdin and place it on the LOCAL machine's clipboard
+                     verbatim (run on the remote; needs the SSH tunnel). Piped
+                     text carries none of the soft-wrap newlines that mouse
+                     selection in a terminal injects:
+                       cat file.txt | cc-clip copy
+    --port           Tunnel port (default: 18339)
 
 Notifications:
   notify             Send a notification to the local daemon
@@ -297,6 +307,7 @@ func cmdServe() {
 	clipboard := daemon.NewClipboardReader()
 	store := session.NewStore(12 * time.Hour)
 	srv := daemon.NewServer(addr, clipboard, tm, store)
+	srv.SetTextWriter(daemon.NewClipboardTextWriter())
 	srv.EnableNoncePersistence()
 	if loaded, err := srv.LoadPersistedNonces(); err != nil {
 		log.Printf("WARN: failed to load notification nonces: %v", err)

@@ -77,6 +77,7 @@ type Server struct {
 	persistNonces     bool
 	addr              string
 	mux               *http.ServeMux
+	textWriter        ClipboardTextWriter // nil until SetTextWriter; POST /clipboard/text answers 501 without it
 }
 
 func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, sessions *session.Store) *Server {
@@ -96,6 +97,7 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 	s.mux.HandleFunc("GET /clipboard/type", s.authMiddleware(s.handleClipboardType))
 	s.mux.HandleFunc("GET /clipboard/image", s.authMiddleware(s.handleClipboardImage))
 	s.mux.HandleFunc("GET /clipboard/text", s.authMiddleware(s.handleClipboardText))
+	s.mux.HandleFunc("POST /clipboard/text", s.authMiddleware(s.handleClipboardWrite))
 	s.mux.HandleFunc("POST /notify", s.handleNotify)
 	s.mux.HandleFunc("POST /register-nonce", s.authMiddleware(s.handleRegisterNonce))
 	return s
