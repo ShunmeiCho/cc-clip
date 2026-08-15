@@ -113,6 +113,8 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 The shim intercepts these invocation shapes (covers Claude Code, opencode, and Cursor CLI; other consumers that use the same flags get interception for free):
 - xclip: `*"-selection clipboard"*"-t TARGETS"*"-o"*` and `*"-selection clipboard"*"-t image/"*"-o"*`
 - wl-paste: `*"--list-types"*` (type listing — Claude) and `*"--type"*"image/"*`, `*"-t image/"*` (image read — Claude and Cursor use `--type`, opencode uses `-t`)
+- xclip WRITE (#128 phase 2): `*"-selection clipboard"*` without `-o`/`-out` in argv — dual-write: the payload is POSTed to the local daemon (`/clipboard/text`) AND replayed into the real xclip, so the remote clipboard behaves exactly as before. Success if EITHER side takes the copy (headless remotes have no real xclip). `-selection primary` and unmatched `-o` read shapes fall through untouched.
+- wl-copy (separate companion shim, installed with the wl-paste target): forwards plain clipboard TEXT writes the same dual-write way; `--primary`, `--clear`, non-text `--type`, `-v`/`-h` and unknown options pass through to the real binary. `-n/--trim-newline` is mirrored on the forwarded payload so both clipboards end up byte-identical.
 
 Cursor reads via `xclip -selection clipboard -t <mime> -o` / `wl-paste --type <mime>` over image/png,jpeg,gif,webp — all four hit the existing image branches, so the transport needs no new shim code. Its gate is environmental: Cursor only attempts a clipboard read when `DISPLAY` or `WAYLAND_DISPLAY` is set in its shell, and cc-clip deliberately does not inject one (issue #109, option C). It also kills clipboard children after ~4s, hence the `CC_CLIP_FETCH_TIMEOUT_MS=3000` guidance printed by the Cursor target.
 

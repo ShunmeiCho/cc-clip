@@ -156,6 +156,23 @@ _cc_clip_fetch_binary() {
     fi
 }
 
+# Forward a captured clipboard write to the LOCAL machine, byte-exact
+# (--data-binary from a file: no shell-variable NUL/newline mangling).
+_cc_clip_post_text() {
+    local file="$1"
+    local token
+    token=$(_cc_clip_read_token) || return 12
+    local timeout_s
+    timeout_s=$(awk "BEGIN {printf \"%%f\", ${CC_CLIP_FETCH_TIMEOUT_MS}/1000}")
+    local session_hdr
+    session_hdr=$(_cc_clip_session_header)
+    _cc_clip_curl_config "$token" "$session_hdr" | curl -sf --max-time "$timeout_s" \
+        -X POST -H "Content-Type: text/plain; charset=utf-8" \
+        --data-binary @"$file" \
+        -K - \
+        "http://${CC_CLIP_ADDR}/clipboard/text" >/dev/null
+}
+
 # Parse arguments to detect Claude Code invocation patterns
 ARGS="$*"
 
@@ -215,6 +232,49 @@ case "$ARGS" in
             _cc_clip_log "tunnel not reachable"
             _cc_clip_fallback "$@"
         fi
+        ;;
+
+    *"-selection clipboard"*)
+        # Clipboard WRITE (xclip's default mode is -in: stdin -> selection).
+        # This is the reverse-clipboard transparent path (#128 phase 2):
+        # remote tools that copy via xclip (neovim unnamedplus, tmux
+        # copy-command, TUI copy actions) land on the LOCAL clipboard too.
+        # Unrecognized READ shapes carrying -o must keep the old fallback,
+        # so scan argv for the output flag first.
+        for _cc_clip_arg in "$@"; do
+            case "$_cc_clip_arg" in
+                -o|-out) _cc_clip_fallback "$@" ;;
+            esac
+        done
+        _cc_clip_log "intercepting clipboard write (dual-write)"
+        _cc_clip_wtmp=$(mktemp 2>/dev/null) || _cc_clip_fallback "$@"
+        cat > "$_cc_clip_wtmp"
+        # Best-effort local forward; the REMOTE clipboard behavior below is
+        # never blocked by it.
+        _cc_clip_forwarded=0
+        if _cc_clip_probe && _cc_clip_post_text "$_cc_clip_wtmp"; then
+            _cc_clip_forwarded=1
+            _cc_clip_log "forwarded to local clipboard"
+        else
+            _cc_clip_log "local forward failed or tunnel down"
+        fi
+        # Replay into the real xclip so the remote clipboard is populated
+        # exactly as without the shim. xclip daemonizes to own the selection,
+        # so this returns promptly.
+        _cc_clip_real_rc=0
+        if _cc_clip_wreal="$(_cc_clip_resolve_real_xclip)"; then
+            "$_cc_clip_wreal" "$@" < "$_cc_clip_wtmp" || _cc_clip_real_rc=$?
+        else
+            _cc_clip_real_rc=127
+        fi
+        rm -f "$_cc_clip_wtmp"
+        # Success if EITHER side took the copy: a headless remote (no real
+        # xclip / no DISPLAY) with a working tunnel is the primary use case,
+        # and must not fail the caller.
+        if [ "$_cc_clip_real_rc" -eq 0 ] || [ "$_cc_clip_forwarded" -eq 1 ]; then
+            exit 0
+        fi
+        exit "$_cc_clip_real_rc"
         ;;
 
     *)
