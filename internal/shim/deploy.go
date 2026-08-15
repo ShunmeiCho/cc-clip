@@ -71,11 +71,14 @@ type ClaudeWrapperState struct {
 }
 
 // currentDeploySchemaVersion is the deploy-state schema version this binary
-// writes. v1 is the v0.9.0 per-adapter Notify schema. A state stamped with a
+// writes. v1 is the v0.9.0 per-adapter Notify schema; v2 adds UseRemoteBin
+// (package-managed remote binaries, #110) — the bump exists so a v1 binary
+// refuses to rewrite a package-managed host's state rather than silently
+// dropping the marker and re-enabling upload mode. A state stamped with a
 // HIGHER version was written by a newer cc-clip; the connect path refuses to
 // overwrite it (see DeployState.IsNewerSchema). A state with SchemaVersion==0
 // (legacy / pre-guard) is NOT newer — it migrates normally via migrateNotifyState.
-const currentDeploySchemaVersion = 1
+const currentDeploySchemaVersion = 2
 
 // DeployState represents the state of a cc-clip deployment on a remote host.
 // It is stored as ~/.cache/cc-clip/deploy.json on the remote.
@@ -89,6 +92,17 @@ type DeployState struct {
 	Notify        *NotifyDeployState  `json:"notify,omitempty"`
 	Codex         *CodexDeployState   `json:"codex,omitempty"`
 	ClaudeWrapper *ClaudeWrapperState `json:"claude_wrapper,omitempty"`
+
+	// UseRemoteBin records that this host's cc-clip executable is owned by a
+	// package manager on the remote (--use-remote-bin, #110). connect reads it
+	// to keep package-managed mode across runs that omit the flag — without
+	// it, pasting the update reminder's `cc-clip connect <host> --force`
+	// re-uploads to ~/.local/bin and shadows the package binary the flag
+	// exists to preserve. BinaryHash/BinaryVersion describe the REMOTE
+	// executable when this is set. Cleared by an explicit --local-bin deploy.
+	// Guarded by the v2 schema bump: a v1 binary rewriting this file would
+	// silently drop the field and re-enable upload mode.
+	UseRemoteBin bool `json:"use_remote_bin,omitempty"`
 }
 
 // CurrentDeploySchemaVersion returns the deploy-state schema version this

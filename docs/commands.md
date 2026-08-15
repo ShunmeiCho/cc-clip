@@ -26,6 +26,8 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | `cc-clip connect <host> --agy` | Antigravity: agy-notify (alias `--antigravity`) |
 | `cc-clip connect <host> --all` | Every target (Claude + Codex + opencode + agy) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |
+| `cc-clip setup <host> --use-remote-bin` | Full setup using `cc-clip` from the remote PATH; skip binary upload |
+| `cc-clip connect <host> --use-remote-bin` | Incremental deploy using `cc-clip` from the remote PATH; skip binary upload |
 | `cc-clip connect <host> --auto-recover` | Recover from v0.7.0 wrapper corruption + reinstall (mutex with --token-only) |
 | `cc-clip setup <host> --auto-recover` | Same recovery flow via setup path |
 | `cc-clip connect <host> --force` | Full redeploy ignoring cache |

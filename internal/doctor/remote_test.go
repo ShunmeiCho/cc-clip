@@ -135,3 +135,35 @@ func TestClassifyRemoteTokenCheck(t *testing.T) {
 		})
 	}
 }
+
+// TestRemoteBinProbeCommand pins the remote-bin check's resolution order
+// (#111 review, finding 1): the deployed ~/.local/bin/cc-clip is the PRIMARY
+// probe — it is the binary cc-clip manages — and the login-shell PATH lookup
+// is only the fallback for package-managed hosts. Probing the PATH first
+// reported "remote-bin OK" for a stale system copy on hosts whose actually
+// deployed binary was missing or truncated. The command must also print the
+// resolved path so the operator can see WHICH binary answered.
+func TestRemoteBinProbeCommand(t *testing.T) {
+	cmd := remoteBinProbeCommand
+
+	localIdx := strings.Index(cmd, `$HOME/.local/bin/cc-clip`)
+	loginIdx := strings.Index(cmd, `"$SHELL" -lc`)
+	if localIdx == -1 {
+		t.Fatalf("probe must check the deployed ~/.local/bin/cc-clip:\n%s", cmd)
+	}
+	if loginIdx == -1 {
+		t.Fatalf("probe must fall back to a login-shell PATH lookup (package-managed hosts):\n%s", cmd)
+	}
+	if loginIdx < localIdx {
+		t.Fatalf("deployed binary must be probed BEFORE the PATH fallback:\n%s", cmd)
+	}
+	// A plain `command -v` under the session PATH is exactly the resolution
+	// the login shell exists to avoid (remotePathPrelude shadows user dirs);
+	// the fallback must run inside the login shell only.
+	if strings.Contains(strings.ReplaceAll(cmd, `-lc 'command -v cc-clip'`, ""), "command -v cc-clip") {
+		t.Fatalf("PATH lookup outside the login shell would resolve under the hardened prelude PATH:\n%s", cmd)
+	}
+	if !strings.Contains(cmd, `"$bin"`) || !strings.Contains(cmd, `($bin)`) {
+		t.Fatalf("probe output must include the resolved path so the operator sees which binary answered:\n%s", cmd)
+	}
+}
