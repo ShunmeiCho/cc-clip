@@ -51,7 +51,7 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 1. **daemon** (`internal/daemon/`) — HTTP server on loopback, reads Mac clipboard via `pngpaste`, serves images at `GET /clipboard/type` and `GET /clipboard/image`. Also accepts reverse text copies at `POST /clipboard/text` (`cc-clip copy` on the remote → local clipboard, #128): bytes are written verbatim via the platform writer (`clipwrite_{darwin,linux,windows}.go`), and every accepted write emits a calm notification naming the byte count but never the content. Auth via Bearer token + User-Agent whitelist.
 2. **tunnel** (`internal/tunnel/`) — Client-side HTTP calls through the SSH-forwarded port. `Probe()` checks TCP connectivity. `Client.FetchImage()` downloads and saves with timestamp+random filename.
 3. **shim** (`internal/shim/template.go`) — Bash script templates for xclip and wl-paste. Intercepts two specific invocation patterns Claude Code uses, fetches via curl through tunnel, falls back to real binary on any failure.
-4. **connect** (`cmd/cc-clip/main.go:cmdConnect`) — Orchestrates deployment via SSH master session: detect remote arch → incremental binary upload (hash-based skip) → install shim → sync token → verify tunnel. Supports `--force`, `--token-only` flags.
+4. **connect** (`cmd/cc-clip/connect.go:cmdConnect`) — Orchestrates deployment via SSH master session: detect remote arch → incremental binary upload (hash-based skip) → install shim → sync token → verify tunnel. Supports `--force`, `--token-only` flags.
 5. **ssh** (`internal/shim/ssh.go`) — `SSHSession` wraps a ControlMaster SSH connection. Single passphrase prompt; all subsequent `Exec()` and `Upload()` calls reuse the master.
 6. **deploy** (`internal/shim/deploy.go`) — `DeployState` tracks binary hash, version, shim status on the remote. JSON file at `~/.cache/cc-clip/deploy.json`. `NeedsUpload()` / `NeedsShimInstall()` enable incremental deploys.
 7. **pathfix** (`internal/shim/pathfix.go`) — Auto-detects remote shell (bash/zsh/fish) and injects `~/.local/bin` PATH marker into rc file with `# cc-clip-managed` guards.
@@ -142,8 +142,8 @@ When `connect` detects a different remote arch (e.g., Mac arm64 → Linux amd64)
 - Adding a new API endpoint: `daemon/server.go` (handler) + `tunnel/fetch.go` (client method) + `shim/template.go` (bash interception pattern)
 - Changing token format: `token/token.go` + `shim/connect.go:WriteRemoteToken` + shim templates (`_cc_clip_read_token`)
 - Adding a new exit code: `exitcode/exitcode.go` + `cmd/cc-clip/main.go:classifyError` + shim templates (return codes)
-- Changing Codex deploy flow: `cmd/cc-clip/main.go:runConnectCodex` + `xvfb/xvfb.go` + `x11bridge/bridge.go` + `shim/pathfix.go` (DISPLAY marker)
+- Changing Codex deploy flow: `cmd/cc-clip/connect.go:runConnectCodex` + `xvfb/xvfb.go` + `x11bridge/bridge.go` + `shim/pathfix.go` (DISPLAY marker)
 - Adding a new notification kind: `daemon/envelope.go` (NotifyKind + payload struct) + `daemon/classifier.go` (hook→envelope mapping) + `daemon/deliver.go` (formatNotification display text)
-- Changing hook injection: `shim/settings.go` (managed `~/.claude/settings.json` merge — the durable path) + `cmd/cc-clip/main.go` (deploy steps N3/N4) + `shim/hook_template.go` (fallback hook script) + `shim/claude_wrapper.go` (fallback wrapper template)
+- Changing hook injection: `shim/settings.go` (managed `~/.claude/settings.json` merge — the durable path) + `cmd/cc-clip/notify.go` (deploy steps N3/N4) + `shim/hook_template.go` (fallback hook script) + `shim/claude_wrapper.go` (fallback wrapper template)
 - Adding a notification adapter: implement `Deliverer` interface + register in `daemon/deliver.go:BuildDeliveryChain()`
 - Changing release asset format: `.goreleaser.yaml` (archive naming/format) + `scripts/install.sh` (download URL + extraction logic) — these MUST stay in sync
