@@ -28,13 +28,16 @@ func TestParseDeployTargets(t *testing.T) {
 		{"--agy canonical", []string{"myhost", "--agy"}, DeployTargets{Antigravity: true}, true, false},
 		{"--antigravity alias", []string{"myhost", "--antigravity"}, DeployTargets{Antigravity: true}, true, false},
 		{"--agy --antigravity is one distinct target", []string{"--agy", "--antigravity"}, DeployTargets{Antigravity: true}, true, false},
-		{"--all selects everything", []string{"myhost", "--all"}, DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, false},
+		{"--cursor", []string{"myhost", "--cursor"}, DeployTargets{Cursor: true}, true, false},
+		{"--all selects everything", []string{"myhost", "--all"}, DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true, false},
 		{"--claude=true equivalent to --claude", []string{"--claude=true"}, DeployTargets{Claude: true}, true, false},
 		{"--claude=false disables -> default", []string{"--claude=false"}, DeployTargets{}, false, false},
 		{"--codex --all conflict", []string{"--codex", "--all"}, DeployTargets{}, false, true},
 		{"--claude --codex conflict", []string{"--claude", "--codex"}, DeployTargets{}, false, true},
 		{"--claude --all conflict", []string{"--claude", "--all"}, DeployTargets{}, false, true},
 		{"--opencode --agy conflict", []string{"--opencode", "--agy"}, DeployTargets{}, false, true},
+		{"--cursor --claude conflict", []string{"--cursor", "--claude"}, DeployTargets{}, false, true},
+		{"--cursor --all conflict", []string{"--cursor", "--all"}, DeployTargets{}, false, true},
 		{"three targets conflict", []string{"--claude", "--codex", "--opencode"}, DeployTargets{}, false, true},
 	}
 
@@ -77,13 +80,13 @@ func TestDeployTargetsAny(t *testing.T) {
 		t.Fatal("zero DeployTargets must report Any()==false")
 	}
 	for _, s := range []DeployTargets{
-		{Claude: true}, {Codex: true}, {Opencode: true}, {Antigravity: true},
+		{Claude: true}, {Codex: true}, {Opencode: true}, {Antigravity: true}, {Cursor: true},
 	} {
 		if !s.Any() {
 			t.Fatalf("%+v must report Any()==true", s)
 		}
 	}
-	if !(DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}).Any() {
+	if !(DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}).Any() {
 		t.Fatal("full DeployTargets must report Any()==true")
 	}
 }
@@ -97,7 +100,8 @@ func TestMenuSelection(t *testing.T) {
 		"2":   {Codex: true},
 		"3":   {Opencode: true},
 		"4":   {Antigravity: true},
-		"5":   {Claude: true, Codex: true, Opencode: true, Antigravity: true},
+		"5":   {Cursor: true},
+		"6":   {Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true},
 		" 3 ": {Opencode: true},
 	}
 	for in, want := range valid {
@@ -105,7 +109,7 @@ func TestMenuSelection(t *testing.T) {
 			t.Errorf("menuSelection(%q) = %+v,%v; want %+v,true", in, got, ok, want)
 		}
 	}
-	for _, bad := range []string{"", "0", "6", "x", "12", "-1"} {
+	for _, bad := range []string{"", "0", "7", "x", "12", "-1"} {
 		if got, ok := menuSelection(bad); ok {
 			t.Errorf("menuSelection(%q) = %+v,true; want ok=false", bad, got)
 		}
@@ -184,8 +188,8 @@ func TestResolveImplicitTargets(t *testing.T) {
 	t.Run("TTY presents menu and returns selection", func(t *testing.T) {
 		t.Parallel()
 		var out, errOut bytes.Buffer
-		got := resolveImplicitTargets(true, strings.NewReader("5\n"), &out, &errOut, fallback, "claude")
-		if got != (DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}) {
+		got := resolveImplicitTargets(true, strings.NewReader("6\n"), &out, &errOut, fallback, "claude")
+		if got != (DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}) {
 			t.Fatalf("got %+v, want all", got)
 		}
 		if !strings.Contains(out.String(), "Select deployment target:") {

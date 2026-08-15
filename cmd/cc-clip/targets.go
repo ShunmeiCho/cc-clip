@@ -20,18 +20,19 @@ type DeployTargets struct {
 	Codex       bool
 	Opencode    bool
 	Antigravity bool // canonical CLI flag is --agy (alias --antigravity)
+	Cursor      bool // Cursor CLI: shim-based clipboard; requires DISPLAY in Cursor's shell (issue #109)
 }
 
 // Any reports whether at least one target is selected.
 func (t DeployTargets) Any() bool {
-	return t.Claude || t.Codex || t.Opencode || t.Antigravity
+	return t.Claude || t.Codex || t.Opencode || t.Antigravity || t.Cursor
 }
 
 // errMultipleTargets is returned when more than one DISTINCT deployment target is
 // selected (e.g. --codex --all, or --claude --codex). Callers print it to stderr
 // and exit 2. It is a sentinel so tests can match with errors.Is.
 var errMultipleTargets = errors.New(
-	"only one deployment target may be given: choose one of --claude / --codex / --opencode / --agy / --all (use --all for everything)")
+	"only one deployment target may be given: choose one of --claude / --codex / --opencode / --agy / --cursor / --all (use --all for everything)")
 
 // parseDeployTargets resolves the deployment-target selector flags from args.
 // --agy is the canonical Antigravity flag with --antigravity as an accepted
@@ -51,10 +52,11 @@ func parseDeployTargets(args []string) (t DeployTargets, explicit bool, err erro
 	codex := flagInArgs(args, "codex")
 	opencode := flagInArgs(args, "opencode")
 	antigravity := flagInArgs(args, "agy") || flagInArgs(args, "antigravity")
+	cursor := flagInArgs(args, "cursor")
 	all := flagInArgs(args, "all")
 
 	selected := 0
-	for _, on := range []bool{claude, codex, opencode, antigravity, all} {
+	for _, on := range []bool{claude, codex, opencode, antigravity, cursor, all} {
 		if on {
 			selected++
 		}
@@ -66,13 +68,15 @@ func parseDeployTargets(args []string) (t DeployTargets, explicit bool, err erro
 	case selected > 1:
 		return DeployTargets{}, false, errMultipleTargets
 	case all:
-		return DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, nil
+		return DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true, nil
 	case claude:
 		return DeployTargets{Claude: true}, true, nil
 	case codex:
 		return DeployTargets{Codex: true}, true, nil
 	case opencode:
 		return DeployTargets{Opencode: true}, true, nil
+	case cursor:
+		return DeployTargets{Cursor: true}, true, nil
 	default: // antigravity
 		return DeployTargets{Antigravity: true}, true, nil
 	}
@@ -106,14 +110,15 @@ const targetMenu = `Select deployment target:
   2) codex        X11 bridge + codex-notify
   3) opencode     clipboard shim + opencode-notify
   4) agy          Antigravity (agy-notify plugin; clipboard transport pending)
-  5) all          everything above (Antigravity clipboard excluded until resolved)
+  5) cursor       clipboard shim (requires DISPLAY in Cursor's shell; no notifications yet)
+  6) all          everything above (Antigravity clipboard excluded until resolved)
 `
 
 // maxMenuAttempts bounds invalid-input re-prompts so a misbehaving stream cannot
 // loop forever; after the cap the caller's default is applied.
 const maxMenuAttempts = 3
 
-// menuSelection maps a raw menu choice (1-5, surrounding whitespace tolerated) to
+// menuSelection maps a raw menu choice (1-6, surrounding whitespace tolerated) to
 // DeployTargets. ok=false for any unrecognized choice.
 func menuSelection(choice string) (DeployTargets, bool) {
 	switch strings.TrimSpace(choice) {
@@ -126,13 +131,15 @@ func menuSelection(choice string) (DeployTargets, bool) {
 	case "4":
 		return DeployTargets{Antigravity: true}, true
 	case "5":
-		return DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true
+		return DeployTargets{Cursor: true}, true
+	case "6":
+		return DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true
 	default:
 		return DeployTargets{}, false
 	}
 }
 
-// promptDeployTargets renders the target menu to out and reads a 1-5 selection
+// promptDeployTargets renders the target menu to out and reads a 1-6 selection
 // from in, re-prompting on invalid input up to maxMenuAttempts. It returns the
 // chosen targets with ok=true on a valid selection, or ok=false on EOF/read
 // error or exhausted attempts so the caller applies its own default.
@@ -147,7 +154,7 @@ func promptDeployTargets(in io.Reader, out io.Writer) (DeployTargets, bool) {
 		if t, ok := menuSelection(scanner.Text()); ok {
 			return t, true
 		}
-		fmt.Fprintln(out, "  invalid selection; enter a number 1-5")
+		fmt.Fprintln(out, "  invalid selection; enter a number 1-6")
 	}
 	return DeployTargets{}, false
 }
@@ -166,7 +173,7 @@ func resolveImplicitTargets(isTTY bool, in io.Reader, out, errOut io.Writer, fal
 		fmt.Fprintf(out, "no selection made; defaulting to %s\n", fallbackLabel)
 		return fallback
 	}
-	fmt.Fprintf(errOut, "cc-clip: no target flag given and stdin is not a TTY; defaulting to %s (pass --claude/--codex/--opencode/--agy/--all to choose explicitly)\n", fallbackLabel)
+	fmt.Fprintf(errOut, "cc-clip: no target flag given and stdin is not a TTY; defaulting to %s (pass --claude/--codex/--opencode/--agy/--cursor/--all to choose explicitly)\n", fallbackLabel)
 	return fallback
 }
 
@@ -275,11 +282,20 @@ func claudeTargeted(t DeployTargets) bool { return t.Claude }
 func codexTargeted(t DeployTargets) bool { return t.Codex }
 
 // shimTargeted reports whether this run should install the clipboard shim. The
-// xclip/wl-paste shim serves Claude Code AND opencode (both terminal tools that
-// shell out to the real binary); Codex reads X11 directly and agy is notify-only,
-// so neither needs the shim. A run that does not target the shim SKIPS install
-// but must never uninstall an existing shim (design §3 + Option A).
-func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode }
+// xclip/wl-paste shim serves Claude Code, opencode AND Cursor (all terminal
+// tools that shell out to the real binary); Codex reads X11 directly and agy is
+// notify-only, so neither needs the shim. A run that does not target the shim
+// SKIPS install but must never uninstall an existing shim (design §3 + Option A).
+func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode || t.Cursor }
+
+// cursorTargeted reports whether the Cursor CLI integration is selected. Cursor
+// is shim-only: its clipboard reader shells out to `xclip -selection clipboard
+// -t <mime> -o` / `wl-paste --type <mime>`, which the existing shim patterns
+// already intercept. The one prerequisite the deploy cannot satisfy is
+// environmental — Cursor only attempts a clipboard read when DISPLAY or
+// WAYLAND_DISPLAY is set in its shell (issue #109, option C: documented
+// prerequisite, no DISPLAY injection). No notify adapter exists yet.
+func cursorTargeted(t DeployTargets) bool { return t.Cursor }
 
 // agyTargeted reports whether the Antigravity (agy CLI) integration is selected.
 // agy is notify-only: it installs a bundled agy plugin whose Stop hook runs

@@ -19,15 +19,18 @@ import (
 func TestTargetMembership(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                                string
-		targets                             DeployTargets
-		wantClaude, wantCx, wantSh, wantAgy bool
+		name                                         string
+		targets                                      DeployTargets
+		wantClaude, wantCx, wantSh, wantAgy, wantCur bool
 	}{
-		{"claude only", DeployTargets{Claude: true}, true, false, true, false},
-		{"codex only", DeployTargets{Codex: true}, false, true, false, false},
-		{"opencode only", DeployTargets{Opencode: true}, false, false, true, false},
-		{"agy only", DeployTargets{Antigravity: true}, false, false, false, true},
-		{"all", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, true, true, true},
+		{"claude only", DeployTargets{Claude: true}, true, false, true, false, false},
+		{"codex only", DeployTargets{Codex: true}, false, true, false, false, false},
+		{"opencode only", DeployTargets{Opencode: true}, false, false, true, false, false},
+		{"agy only", DeployTargets{Antigravity: true}, false, false, false, true, false},
+		// Cursor rides the same xclip/wl-paste shim as Claude/opencode; it has
+		// no notify adapter yet, so only the shim axis and its own predicate fire.
+		{"cursor only", DeployTargets{Cursor: true}, false, false, true, false, true},
+		{"all", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true, true, true, true, true},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -44,6 +47,9 @@ func TestTargetMembership(t *testing.T) {
 			}
 			if got := agyTargeted(tt.targets); got != tt.wantAgy {
 				t.Errorf("agyTargeted=%v want %v", got, tt.wantAgy)
+			}
+			if got := cursorTargeted(tt.targets); got != tt.wantCur {
+				t.Errorf("cursorTargeted=%v want %v", got, tt.wantCur)
 			}
 		})
 	}
