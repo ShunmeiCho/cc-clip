@@ -14,7 +14,7 @@ If image paste isn't working, run these checks **in order** to isolate the probl
 # 1. Local: Is the daemon running?
 curl -s http://127.0.0.1:18339/health
 # Expected: {"service":"cc-clip","status":"ok","version":"..."}
-# ("version" appears from v0.9.3; older daemons omit it)
+# ("version" appears from v0.10.0; older daemons omit it)
 
 # 2. Remote: Is the tunnel forwarding?
 ssh myserver "curl -s http://127.0.0.1:18339/health"
