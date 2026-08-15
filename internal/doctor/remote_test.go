@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/shunmei/cc-clip/internal/shim"
 )
 
 func TestImageProbeCommandKeepsTokenOutOfCurlArgv(t *testing.T) {
@@ -165,5 +167,147 @@ func TestRemoteBinProbeCommand(t *testing.T) {
 	}
 	if !strings.Contains(cmd, `"$bin"`) || !strings.Contains(cmd, `($bin)`) {
 		t.Fatalf("probe output must include the resolved path so the operator sees which binary answered:\n%s", cmd)
+	}
+}
+
+// TestNotifyBridgeProbeCommands pins the four notification-bridge probes
+// (#22 P1). Marker-based outputs follow the tunnel-probe pattern; detection
+// keys come from the shim package so doctor can never drift from what
+// connect actually installs.
+func TestNotifyBridgeProbeCommands(t *testing.T) {
+	t.Parallel()
+
+	t.Run("claude hooks probe", func(t *testing.T) {
+		cmd := claudeHooksProbeCommand
+		for _, want := range []string{
+			`$HOME/.claude/settings.json`,
+			shim.ClaudeManagedOwnerPrefix, // managed-runner detection key
+			"cc-clip-hook",                // user-authored fallback detection
+			"claude-hooks:no-file", "claude-hooks:managed", "claude-hooks:user-authored", "claude-hooks:none",
+			"grep -qF", // fixed-string match; the keys contain shell/regex metachars
+		} {
+			if !strings.Contains(cmd, want) {
+				t.Fatalf("claude hooks probe must contain %q:\n%s", want, cmd)
+			}
+		}
+		// Managed must be checked BEFORE user-authored: the managed command is
+		// itself matched by a bare "cc-clip-hook"-style substring sweep only if
+		// ordered wrong... more precisely, both patterns can coexist in one
+		// file and managed is the stronger claim.
+		if strings.Index(cmd, "claude-hooks:managed") > strings.Index(cmd, "claude-hooks:user-authored") {
+			t.Fatalf("managed detection must precede user-authored:\n%s", cmd)
+		}
+	})
+
+	t.Run("codex notify probe", func(t *testing.T) {
+		cmd := codexNotifyProbeCommand
+		for _, want := range []string{
+			`$HOME/.codex/config.toml`,
+			shim.CodexNotifyMarkerStart,
+			"codex-notify:no-codex", "codex-notify:managed", "codex-notify:unmanaged-cc-clip",
+			"codex-notify:foreign", "codex-notify:none",
+		} {
+			if !strings.Contains(cmd, want) {
+				t.Fatalf("codex notify probe must contain %q:\n%s", want, cmd)
+			}
+		}
+	})
+
+	t.Run("nonce and hook script probes", func(t *testing.T) {
+		if !strings.Contains(notifyNonceProbeCommand, "notify.nonce") {
+			t.Fatalf("nonce probe must check the nonce file:\n%s", notifyNonceProbeCommand)
+		}
+		if !strings.Contains(hookScriptProbeCommand, ".local/bin/cc-clip-hook") {
+			t.Fatalf("hook script probe must check the installed path:\n%s", hookScriptProbeCommand)
+		}
+	})
+}
+
+// TestClassifyClaudeHooksCheck: the venus field case — a bare user-authored
+// cc-clip-hook — must classify as OK (notifications work through the bash
+// fallback) with a migration hint, NOT as a failure.
+func TestClassifyClaudeHooksCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		out         string
+		err         error
+		wantOK      bool
+		wantContain string
+	}{
+		{"ssh transport failure", "boom", fmt.Errorf("exit status 255"), false, "could not run over SSH"},
+		{"managed runner wired", "claude-hooks:managed", nil, true, "managed"},
+		{"user-authored fallback works but can migrate", "claude-hooks:user-authored", nil, true, "user-authored"},
+		{"settings file absent is a skip", "claude-hooks:no-file", nil, true, "skipped"},
+		{"claude present but unwired", "claude-hooks:none", nil, false, "connect"},
+		{"unrecognized output fails closed", "bash: whatever", nil, false, "did not complete"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyClaudeHooksCheck(tt.out, tt.err)
+			if got.OK != tt.wantOK {
+				t.Fatalf("OK = %v, want %v (msg=%q)", got.OK, tt.wantOK, got.Message)
+			}
+			if !strings.Contains(got.Message, tt.wantContain) {
+				t.Fatalf("message %q must contain %q", got.Message, tt.wantContain)
+			}
+		})
+	}
+}
+
+// TestClassifyCodexNotifyCheck: the venus field case — an old unmanaged
+// cc-clip notify line — is functional and must be OK with a note, not a
+// failure; a foreign notify must be OK (the guard refusing to inject over it
+// is by design) but named.
+func TestClassifyCodexNotifyCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		out         string
+		err         error
+		wantOK      bool
+		wantContain string
+	}{
+		{"ssh transport failure", "", fmt.Errorf("exit status 255"), false, "could not run over SSH"},
+		{"codex absent is a skip", "codex-notify:no-codex", nil, true, "skipped"},
+		{"managed block", "codex-notify:managed", nil, true, "managed"},
+		{"unmanaged cc-clip line still works", "codex-notify:unmanaged-cc-clip", nil, true, "unmanaged"},
+		{"foreign notify named but respected", "codex-notify:foreign", nil, true, "non-cc-clip"},
+		{"codex present but unwired", "codex-notify:none", nil, false, "--codex"},
+		{"unrecognized output fails closed", "garbage", nil, false, "did not complete"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyCodexNotifyCheck(tt.out, tt.err)
+			if got.OK != tt.wantOK {
+				t.Fatalf("OK = %v, want %v (msg=%q)", got.OK, tt.wantOK, got.Message)
+			}
+			if !strings.Contains(got.Message, tt.wantContain) {
+				t.Fatalf("message %q must contain %q", got.Message, tt.wantContain)
+			}
+		})
+	}
+}
+
+func TestClassifyNotifyPresenceChecks(t *testing.T) {
+	t.Parallel()
+	if got := classifyNotifyNonceCheck("present", nil); !got.OK {
+		t.Fatalf("present nonce must be OK: %+v", got)
+	}
+	if got := classifyNotifyNonceCheck("missing", nil); got.OK || !strings.Contains(got.Message, "connect") {
+		t.Fatalf("missing nonce must fail with the sync command: %+v", got)
+	}
+	if got := classifyNotifyNonceCheck("", fmt.Errorf("exit 255")); got.OK || !strings.Contains(got.Message, "could not run over SSH") {
+		t.Fatalf("ssh failure must be distinct: %+v", got)
+	}
+	if got := classifyHookScriptCheck("installed", nil); !got.OK {
+		t.Fatalf("installed hook script must be OK: %+v", got)
+	}
+	if got := classifyHookScriptCheck("missing", nil); got.OK {
+		t.Fatalf("missing hook script must fail: %+v", got)
 	}
 }

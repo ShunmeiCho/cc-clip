@@ -83,6 +83,17 @@ func RunRemote(host string, port int) []CheckResult {
 	// Check PATH fix (rc file marker)
 	results = append(results, checkPathFix(host)...)
 
+	// Notification bridge (#22 P1): four checks that were previously only
+	// observable during connect's N-steps.
+	out, err = remoteExecNoForward(host, hookScriptProbeCommand)
+	results = append(results, classifyHookScriptCheck(out, err))
+	out, err = remoteExecNoForward(host, notifyNonceProbeCommand)
+	results = append(results, classifyNotifyNonceCheck(out, err))
+	out, err = remoteExecNoForward(host, claudeHooksProbeCommand)
+	results = append(results, classifyClaudeHooksCheck(out, err))
+	out, err = remoteExecNoForward(host, codexNotifyProbeCommand)
+	results = append(results, classifyCodexNotifyCheck(out, err))
+
 	// End-to-end image round-trip (only if tunnel is up)
 	if tunnelOK(results) {
 		results = append(results, runImageProbe(host, port)...)
