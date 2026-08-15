@@ -63,8 +63,14 @@ func (s *Server) handleClipboardWrite(w http.ResponseWriter, r *http.Request) {
 		Source:    "clipboard-write",
 		Timestamp: time.Now().UTC(),
 		GenericMessage: &GenericMessagePayload{
-			Title:   "Clipboard set by remote",
-			Body:    fmt.Sprintf("A remote session copied %d bytes to this clipboard.", len(body)),
+			Title: "Clipboard set by remote",
+			// Deliberately STABLE text (no byte count): the dedup window keys
+			// on the envelope fingerprint, so a constant body lets a burst of
+			// writes — every neovim yank on the transparent shim path (#128
+			// phase 2) is one write — collapse into a single notification
+			// instead of spamming one per yank. Poisoning visibility is
+			// preserved: at least one notification always fires per window.
+			Body:    "A remote session wrote to this clipboard.",
 			Urgency: 0,
 		},
 	})

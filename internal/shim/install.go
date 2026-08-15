@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-
 type Target string
 
 const (
@@ -18,10 +17,10 @@ const (
 )
 
 type InstallResult struct {
-	Target       Target
-	ShimPath     string
-	RealBinPath  string
-	InstallDir   string
+	Target      Target
+	ShimPath    string
+	RealBinPath string
+	InstallDir  string
 }
 
 func DetectTarget() Target {
@@ -129,6 +128,24 @@ func Install(target Target, installDir string, port int) (InstallResult, error) 
 		return InstallResult{}, fmt.Errorf("failed to write shim: %w", err)
 	}
 
+	// Wayland writes go through wl-copy, a separate binary from wl-paste, so
+	// the wayland target ships a write-side companion shim (#128 phase 2).
+	// xclip needs none: reads and writes share one binary, and the write
+	// branch lives in the same script. Best-effort like the main shim: a
+	// missing real wl-copy still installs the shim (forward-only remote).
+	if resolved == TargetWlPaste {
+		wlCopyPath := filepath.Join(installDir, "wl-copy")
+		if !isOurShim(wlCopyPath) {
+			realWlCopy, err := findRealBinary("wl-copy", installDir)
+			if err != nil {
+				realWlCopy = "/usr/bin/wl-copy"
+			}
+			if err := os.WriteFile(wlCopyPath, []byte(WlCopyShim(port, realWlCopy)), 0755); err != nil {
+				return InstallResult{}, fmt.Errorf("failed to write wl-copy shim: %w", err)
+			}
+		}
+	}
+
 	return InstallResult{
 		Target:      resolved,
 		ShimPath:    shimPath,
@@ -153,6 +170,17 @@ func Uninstall(target Target, installDir string) error {
 
 	if err := os.Remove(shimPath); err != nil {
 		return fmt.Errorf("failed to remove shim: %w", err)
+	}
+
+	// The wayland install ships a wl-copy companion; remove it with its
+	// wl-paste sibling, but only when it is genuinely ours.
+	if resolved == TargetWlPaste {
+		wlCopyPath := filepath.Join(installDir, "wl-copy")
+		if isOurShim(wlCopyPath) {
+			if err := os.Remove(wlCopyPath); err != nil {
+				return fmt.Errorf("failed to remove wl-copy shim: %w", err)
+			}
+		}
 	}
 
 	return nil
