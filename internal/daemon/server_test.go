@@ -658,6 +658,101 @@ func TestNotifyEndpointRejectsMissingAuth(t *testing.T) {
 	}
 }
 
+// TestNotifyEndpointDistinguishesAuthFailures pins the /notify 401 bodies so
+// an operator reading notify-health.log can tell WHICH auth step failed. All
+// four cases previously collapsed into "invalid notification nonce", which
+// made a hook that never got a nonce installed indistinguishable from one
+// whose nonce was rotated out from under it.
+func TestNotifyEndpointDistinguishesAuthFailures(t *testing.T) {
+	// Cases in the same class SHOULD share a message; the operator only needs
+	// to tell the classes apart. Uniqueness is therefore asserted per class.
+	cases := []struct {
+		name     string
+		class    string
+		setAuth  bool
+		auth     string
+		wantBody string
+	}{
+		{
+			name:     "no authorization header",
+			class:    "missing",
+			setAuth:  false,
+			wantBody: "missing authorization header",
+		},
+		{
+			name:     "non-bearer scheme",
+			class:    "malformed",
+			setAuth:  true,
+			auth:     "Basic bm9uY2U=",
+			wantBody: "malformed authorization header",
+		},
+		{
+			name:     "bare nonce without bearer prefix",
+			class:    "malformed",
+			setAuth:  true,
+			auth:     "nonce-registered",
+			wantBody: "malformed authorization header",
+		},
+		{
+			name:     "bearer prefix with empty nonce",
+			class:    "empty",
+			setAuth:  true,
+			auth:     "Bearer ",
+			wantBody: "empty notification nonce",
+		},
+		{
+			name:     "well-formed but unknown nonce",
+			class:    "invalid",
+			setAuth:  true,
+			auth:     "Bearer nonce-unknown",
+			wantBody: "invalid notification nonce",
+		},
+	}
+
+	bodyByClass := make(map[string]string, len(cases))
+	classByBody := make(map[string]string, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clip := &mockClipboard{}
+			tm := token.NewManager(time.Hour)
+			_, _ = tm.Generate()
+			store := session.NewStore(12 * time.Hour)
+			srv := NewServer("127.0.0.1:0", clip, tm, store)
+			srv.RegisterNotificationNonce("nonce-registered")
+
+			body := strings.NewReader(`{"title":"test","body":"hello"}`)
+			req := httptest.NewRequest("POST", "/notify", body)
+			if tc.setAuth {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			srv.mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("expected 401, got %d; body: %s", w.Code, w.Body.String())
+			}
+			got := strings.TrimSpace(w.Body.String())
+			if !strings.Contains(got, tc.wantBody) {
+				t.Fatalf("expected body to contain %q, got %q", tc.wantBody, got)
+			}
+			// The nonce itself must never be echoed back to the caller.
+			if strings.Contains(got, "nonce-registered") || strings.Contains(got, "nonce-unknown") {
+				t.Fatalf("401 body leaks a nonce value: %q", got)
+			}
+			if prev, seen := bodyByClass[tc.class]; seen && prev != got {
+				t.Fatalf("class %q is inconsistent: %q vs %q", tc.class, prev, got)
+			}
+			if prev, seen := classByBody[got]; seen && prev != tc.class {
+				t.Fatalf("classes %q and %q share the body %q; auth failure classes must stay distinguishable", prev, tc.class, got)
+			}
+			bodyByClass[tc.class] = got
+			classByBody[got] = tc.class
+		})
+	}
+}
+
 func TestNotifyEndpointAcceptsGenericJSON(t *testing.T) {
 	clip := &mockClipboard{}
 	tm := token.NewManager(time.Hour)

@@ -32,6 +32,7 @@ const (
 	userAgent         = "cc-clip"
 	criticalChCap     = 4
 	claudeHookCType   = "application/x-claude-hook"
+	bearerPrefix      = "Bearer "
 )
 
 // sizeLimitMB reads a whole-megabyte clipboard cap override from env.
@@ -582,11 +583,28 @@ func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
 // or generic senders. Auth is via notification nonce (separate from
 // clipboard bearer token).
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
-	nonce := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	boundHost, ok := "", false
-	if nonce != "" {
-		boundHost, ok = s.lookupValidNonce(nonce)
+	// Each auth failure gets its own message so notify-health.log tells an
+	// operator which step broke: a hook deployed before any nonce existed
+	// sends no header at all, a hand-rolled sender usually gets the scheme
+	// wrong, and a rotated nonce is well-formed but unknown. Collapsing all
+	// three into one string made those cases indistinguishable in the field.
+	// Mirrors authMiddleware's handling of the clipboard token. No nonce
+	// value is ever echoed back.
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		http.Error(w, "missing authorization header", http.StatusUnauthorized)
+		return
 	}
+	if !strings.HasPrefix(auth, bearerPrefix) {
+		http.Error(w, `malformed authorization header: expected "Bearer <nonce>"`, http.StatusUnauthorized)
+		return
+	}
+	nonce := strings.TrimPrefix(auth, bearerPrefix)
+	if nonce == "" {
+		http.Error(w, "empty notification nonce", http.StatusUnauthorized)
+		return
+	}
+	boundHost, ok := s.lookupValidNonce(nonce)
 	if !ok {
 		http.Error(w, "invalid notification nonce", http.StatusUnauthorized)
 		return
