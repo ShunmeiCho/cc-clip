@@ -39,18 +39,42 @@ func TestClassifyTunnelCheck(t *testing.T) {
 			wantContain: "could not run over SSH",
 		},
 		{
-			name:        "tunnel reachable",
-			out:         "tunnel ok",
+			name:        "daemon answering through tunnel",
+			out:         "cc-clip-probe:ok",
 			err:         nil,
 			wantOK:      true,
-			wantContain: "forwarded",
+			wantContain: "daemon answering",
 		},
 		{
 			name:        "tunnel not reachable",
-			out:         "tunnel fail",
+			out:         "cc-clip-probe:down",
 			err:         nil,
 			wantOK:      false,
 			wantContain: "not reachable from remote",
+		},
+		{
+			// The regression this check exists for: a stale sshd from a
+			// previous session still owns the LISTEN socket, so a TCP-only
+			// probe called this healthy and doctor stopped looking.
+			name:        "stale listener with no daemon behind it",
+			out:         "cc-clip-probe:stale",
+			err:         nil,
+			wantOK:      false,
+			wantContain: "no cc-clip daemon answered",
+		},
+		{
+			name:        "remote has no curl to verify with",
+			out:         "cc-clip-probe:unverified",
+			err:         nil,
+			wantOK:      false,
+			wantContain: "unverified",
+		},
+		{
+			name:        "probe output not recognized",
+			out:         "bash: /dev/tcp: No such file or directory",
+			err:         nil,
+			wantOK:      false,
+			wantContain: "did not complete",
 		},
 	}
 	for _, tc := range cases {
