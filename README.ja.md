@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ e0d18e6b560626a997c53511e858452d9c40a9a4 -->
+<!-- i18n-source: README.md @ 7694090fe90162db9cb66e4a2087ce0b4fab8e7f -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <b>SSH 経由のリモート Claude Code、Codex CLI、opencode セッションに画像を貼り付けられます。</b><br>
+  <b>SSH 経由のリモート Claude Code、Codex CLI、opencode、Cursor セッションに画像を貼り付け、さらにターミナルの折り返し改行なしでテキストをローカルへコピーバックできます。</b><br>
   オプションの統合により、完了通知と承認通知をデスクトップへ届けられます。
 </p>
 
@@ -95,13 +95,34 @@ cc-clip doctor --host myserver
 | すべての統合 | `cc-clip setup myserver --all` | はい | はい | Codex には Xvfb |
 | opencode | `cc-clip setup myserver --opencode` | はい | はい | `xclip` または `wl-paste` |
 | Antigravity | `cc-clip setup myserver --agy` | いいえ | はい | 通知統合のみ |
+| Cursor CLI | `cc-clip setup myserver --cursor` | はい | いいえ | Cursor を実行する shell に `DISPLAY` または `WAYLAND_DISPLAY` が設定されていること |
 
 Codex ターゲットでは、cc-clip は `apt` または `dnf` を使って Xvfb のインストールを試みます。
 passwordless `sudo` が使えない場合は停止し、正確なインストールコマンドを表示します。
 そのコマンドを手動で実行してから、セットアップを繰り返してください。
 
-Claude と opencode の経路では、リモートの `xclip` または `wl-paste` shim を使用します。Codex は
+Claude、opencode、Cursor の経路では、リモートの `xclip` または `wl-paste` shim を使用します。Codex は
 X11 を直接読み取るため、そのターゲットでは代わりに Xvfb と `cc-clip x11-bridge` を追加します。
+
+Cursor にはデプロイでは満たせない前提条件が 1 つあります。Cursor を実行する shell に
+`DISPLAY` または `WAYLAND_DISPLAY` が設定されている場合のみ、Cursor はクリップボードを
+読み取ります（`echo $DISPLAY` で確認）。`ssh -X myserver` で接続するか、既存のディスプレイを
+エクスポートしてください。cc-clip が意図的に自前の値を注入しないのは、背後に X サーバーの
+ない `DISPLAY` は、その shell のほかのすべてのツールのクリップボードフォールバックを
+確実に壊してしまうからです。また Cursor は約 4 秒でクリップボードヘルパーの待機を
+打ち切るため、遅いリンクで大きな画像を転送する場合はリモート shell の rc に
+`export CC_CLIP_FETCH_TIMEOUT_MS=3000` を追加してください。Cursor の通知統合は未対応です。
+
+リモートの `cc-clip` がすでにパッケージマネージャの管理下にある場合は、
+`cc-clip setup myserver --use-remote-bin` でその所有権を保てます。セットアップはリモートの
+**ログイン shell** の PATH で `cc-clip` を解決し（そのため `~/.nix-profile/bin` や pipx、
+asdf のインストールも見つかります）、バージョンとハッシュを記録した上で、代替バイナリを
+アップロードせずに通常の統合セットアップを行います。
+
+このモードはホストのデプロイ状態に記録されます。以降の `cc-clip connect` 実行は——
+`cc-clip update` が提示する `connect <host> --force` の行も含めて——フラグなしで
+パッケージ管理バイナリを使い続けます。`--local-bin` でデプロイすると、ホストは
+アップロード方式へ戻ります。同一実行内でこのフラグと `--local-bin` は併用できません。
 
 > opencode と Antigravity の統合生成はテストでカバーされていますが、代表的なマシンでの
 > ホストイベント配信はまだ smoke test されていません。
@@ -116,8 +137,8 @@ X11 を直接読み取るため、そのターゲットでは代わりに Xvfb �
 | Linux | Linux | 手動デーモン | `cc-clip serve` を実行し、別の shell で `cc-clip setup HOST` を実行 |
 
 Windows サポートは引き続き実験的です。まずは [Windows クイックスタート](docs/windows-quickstart.md)の
-明示的なアップロードと貼り付けのワークフローを使用してください。v0.9.1 には任意で有効にする
-直接 RemoteForward 転送も含まれますが、これはデフォルトではありません。
+明示的なアップロードと貼り付けのワークフローを使用してください。任意で有効にする
+直接 RemoteForward 転送もあります（v0.9.1 以降）が、これはデフォルトではありません。
 
 ## 仕組み
 
@@ -179,9 +200,11 @@ adapter の詳細、手動設定、nonce 登録、診断については、
 | コマンド | 用途 |
 |---|---|
 | `cc-clip setup HOST [target]` | 初回の依存関係、SSH 設定、デーモン、デプロイ |
+| `cc-clip setup HOST --use-remote-bin` | リモートバイナリがパッケージ管理されているホストを設定 |
 | `cc-clip connect HOST --force [target]` | ホストの修復または完全な再デプロイ |
 | `cc-clip connect HOST --token-only` | rotation または期限切れになった token の同期 |
 | `cc-clip doctor --host HOST` | end-to-end 診断 |
+| `some-command \| cc-clip copy`（リモートで実行） | リモートの出力をターミナルの折り返しを経ずにローカルのクリップボードへコピー |
 | `cc-clip status` | ローカルコンポーネントの状態 |
 | `cc-clip hosts list` | 既知のホスト registry |
 | `cc-clip update --check` | 公開済み release channel の確認 |

@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ e0d18e6b560626a997c53511e858452d9c40a9a4 -->
+<!-- i18n-source: README.md @ 7694090fe90162db9cb66e4a2087ce0b4fab8e7f -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <b>通过 SSH 将图片粘贴到远程 Claude Code、Codex CLI 和 opencode 会话中。</b><br>
+  <b>通过 SSH 将图片粘贴到远程 Claude Code、Codex CLI、opencode 和 Cursor 会话中——并把文本原样复制回来，不带终端软换行。</b><br>
   可选集成还能把任务完成和授权请求通知发送回桌面。
 </p>
 
@@ -95,13 +95,32 @@ cc-clip doctor --host myserver
 | 所有集成 | `cc-clip setup myserver --all` | 是 | 是 | Codex 需要 Xvfb |
 | opencode | `cc-clip setup myserver --opencode` | 是 | 是 | `xclip` 或 `wl-paste` |
 | Antigravity | `cc-clip setup myserver --agy` | 否 | 是 | 仅通知集成 |
+| Cursor CLI | `cc-clip setup myserver --cursor` | 是 | 否 | Cursor 所在 shell 中需已设置 `DISPLAY` 或 `WAYLAND_DISPLAY` |
 
 对于 Codex 目标，cc-clip 会尝试使用 `apt` 或 `dnf` 安装 Xvfb。如果
 无法使用免密码 `sudo`，它会停止并输出准确的安装命令；
 手动运行该命令，然后重新执行设置。
 
-Claude 和 opencode 路径使用远程 `xclip` 或 `wl-paste` shim。Codex
+Claude、opencode 和 Cursor 路径使用远程 `xclip` 或 `wl-paste` shim。Codex
 直接读取 X11，因此其目标会额外配置 Xvfb 和 `cc-clip x11-bridge`。
+
+Cursor 有一个部署无法代为满足的前提条件：只有当 Cursor 所在的 shell 中设置了
+`DISPLAY` 或 `WAYLAND_DISPLAY` 时，它才会读取剪贴板（用 `echo $DISPLAY` 检查）。
+请用 `ssh -X myserver` 连接，或导出一个已存在的显示——cc-clip 有意不凭空注入
+一个：背后没有 X 服务器的 `DISPLAY` 会让该 shell 中所有其他工具的剪贴板回退
+必然失败。此外 Cursor 约 4 秒后就会停止等待剪贴板辅助进程，因此在慢速链路上
+传大图时，请在远程 shell rc 中加入 `export CC_CLIP_FETCH_TIMEOUT_MS=3000`。
+Cursor 的通知集成尚未接入。
+
+如果远程的 `cc-clip` 已由包管理器管理，可用 `cc-clip setup myserver
+--use-remote-bin` 保留这种归属。设置过程会在你远程**登录 shell** 的 PATH 下
+解析 `cc-clip`（因此能找到 `~/.nix-profile/bin`、pipx 和 asdf 安装的版本），
+记录其版本与哈希，并照常完成全部集成配置，而不上传替代二进制。
+
+该模式会记入主机的部署状态：之后的 `cc-clip connect` 运行——包括
+`cc-clip update` 提示你执行的那条 `connect <host> --force`——无需再带此
+标志即可继续使用包管理的二进制。用 `--local-bin` 部署可将主机切回上传
+模式。同一次运行中该标志不能与 `--local-bin` 组合。
 
 > opencode 和 Antigravity 的集成生成已有测试覆盖，但尚未在代表性主机上
 > 对事件交付进行冒烟测试。请
@@ -116,8 +135,8 @@ Claude 和 opencode 路径使用远程 `xclip` 或 `wl-paste` shim。Codex
 | Linux | Linux | 手动运行守护进程 | 运行 `cc-clip serve`，然后在另一个 shell 中运行 `cc-clip setup HOST` |
 
 Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/windows-quickstart.md)
-中的显式上传并粘贴工作流。v0.9.1 也包含可选的直接 RemoteForward 传输，
-但它不是默认方案。
+中的显式上传并粘贴工作流。另有一个可选的直接 RemoteForward 传输
+（自 v0.9.1 起提供），但它不是默认方案。
 
 ## 工作原理
 
@@ -180,9 +199,11 @@ Notifications
 | 命令 | 用途 |
 |---|---|
 | `cc-clip setup HOST [target]` | 首次配置依赖、SSH config、守护进程和部署 |
+| `cc-clip setup HOST --use-remote-bin` | 配置远程二进制由包管理器管理的主机 |
 | `cc-clip connect HOST --force [target]` | 修复或完整重新部署主机 |
 | `cc-clip connect HOST --token-only` | 同步已轮换或过期的 token |
 | `cc-clip doctor --host HOST` | 端到端诊断 |
+| `some-command \| cc-clip copy`（在远程执行） | 把远程输出复制到本地剪贴板，绕过终端软换行 |
 | `cc-clip status` | 查看本地组件状态 |
 | `cc-clip hosts list` | 查看已知主机注册表 |
 | `cc-clip update --check` | 检查发布渠道中的最新版本 |
