@@ -64,3 +64,32 @@ func ProbeHealth(addr string, timeout time.Duration) error {
 	}
 	return nil
 }
+
+// HealthInfo is the decoded body of the daemon's GET /health endpoint.
+// Version is empty on daemons that predate #22 P2.
+type HealthInfo struct {
+	Service string `json:"service"`
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
+// FetchHealth returns the daemon's /health identity. Unlike ProbeHealth it
+// does not judge — it hands the decoded body to the caller, which is what
+// `cc-clip status` needs to compare the running daemon's version against its
+// own binary after an in-place upgrade.
+func FetchHealth(addr string, timeout time.Duration) (HealthInfo, error) {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get("http://" + addr + "/health")
+	if err != nil {
+		return HealthInfo{}, fmt.Errorf("GET /health: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return HealthInfo{}, fmt.Errorf("GET /health -> %d", resp.StatusCode)
+	}
+	var h HealthInfo
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024)).Decode(&h); err != nil {
+		return HealthInfo{}, fmt.Errorf("invalid /health body: %w", err)
+	}
+	return h, nil
+}

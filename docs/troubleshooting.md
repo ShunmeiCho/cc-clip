@@ -13,11 +13,12 @@ If image paste isn't working, run these checks **in order** to isolate the probl
 ```bash
 # 1. Local: Is the daemon running?
 curl -s http://127.0.0.1:18339/health
-# Expected: {"status":"ok"}
+# Expected: {"service":"cc-clip","status":"ok","version":"..."}
+# ("version" appears from v0.9.3; older daemons omit it)
 
 # 2. Remote: Is the tunnel forwarding?
 ssh myserver "curl -s http://127.0.0.1:18339/health"
-# Expected: {"status":"ok"}
+# Expected: the same body as step 1
 
 # 3. Remote: Is the shim taking priority over real xclip?
 ssh myserver "which xclip"
@@ -84,6 +85,35 @@ curl -s http://127.0.0.1:18339/health
 ```
 
 **Prevention:** Update to the latest cc-clip. The `connect` command uses `ClearAllForwardings=yes` for its internal SSH session, so it never competes for the RemoteForward port.
+
+---
+
+## Auto-Starting the Daemon with SSH LocalCommand
+
+If you skip the launchd service (`cc-clip service install`) and keep forgetting
+to run `cc-clip serve` before SSHing, OpenSSH can start it for you. Add to the
+host's block in `~/.ssh/config`:
+
+```ssh-config
+Host myserver
+    RemoteForward 18339 127.0.0.1:18339
+    PermitLocalCommand yes
+    LocalCommand pgrep -f 'cc-clip serve' >/dev/null || (cc-clip serve >/dev/null 2>&1 &)
+```
+
+`LocalCommand` runs **on your local machine** after each successful connection
+to that host; the `pgrep` guard makes it a no-op when the daemon is already
+up. Notes:
+
+- `PermitLocalCommand` is required — without it `LocalCommand` is silently
+  ignored.
+- This starts the daemon *after* the SSH connection is established, so the
+  very first clipboard request may race the daemon's startup; a retry pastes
+  fine. The launchd service does not have this race and remains the
+  recommended path on macOS.
+- Scope it to specific `Host` blocks rather than `Host *`: `LocalCommand`
+  executes for every match, and a global one runs on every connection you
+  make, including ones that have nothing to do with cc-clip.
 
 ---
 

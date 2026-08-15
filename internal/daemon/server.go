@@ -78,6 +78,7 @@ type Server struct {
 	addr              string
 	mux               *http.ServeMux
 	textWriter        ClipboardTextWriter // nil until SetTextWriter; POST /clipboard/text answers 501 without it
+	version           string              // reported by /health when set via SetVersion (#22 P2)
 }
 
 func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, sessions *session.Store) *Server {
@@ -441,9 +442,21 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// SetVersion sets the version string /health reports (#22 P2), letting
+// `cc-clip status` detect a running daemon that predates an in-place binary
+// upgrade. The field is additive: tunnel.ProbeHealth decodes service/status
+// only, so older clients ignore it, and it is omitted entirely when unset.
+func (s *Server) SetVersion(v string) {
+	s.version = v
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "cc-clip"})
+	body := map[string]string{"status": "ok", "service": "cc-clip"}
+	if s.version != "" {
+		body["version"] = s.version
+	}
+	json.NewEncoder(w).Encode(body)
 }
 
 // handleRegisterNonce accepts a notification nonce from an authenticated

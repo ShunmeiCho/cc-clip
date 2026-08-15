@@ -1181,3 +1181,37 @@ func TestDedupDoesNotSuppressCriticalPermissionPrompt(t *testing.T) {
 		t.Fatalf("expected 2 critical envelopes, got %d", count)
 	}
 }
+
+// TestHealthEndpointReportsVersion pins #22 P2: /health carries the daemon's
+// version once set, so `cc-clip status` can detect a stale running daemon
+// after an in-place binary upgrade. Absent when unset (old behavior), and the
+// field is additive — tunnel.ProbeHealth parses service/status only, so older
+// clients are unaffected.
+func TestHealthEndpointReportsVersion(t *testing.T) {
+	srv, _ := newTestServer(&mockClipboard{})
+
+	get := func() map[string]string {
+		req := httptest.NewRequest("GET", "/health", nil)
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var body map[string]string
+		json.NewDecoder(w.Body).Decode(&body)
+		return body
+	}
+
+	if v, ok := get()["version"]; ok {
+		t.Fatalf("version must be absent before SetVersion, got %q", v)
+	}
+
+	srv.SetVersion("0.9.3")
+	body := get()
+	if body["version"] != "0.9.3" {
+		t.Fatalf("version = %q, want 0.9.3", body["version"])
+	}
+	if body["service"] != "cc-clip" || body["status"] != "ok" {
+		t.Fatalf("existing fields must be preserved: %v", body)
+	}
+}

@@ -310,6 +310,7 @@ func cmdServe() {
 	store := session.NewStore(12 * time.Hour)
 	srv := daemon.NewServer(addr, clipboard, tm, store)
 	srv.SetTextWriter(daemon.NewClipboardTextWriter())
+	srv.SetVersion(version)
 	srv.EnableNoncePersistence()
 	if loaded, err := srv.LoadPersistedNonces(); err != nil {
 		log.Printf("WARN: failed to load notification nonces: %v", err)
@@ -2179,6 +2180,14 @@ func cmdStatus() {
 		fmt.Printf("daemon:  not running on :%d\n", port)
 	} else {
 		fmt.Printf("daemon:  running on :%d\n", port)
+		// Detect a daemon still running a pre-upgrade binary (#22 P2). An
+		// in-place binary replacement does not restart the service, so the
+		// running daemon can silently lag this binary.
+		if h, err := tunnel.FetchHealth(addr, probeTimeout); err == nil {
+			if notice := daemonVersionNotice(h.Version, version); notice != "" {
+				fmt.Println(notice)
+			}
+		}
 	}
 
 	tok, err := token.ReadTokenFile()
