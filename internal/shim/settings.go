@@ -20,6 +20,12 @@ const claudeManagedHookCommand = "env CC_CLIP_MANAGED=1 cc-clip plugin run claud
 // "cc-clip-hook" lacks this prefix and is therefore never matched or stripped.
 const claudeManagedHookOwnerPrefix = "env CC_CLIP_MANAGED=1"
 
+// ClaudeManagedOwnerPrefix exposes the ownership marker to other packages
+// (doctor's remote checks) so their detection can never drift from what the
+// settings merge actually installs. Same permanence contract as the
+// unexported constant it aliases.
+const ClaudeManagedOwnerPrefix = claudeManagedHookOwnerPrefix
+
 var claudeManagedEvents = []string{"Stop", "Notification"}
 
 // isManagedClaudeCommand reports whether command is cc-clip-owned, keying off the

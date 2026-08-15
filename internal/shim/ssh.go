@@ -487,8 +487,14 @@ func RemoteHasCodex(session RemoteExecutor) (bool, error) {
 // trap, so any internal failure (mktemp, sed, mv) propagates to a
 // non-zero SSH exit code instead of being masked by the trailing
 // `rm -f` of the temp file.
+
+// CodexNotifyMarkerStart opens the cc-clip-managed block in ~/.codex/config.toml.
+// Exported so doctor's remote checks detect the managed block with the exact
+// string this injector writes, never a drifted copy.
+const CodexNotifyMarkerStart = "# >>> cc-clip notify (do not edit) >>>"
+
 func EnsureRemoteCodexNotifyConfig(session RemoteExecutor, port int) error {
-	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
+	const markerStart = CodexNotifyMarkerStart
 	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
 
 	managedBlock := codexNotifyManagedBlock(markerStart, markerEnd, port)
@@ -558,7 +564,7 @@ trap - EXIT
 // EnsureRemoteCodexNotifyConfig so a crash mid-write leaves either the
 // original file or the cleaned file — never a partial state.
 func StripRemoteCodexNotifyConfig(session RemoteExecutor) error {
-	const markerStart = "# >>> cc-clip notify (do not edit) >>>"
+	const markerStart = CodexNotifyMarkerStart
 	const markerEnd = "# <<< cc-clip notify (do not edit) <<<"
 
 	script := fmt.Sprintf(`set -e
