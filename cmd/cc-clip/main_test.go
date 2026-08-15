@@ -372,6 +372,25 @@ func TestNewDeployStatePreservesCodexWhenNotRequested(t *testing.T) {
 	}
 }
 
+func TestNewDeployStateFromBinaryMetadata(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("b", 64)
+	state := newDeployStateFromBinary(
+		hash,
+		"v0.9.1",
+		"xclip",
+		true,
+		nil,
+		DeployTargets{Claude: true},
+	)
+
+	if state.BinaryHash != hash {
+		t.Errorf("BinaryHash = %q, want %q", state.BinaryHash, hash)
+	}
+	if got, want := state.BinaryVersion, "v0.9.1"; got != want {
+		t.Errorf("BinaryVersion = %q, want %q", got, want)
+	}
+}
+
 func TestNewDeployStateDoesNotPreserveCodexWhenRequested(t *testing.T) {
 	dir := t.TempDir()
 	binPath := filepath.Join(dir, "cc-clip")
