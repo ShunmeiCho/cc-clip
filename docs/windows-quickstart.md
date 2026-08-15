@@ -246,11 +246,19 @@ If experimental direct paste does not work:
     type $HOME\.ssh\config
     ```
 
-3. Open a new SSH session and check the remote can see the tunnel:
+3. Open a new SSH session and check the remote can reach the daemon through
+   the tunnel:
 
     ```sh
-    bash -c 'echo >/dev/tcp/127.0.0.1/18339' && echo ok
+    curl -sf http://127.0.0.1:18339/health
     ```
+
+    A healthy tunnel answers `{"service":"cc-clip","status":"ok"}`. Do not use
+    a bare TCP check such as `bash -c 'echo >/dev/tcp/127.0.0.1/18339'` — a
+    stale `sshd` from an earlier session keeps the port open after its client
+    is gone, so the handshake succeeds while nothing reaches the daemon. That
+    is why `cc-clip connect` and `cc-clip doctor` ask the daemon to identify
+    itself instead.
 
 4. Confirm the shim is first in `PATH`:
 
