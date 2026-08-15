@@ -101,9 +101,15 @@ reads X11 directly, so its target adds Xvfb and `cc-clip x11-bridge` instead.
 
 If a package manager already owns `cc-clip` on the remote, preserve that
 ownership with `cc-clip setup myserver --use-remote-bin`. Setup resolves
-`cc-clip` from the remote PATH, records its version and hash, and performs the
-normal integration setup without uploading a replacement binary. The flag
-cannot be combined with `--local-bin`.
+`cc-clip` under your remote **login shell's** PATH (so `~/.nix-profile/bin`,
+pipx and asdf installs are found), records its version and hash, and performs
+the normal integration setup without uploading a replacement binary.
+
+The mode is remembered in the host's deploy state: later `cc-clip connect`
+runs — including the `connect <host> --force` line that `cc-clip update`
+suggests — keep using the package-managed binary without needing the flag
+again. Deploy with `--local-bin` to switch the host back to uploaded
+binaries. The flag cannot be combined with `--local-bin` in the same run.
 
 > opencode and Antigravity integration generation is covered by tests, but host
 > event delivery has not yet been smoke-tested on a representative machine.

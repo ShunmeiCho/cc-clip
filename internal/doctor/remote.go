@@ -26,15 +26,12 @@ func RunRemote(host string, port int) []CheckResult {
 	results = append(results, CheckResult{"ssh", true, fmt.Sprintf("connected to %s", host)})
 
 	// Check remote binary
-	out, err = remoteExecNoForward(
-		host,
-		"if command -v cc-clip >/dev/null 2>&1; then cc-clip version; else ~/.local/bin/cc-clip version; fi",
-	)
+	out, err = remoteExecNoForward(host, remoteBinProbeCommand)
 	if err != nil {
 		results = append(results, CheckResult{
 			"remote-bin",
 			false,
-			"cc-clip not found in remote PATH or at ~/.local/bin/cc-clip",
+			"cc-clip not found at ~/.local/bin/cc-clip or on the login-shell PATH",
 		})
 	} else {
 		results = append(results, CheckResult{"remote-bin", true, strings.TrimSpace(out)})
@@ -124,6 +121,31 @@ func classifyRemoteTokenCheck(out string, err error) CheckResult {
 	}
 	return CheckResult{"remote-token", false, "token file missing"}
 }
+
+// remoteBinProbeCommand locates and versions the remote cc-clip executable.
+//
+// Order is deliberate (#111 review): the deployed ~/.local/bin/cc-clip is the
+// PRIMARY probe because it is the binary cc-clip itself manages — a PATH-first
+// lookup reported "remote-bin OK" for a stale system copy on hosts whose
+// actually deployed binary was missing or truncated. The fallback covers
+// package-managed hosts (--use-remote-bin, #110) and runs under the user's
+// LOGIN shell: every doctor command is wrapped by WrapRemoteShell, whose
+// prelude prepends system bin dirs ahead of $PATH, so a plain `command -v`
+// here could never see ~/.nix-profile/bin or pipx installs. The candidate is
+// taken from the last output line (rc noise prints first) and must itself be
+// executable before adoption. The output names the path that answered so the
+// operator can tell which binary was probed.
+const remoteBinProbeCommand = `bin=""
+if [ -x "$HOME/.local/bin/cc-clip" ]; then
+    bin="$HOME/.local/bin/cc-clip"
+elif [ -n "$SHELL" ] && [ -x "$SHELL" ]; then
+    candidate=$("$SHELL" -lc 'command -v cc-clip' 2>/dev/null | tail -n 1)
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        bin="$candidate"
+    fi
+fi
+[ -n "$bin" ] || exit 127
+printf '%s\n' "$("$bin" version) ($bin)"`
 
 // remoteExecNoForward runs an SSH command without applying RemoteForward from ssh config.
 // Doctor checks should inspect the existing tunnel, not compete with it by opening a new one.

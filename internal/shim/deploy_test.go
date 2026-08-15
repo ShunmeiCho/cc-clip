@@ -2,6 +2,7 @@ package shim
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1152,11 +1153,14 @@ func TestIsNewerSchema_LegacyStillMigrates(t *testing.T) {
 // SchemaVersion greater than this binary's is reported as newer.
 func TestIsNewerSchema_NewerStateDetected(t *testing.T) {
 	s := &localSession{home: t.TempDir()}
-	writeRemoteDeployState(t, s.home, `{
+	// The fixture version is derived from the current constant so this test
+	// keeps meaning "strictly newer than THIS binary" across schema bumps
+	// (a hardcoded number silently stopped being "future" at the v2 bump).
+	writeRemoteDeployState(t, s.home, fmt.Sprintf(`{
   "binary_hash": "sha256:future",
-  "schema_version": 2,
+  "schema_version": %d,
   "shim_installed": true
-}`)
+}`, currentDeploySchemaVersion+1))
 
 	state, err := ReadRemoteState(s)
 	if err != nil {
@@ -1227,5 +1231,42 @@ func TestClipboardTransportPreserved(t *testing.T) {
 	}
 	if !state.Codex.Enabled || state.Codex.Mode != "xvfb" || !state.Codex.DisplayFixed {
 		t.Errorf("Codex transport state mutated: %+v", state.Codex)
+	}
+}
+
+// TestDeployStateUseRemoteBinRoundTrip pins the package-managed marker (#110):
+// it must survive a JSON round trip, and the schema version must be at least 2
+// so a pre-#110 binary refuses to rewrite (and thereby silently drop) it.
+func TestDeployStateUseRemoteBinRoundTrip(t *testing.T) {
+	state := &DeployState{UseRemoteBin: true, BinaryHash: "sha256:abc", BinaryVersion: "0.9.1"}
+	stampSchemaVersion(state)
+
+	if currentDeploySchemaVersion < 2 {
+		t.Fatalf("currentDeploySchemaVersion = %d; the use_remote_bin field requires the v2 bump", currentDeploySchemaVersion)
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"use_remote_bin":true`) {
+		t.Fatalf("marshalled state missing use_remote_bin: %s", data)
+	}
+
+	var decoded DeployState
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.UseRemoteBin {
+		t.Fatal("UseRemoteBin lost in round trip")
+	}
+
+	// The zero value must stay absent so uploaded-mode states are unchanged.
+	plain, err := json.Marshal(&DeployState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "use_remote_bin") {
+		t.Fatalf("zero-value state must omit use_remote_bin: %s", plain)
 	}
 }

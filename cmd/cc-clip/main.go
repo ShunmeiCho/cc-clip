@@ -933,7 +933,7 @@ remote has a valid claude binary installed.
 		// Codex flag is sticky in the registry, so passing codexTargeted here
 		// (false for a plain --token-only run that resolves to {Claude}) won't
 		// downgrade a previously recorded Codex=true entry.
-		recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
+		recordHostConnect(host, deployedRegistryVersion(existingRemoteBin), codexTargeted(opts.targets))
 		return
 	}
 
@@ -948,6 +948,11 @@ remote has a valid claude binary installed.
 			log.Fatalf("      failed to read remote state: %v\n      Re-run with --force only if you intend to ignore deploy.json.", err)
 		}
 	}
+	// Captured before --force nulls remoteState below: package-managed mode
+	// adoption and the bridge-restart hash comparison both need the state as
+	// it was actually read — under --force especially, since `cc-clip update`
+	// prints `connect <host> --force` as its redeploy reminder.
+	priorState := remoteState
 	// Forward downgrade guard: if the remote was deployed by a newer cc-clip
 	// (deploy-state schema > this binary's), refuse to overwrite it unless the
 	// operator explicitly passes --force. Runs before any deploy-state or
@@ -968,6 +973,18 @@ remote has a valid claude binary installed.
 		remoteState = nil
 	} else {
 		fmt.Println("      no previous deploy state")
+	}
+
+	// A host recorded as package-managed keeps that mode when the flag is
+	// omitted; --local-bin is the explicit way back to uploaded deploys.
+	if shouldAdoptRemoteBinMode(opts.useRemoteBin, getFlag("local-bin", ""), priorState) {
+		fmt.Println("      deploy state records this host as package-managed; keeping the remote binary")
+		fmt.Println("      (pass --local-bin to switch back to uploaded deploys)")
+		existingRemoteBin, err = shim.InspectRemoteBinary(session)
+		if err != nil {
+			log.Fatalf("      failed to resolve remote binary: %v", err)
+		}
+		remoteBin = existingRemoteBin.Command()
 	}
 
 	// Step 4: Prepare and upload binary (skip if hash matches)
@@ -1129,6 +1146,10 @@ remote has a valid claude binary installed.
 			log.Fatalf("      failed to prepare remote deploy state: %v", err)
 		}
 	}
+	// Record the binary-ownership mode so the next flag-less connect (notably
+	// the update reminder's `connect <host> --force`) keeps it. An explicit
+	// --local-bin deploy lands in the upload arm and clears it.
+	newState.UseRemoteBin = existingRemoteBin != nil
 	if err := shim.WriteRemoteState(session, newState); err != nil {
 		log.Printf("      warning: could not write remote deploy state: %v", err)
 	}
@@ -1144,9 +1165,12 @@ remote has a valid claude binary installed.
 		}
 	}
 
-	// Steps 8-11: Codex support (only if Codex is among the resolved targets)
+	// Steps 8-11: Codex support (only if Codex is among the resolved targets).
+	// On the remote-bin path needsUpload is permanently false, so the bridge
+	// restart decision also compares the remote executable's hash against the
+	// prior state — a package-manager upgrade must restart the bridge.
 	if codexTargeted(opts.targets) {
-		codexOk := runConnectCodex(session, opts, needsUpload, newState, remoteBin)
+		codexOk := runConnectCodex(session, opts, needsUpload || remoteBinChanged(existingRemoteBin, priorState), newState, remoteBin)
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not update deploy state: %v", err)
 		}
@@ -1170,7 +1194,19 @@ remote has a valid claude binary installed.
 	// (any error above exits via log.Fatal / os.Exit). Codex flag is sticky
 	// inside the registry, so a plain connect won't downgrade a previously
 	// recorded Codex=true.
-	recordHostConnect(host, registryVersionOrEmpty(), codexTargeted(opts.targets))
+	recordHostConnect(host, deployedRegistryVersion(existingRemoteBin), codexTargeted(opts.targets))
+}
+
+// deployedRegistryVersion returns the version to record for a host: the REMOTE
+// executable's version when the host is package-managed, the local binary's
+// otherwise. Recording the local version for a remote-bin host made
+// `hosts list` show whatever this machine happened to build (and suppressed
+// the redeploy reminder), while deploy.json said something else.
+func deployedRegistryVersion(existingRemoteBin *shim.RemoteBinaryInfo) string {
+	if existingRemoteBin != nil {
+		return normalizeVersion(existingRemoteBin.Version)
+	}
+	return registryVersionOrEmpty()
 }
 
 func newDeployState(localBin, binaryVersion, shimTarget string, pathFixed bool, remoteState *shim.DeployState, targets DeployTargets) (*shim.DeployState, error) {
@@ -2242,7 +2278,7 @@ const codexStateDir = "~/.cache/cc-clip/codex"
 
 // runConnectCodex executes steps 8-11 of the Codex deploy flow.
 // Returns true on success, false on failure (Claude path is preserved).
-func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded bool, state *shim.DeployState, remoteBin string) bool {
+func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryChanged bool, state *shim.DeployState, remoteBin string) bool {
 	port := opts.port
 
 	if opts.tokenOnly {
@@ -2296,8 +2332,9 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 	// Step 10: Start or reuse x11-bridge
 	fmt.Println("[10/11] Starting x11-bridge...")
 
-	// Unconditionally restart bridge if binary was uploaded or --force was used.
-	needsBridgeRestart := binaryUploaded || opts.force
+	// Unconditionally restart the bridge when the binary changed (uploaded, or
+	// a package-managed remote binary's hash moved) or --force was used.
+	needsBridgeRestart := binaryChanged || opts.force
 	if needsBridgeRestart {
 		stopBridgeRemote(session)
 	}
