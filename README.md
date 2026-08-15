@@ -91,13 +91,25 @@ Choose one selector per setup. With no selector, cc-clip configures Claude Code.
 | All integrations | `cc-clip setup myserver --all` | Yes | Yes | Xvfb for Codex |
 | opencode | `cc-clip setup myserver --opencode` | Yes | Yes | `xclip` or `wl-paste` |
 | Antigravity | `cc-clip setup myserver --agy` | No | Yes | Notification integration only |
+| Cursor CLI | `cc-clip setup myserver --cursor` | Yes | No | `DISPLAY` or `WAYLAND_DISPLAY` set in Cursor's shell |
 
 For Codex targets, cc-clip tries to install Xvfb with `apt` or `dnf`. If
 passwordless `sudo` is unavailable, it stops and prints the exact install command;
 run that command manually, then repeat setup.
 
-The Claude and opencode paths use the remote `xclip` or `wl-paste` shim. Codex
-reads X11 directly, so its target adds Xvfb and `cc-clip x11-bridge` instead.
+The Claude, opencode, and Cursor paths use the remote `xclip` or `wl-paste`
+shim. Codex reads X11 directly, so its target adds Xvfb and `cc-clip x11-bridge`
+instead.
+
+Cursor has one extra prerequisite the deploy cannot satisfy: its clipboard
+reader only runs when `DISPLAY` or `WAYLAND_DISPLAY` is set in the shell where
+Cursor runs (check with `echo $DISPLAY`). Connect with `ssh -X myserver` or
+export an existing display — cc-clip deliberately does not invent one, because
+a `DISPLAY` with no X server behind it would break clipboard fallback for every
+other tool in that shell. Cursor also stops waiting for clipboard helpers after
+about 4 seconds, so for large images over a slow link add
+`export CC_CLIP_FETCH_TIMEOUT_MS=3000` to your remote shell rc. Cursor
+notifications are not wired up yet.
 
 If a package manager already owns `cc-clip` on the remote, preserve that
 ownership with `cc-clip setup myserver --use-remote-bin`. Setup resolves

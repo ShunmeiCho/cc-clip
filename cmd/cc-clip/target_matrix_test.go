@@ -22,7 +22,7 @@ func TestRejectNonClaudeHookControl(t *testing.T) {
 	}{
 		{"claude+no-hooks ok", DeployTargets{Claude: true}, true, false, false},
 		{"claude+hooks ok", DeployTargets{Claude: true}, false, true, false},
-		{"all+no-hooks ok (claude is a member)", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true}, true, false, false},
+		{"all+no-hooks ok (claude is a member)", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true, false, false},
 		{"codex+no-hooks ERROR", DeployTargets{Codex: true}, true, false, true},
 		{"opencode+hooks ERROR", DeployTargets{Opencode: true}, false, true, true},
 		{"agy+no-hooks ERROR", DeployTargets{Antigravity: true}, true, false, true},
@@ -70,7 +70,7 @@ func TestLegacyCodexNotice(t *testing.T) {
 
 	t.Run("--all does not print legacy notice", func(t *testing.T) {
 		var errOut bytes.Buffer
-		maybeLegacyCodexNotice(&errOut, []string{"--all"}, DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true})
+		maybeLegacyCodexNotice(&errOut, []string{"--all"}, DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true})
 		if errOut.Len() != 0 {
 			t.Fatalf("--all must not print the legacy notice:\n%s", errOut.String())
 		}

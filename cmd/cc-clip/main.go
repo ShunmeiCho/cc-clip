@@ -131,7 +131,7 @@ Remote:
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
     --port           Tunnel port (default: 18339)
-    --claude/--codex/--opencode/--agy/--all   Deployment target (see "Deployment targets" below)
+    --claude/--codex/--opencode/--agy/--cursor/--all   Deployment target (see "Deployment targets" below)
     --use-remote-bin Use cc-clip from the remote PATH; skip binary upload
     --auto-recover   Recover from v0.7.0 wrapper corruption (mutex with --token-only)
 
@@ -162,6 +162,8 @@ Deployment targets (connect/setup; choose at most one selector):
     --codex          Codex CLI ONLY: Xvfb + x11-bridge + codex-notify (no Claude shim)
     --opencode       opencode: clipboard shim + session.idle notify plugin
     --agy            Antigravity: agy-notify (alias --antigravity)
+    --cursor         Cursor CLI: clipboard shim only (requires DISPLAY or
+                     WAYLAND_DISPLAY in Cursor's shell; no notifications yet)
     --all            Everything above
   With no selector: interactive menu on a TTY, or the {Claude} default on a
   non-TTY. v0.9.0 BREAKING: --codex no longer installs the Claude shim; use
@@ -1836,8 +1838,39 @@ func connectSuccessSummary(t DeployTargets) string {
 		return "Setup complete. Codex CLI clipboard support is configured below."
 	case t.Antigravity:
 		return "Setup complete. Antigravity notifications configured; clipboard transport is pending."
+	case t.Cursor:
+		return "Setup complete. Ctrl+V in remote Cursor will paste images once DISPLAY is set (see the note above)."
 	default:
 		return "Setup complete."
+	}
+}
+
+// cursorDisplayNotice is printed when the Cursor target is selected. Cursor's
+// clipboard reader only builds its xclip/wl-paste candidate list when DISPLAY
+// or WAYLAND_DISPLAY is set in the shell it runs in; on a headless SSH session
+// neither is, so the shim is never invoked at all. cc-clip deliberately does
+// NOT inject a DISPLAY (issue #109, option C): a value with no X server behind
+// it would leak into the whole login shell and turn the shim's real-xclip
+// fallback into a guaranteed failure for every other consumer.
+//
+// The timeout note exists because Cursor kills each clipboard child after ~4s
+// while the shim's default fetch timeout is 5s — a large image over a slow
+// tunnel would be killed mid-transfer without the override.
+const cursorDisplayNotice = `      Cursor CLI notes:
+      1. Cursor only reads the clipboard when DISPLAY or WAYLAND_DISPLAY is set
+         in the shell where it runs. Check with:  echo $DISPLAY
+         If empty, connect with 'ssh -X <host>' or export an existing display.
+         cc-clip does not set one for you.
+      2. Cursor stops waiting for clipboard helpers after about 4 seconds; the
+         shim's default fetch timeout is 5. For large images over a slow link,
+         add to your remote shell rc:  export CC_CLIP_FETCH_TIMEOUT_MS=3000`
+
+// maybePrintCursorNotice writes cursorDisplayNotice to out when the Cursor
+// integration is among the resolved targets.
+func maybePrintCursorNotice(out io.Writer, t DeployTargets) {
+	if cursorTargeted(t) {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, cursorDisplayNotice)
 	}
 }
 
@@ -1873,6 +1906,10 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string, target
 		os.Exit(1)
 	}
 	fmt.Printf("      %s\n", shimOut)
+
+	// The DISPLAY prerequisite must precede the summary: the summary's Cursor
+	// line refers to "the note above".
+	maybePrintCursorNotice(os.Stdout, targets)
 
 	fmt.Println()
 	fmt.Println(connectSuccessSummary(targets))
