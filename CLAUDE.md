@@ -48,7 +48,7 @@ goreleaser config: `.goreleaser.yaml`. Release is published automatically (not d
 
 ### Data Flow
 
-1. **daemon** (`internal/daemon/`) — HTTP server on loopback, reads Mac clipboard via `pngpaste`, serves images at `GET /clipboard/type` and `GET /clipboard/image`. Auth via Bearer token + User-Agent whitelist.
+1. **daemon** (`internal/daemon/`) — HTTP server on loopback, reads Mac clipboard via `pngpaste`, serves images at `GET /clipboard/type` and `GET /clipboard/image`. Also accepts reverse text copies at `POST /clipboard/text` (`cc-clip copy` on the remote → local clipboard, #128): bytes are written verbatim via the platform writer (`clipwrite_{darwin,linux,windows}.go`), and every accepted write emits a calm notification naming the byte count but never the content. Auth via Bearer token + User-Agent whitelist.
 2. **tunnel** (`internal/tunnel/`) — Client-side HTTP calls through the SSH-forwarded port. `Probe()` checks TCP connectivity. `Client.FetchImage()` downloads and saves with timestamp+random filename.
 3. **shim** (`internal/shim/template.go`) — Bash script templates for xclip and wl-paste. Intercepts two specific invocation patterns Claude Code uses, fetches via curl through tunnel, falls back to real binary on any failure.
 4. **connect** (`cmd/cc-clip/main.go:cmdConnect`) — Orchestrates deployment via SSH master session: detect remote arch → incremental binary upload (hash-based skip) → install shim → sync token → verify tunnel. Supports `--force`, `--token-only` flags.
