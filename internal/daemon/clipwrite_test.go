@@ -162,3 +162,31 @@ var errTestWriteFailed = &writeFailedError{}
 type writeFailedError struct{}
 
 func (e *writeFailedError) Error() string { return "simulated clipboard write failure" }
+
+// The "[unverified]" prefix is the only signal a user gets that the text in a
+// notification came from somewhere the daemon cannot vouch for. This
+// notification is written by the daemon, about a write it just performed —
+// none of its text comes from the request. Marking it unverified spends the
+// marker on a message that is not, and teaches the user to ignore it.
+func TestClipboardWriteNotificationIsNotLabelledUnverified(t *testing.T) {
+	srv, _, tok := newWriteTestServer(t)
+
+	if w := postClipboardText(srv, tok, "hello"); w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env NotifyEnvelope
+	select {
+	case env = <-srv.NotifyChannel():
+	case <-time.After(2 * time.Second):
+		t.Fatal("no notification was enqueued for an accepted clipboard write")
+	}
+
+	title, _ := formatNotification(env)
+	if strings.HasPrefix(title, "[unverified]") {
+		t.Errorf("the daemon's own clipboard-write notification is labelled unverified: %q", title)
+	}
+	if title != "Clipboard set by remote" {
+		t.Errorf("title = %q, want %q", title, "Clipboard set by remote")
+	}
+}

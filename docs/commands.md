@@ -56,6 +56,9 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | `cc-clip notify --from-codex "$1"` | Parse Codex JSON arg and notify |
 | `cc-clip notify --from-codex-stdin` | Read Codex JSON from stdin and notify |
 
+Copying *from* the remote back to your local clipboard — including neovim yanks
+and tmux copy-mode — is covered in [reverse copy](reverse-copy.md).
+
 ## Diagnostics
 
 | Command | Description |
