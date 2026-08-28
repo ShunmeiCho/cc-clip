@@ -206,6 +206,7 @@ before using cc-clip on a shared or untrusted host.
 | `cc-clip connect HOST --token-only` | Sync a rotated or expired token |
 | `cc-clip doctor --host HOST` | End-to-end diagnosis |
 | `some-command \| cc-clip copy` (on the remote) | Copy remote output to your local clipboard, bypassing terminal soft-wrap |
+| Yank in neovim / tmux copy-mode on the remote | Lands on your local clipboard too — see [reverse copy](docs/reverse-copy.md) |
 | `cc-clip status` | Local component status |
 | `cc-clip hosts list` | Known-host registry |
 | `cc-clip update --check` | Check the published release channel |
