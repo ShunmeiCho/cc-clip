@@ -282,3 +282,62 @@ func TestParseHotkey(t *testing.T) {
 		})
 	}
 }
+
+// TestHotkeyConfigNoRestoreRoundTrip covers the fallback for terminals that
+// drop synthetic input (issue #140). The autostart VBS launcher runs
+// `cc-clip hotkey --run-loop` with no other arguments, so the setting only
+// survives a reboot if it round-trips through hotkey.json.
+func TestHotkeyConfigNoRestoreRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
+	t.Cleanup(func() { hotkeyConfigPathOverride = "" })
+
+	if err := saveHotkeyConfig(hotkeyConfig{Host: "myserver", NoRestore: true}); err != nil {
+		t.Fatalf("saveHotkeyConfig: %v", err)
+	}
+
+	got, ok, err := loadHotkeyConfig()
+	if err != nil || !ok {
+		t.Fatalf("loadHotkeyConfig: ok=%v err=%v", ok, err)
+	}
+	if !got.NoRestore {
+		t.Error("NoRestore did not survive the round trip")
+	}
+
+	raw, err := os.ReadFile(hotkeyConfigPathOverride)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(raw), `"no_restore": true`) {
+		t.Errorf("expected no_restore in the on-disk config, got:\n%s", raw)
+	}
+}
+
+// The default must stay "restore", so nobody's existing setup changes
+// behaviour on upgrade. omitempty also means an untouched config file gains no
+// new key.
+func TestHotkeyConfigNoRestoreDefaultsOffAndIsOmitted(t *testing.T) {
+	tmpDir := t.TempDir()
+	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
+	t.Cleanup(func() { hotkeyConfigPathOverride = "" })
+
+	if err := saveHotkeyConfig(hotkeyConfig{Host: "myserver"}); err != nil {
+		t.Fatalf("saveHotkeyConfig: %v", err)
+	}
+
+	got, _, err := loadHotkeyConfig()
+	if err != nil {
+		t.Fatalf("loadHotkeyConfig: %v", err)
+	}
+	if got.NoRestore {
+		t.Error("NoRestore defaulted to true; the clipboard image must be restored unless asked otherwise")
+	}
+
+	raw, err := os.ReadFile(hotkeyConfigPathOverride)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(raw), "no_restore") {
+		t.Errorf("no_restore should be omitted when false, got:\n%s", raw)
+	}
+}

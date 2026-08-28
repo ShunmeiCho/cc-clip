@@ -12,7 +12,7 @@ import (
 const (
 	AtomNameClipboard = "CLIPBOARD"
 	AtomNameTargets   = "TARGETS"
-	AtomNameTimestamp  = "TIMESTAMP"
+	AtomNameTimestamp = "TIMESTAMP"
 	AtomNameMultiple  = "MULTIPLE"
 	AtomNameIncr      = "INCR"
 	AtomNameImagePNG  = "image/png"

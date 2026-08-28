@@ -22,13 +22,13 @@ const (
 	wmTray         = wmApp + 1
 	wmHealthResult = wmApp + 2
 	wmCommand      = 0x0111
-	wmTimer   = 0x0113
-	wmDestroy = 0x0002
+	wmTimer        = 0x0113
+	wmDestroy      = 0x0002
 
 	wmRButtonUp = 0x0205
-	nimAdd    = 0x00000000
-	nimModify = 0x00000001
-	nimDelete = 0x00000002
+	nimAdd      = 0x00000000
+	nimModify   = 0x00000001
+	nimDelete   = 0x00000002
 
 	nifMessage = 0x00000001
 	nifIcon    = 0x00000002
@@ -50,14 +50,14 @@ const (
 	timerHealthCheck      = 1
 	healthCheckIntervalMS = 30000
 
-	menuIDTitle      = 100
-	menuIDHotkey     = 101
-	menuIDHost       = 102
-	menuIDDaemon     = 103
-	menuIDOpenLog       = 200
-	menuIDOpenConfig    = 201
-	menuIDToggleNotify  = 202
-	menuIDQuit          = 300
+	menuIDTitle        = 100
+	menuIDHotkey       = 101
+	menuIDHost         = 102
+	menuIDDaemon       = 103
+	menuIDOpenLog      = 200
+	menuIDOpenConfig   = 201
+	menuIDToggleNotify = 202
+	menuIDQuit         = 300
 )
 
 type trayStatus int
@@ -421,7 +421,7 @@ func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		}
 		go func() {
 			defer hotkeyRunning.Store(false)
-			if err := handleHotkeyPress(t.cfg.Host, t.cfg.RemoteDir, t.binding, time.Duration(t.cfg.DelayMS)*time.Millisecond); err != nil {
+			if err := handleHotkeyPress(t.cfg, t.binding); err != nil {
 				log.Printf("hotkey: send failed: %v", err)
 				return
 			}

@@ -110,8 +110,8 @@ several remote hosts at the same time, run an explicit one-shot command with
 the host you want, or use separate hotkey configuration per workflow.
 
 > **Focus guard.** The paste is delivered as a synthesized `Ctrl+Shift+V`, which
-> goes to whichever window is focused when it fires — and the gap is not only
-> the configured `--delay-ms`, it also covers the PowerShell process start.
+> goes to whichever window is focused when it fires, after the configured
+> `--delay-ms`.
 > `cc-clip` therefore records the focused window before writing the clipboard
 > and re-checks it immediately before the keystroke. If focus moved, the paste
 > is **aborted and nothing is typed**, so the remote path cannot land in a
@@ -122,6 +122,28 @@ the host you want, or use separate hotkey configuration per workflow.
 > hotkey again. The guard also aborts when Windows reports no foreground
 > window at all, which happens briefly while a window is losing activation —
 > retrying with the window focused is the fix.
+
+### If nothing is pasted
+
+The keystroke is delivered with `SendInput`, which Electron-based terminals
+(Wave, Hyper, Tabby, VS Code's integrated terminal) accept. If a terminal still
+refuses it, `cc-clip` now reports the refusal instead of claiming success — a
+window running as administrator, for example, rejects input from a
+non-elevated process.
+
+The reliable fallback is to skip the synthetic keystroke and press `Ctrl+V`
+yourself:
+
+```powershell
+cc-clip hotkey myserver --no-restore
+```
+
+`--no-restore` leaves the remote path on the clipboard. Without it the image is
+put back 150 ms after the keystroke, so a manual `Ctrl+V` pastes the *image* —
+which in an Electron terminal becomes a local `%TEMP%` path the remote agent
+cannot read. The setting is stored in `hotkey.json` as `"no_restore": true`, so
+it survives the autostart launcher and a reboot. The same flag has always been
+available on `cc-clip send --paste`.
 
 ## Experimental: Direct Remote Clipboard
 

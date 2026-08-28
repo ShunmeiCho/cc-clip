@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +16,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
 
 const (
@@ -79,6 +82,7 @@ func cmdHotkey() {
 	status := fs.Bool("status", false, "show hotkey status")
 	enableAutostart := fs.Bool("enable-autostart", false, "start the hotkey automatically at login")
 	disableAutostart := fs.Bool("disable-autostart", false, "remove hotkey auto-start at login")
+	noRestore := fs.Bool("no-restore", storedCfg.NoRestore, "leave the remote path on the clipboard instead of restoring the image after the paste keystroke")
 	runLoop := fs.Bool("run-loop", false, "internal background loop")
 
 	if err := fs.Parse(flagArgs); err != nil {
@@ -110,7 +114,7 @@ func cmdHotkey() {
 		host = storedCfg.Host
 	}
 	if host == "" {
-		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--hotkey KEY] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
+		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--hotkey KEY] [--delay-ms N] [--no-restore] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
 	}
 
 	cfg := hotkeyConfig{
@@ -118,6 +122,7 @@ func cmdHotkey() {
 		RemoteDir: *remoteDir,
 		DelayMS:   *delayMS,
 		Hotkey:    *hotkeyValue,
+		NoRestore: *noRestore,
 	}
 	normalizeHotkeyConfig(&cfg)
 	binding, err := parseHotkey(cfg.Hotkey)
@@ -137,17 +142,23 @@ func cmdHotkey() {
 	}
 
 	if *runLoop {
-		runHotkeyLoop(cfg.Host, cfg.RemoteDir, cfg.Hotkey, time.Duration(cfg.DelayMS)*time.Millisecond)
+		runHotkeyLoop(cfg)
 		return
 	}
 
-	startHotkeyBackground(cfg.Host, cfg.RemoteDir, cfg.Hotkey, cfg.DelayMS)
+	startHotkeyBackground(cfg)
 }
 
-func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
+func startHotkeyBackground(cfg hotkeyConfig) {
 	hotkeyStopIfStale()
-	if pid, ok := hotkeyProcessPID(); ok {
+	if pid, state, reason := hotkeyProcessPID(); state == hotkeyProcessRunning {
 		fmt.Printf("hotkey: already running (PID %d)\n", pid)
+		return
+	} else if state == hotkeyProcessUnknown {
+		// Starting a second loop would fight the first one for RegisterHotKey.
+		fmt.Printf("hotkey: PID %d is recorded but cannot be verified (%s); "+
+			"not starting a second loop. Remove %s if it is stale.\n",
+			pid, reason, hotkeyPIDPath())
 		return
 	}
 
@@ -158,11 +169,17 @@ func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 
 	args := []string{
 		"hotkey",
-		host,
-		"--remote-dir", remoteDir,
-		"--hotkey", hotkey,
-		"--delay-ms", strconv.Itoa(delayMS),
+		cfg.Host,
+		"--remote-dir", cfg.RemoteDir,
+		"--hotkey", cfg.Hotkey,
+		"--delay-ms", strconv.Itoa(cfg.DelayMS),
 		"--run-loop",
+	}
+	// The autostart VBS launcher runs `cc-clip hotkey --run-loop` with no other
+	// arguments and relies on the saved config, so this only has to mirror what
+	// an explicit foreground invocation passed.
+	if cfg.NoRestore {
+		args = append(args, "--no-restore")
 	}
 	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -176,10 +193,10 @@ func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 	if err := writeHotkeyPID(cmd.Process.Pid); err != nil {
 		log.Fatalf("hotkey started (PID %d) but pid file write failed: %v", cmd.Process.Pid, err)
 	}
-	fmt.Printf("hotkey: started in background (PID %d), trigger with %s\n", cmd.Process.Pid, hotkey)
+	fmt.Printf("hotkey: started in background (PID %d), trigger with %s\n", cmd.Process.Pid, cfg.Hotkey)
 }
 
-func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
+func runHotkeyLoop(cfg hotkeyConfig) {
 	if err := initHotkeyLogger(); err != nil {
 		log.Fatalf("hotkey logger setup failed: %v", err)
 	}
@@ -198,19 +215,14 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 		}
 	}
 
-	binding, err := parseHotkey(hotkey)
+	normalizeHotkeyConfig(&cfg)
+	binding, err := parseHotkey(cfg.Hotkey)
 	if err != nil {
-		log.Fatalf("hotkey: invalid hotkey %q: %v", hotkey, err)
+		log.Fatalf("hotkey: invalid hotkey %q: %v", cfg.Hotkey, err)
 	}
 
-	cfg := hotkeyConfig{
-		Host:      host,
-		RemoteDir: remoteDir,
-		DelayMS:   int(delay / time.Millisecond),
-		Hotkey:    hotkey,
-	}
-
-	log.Printf("hotkey: starting for host=%s remote_dir=%s hotkey=%s", host, remoteDir, binding.String())
+	log.Printf("hotkey: starting for host=%s remote_dir=%s hotkey=%s no_restore=%t",
+		cfg.Host, cfg.RemoteDir, binding.String(), cfg.NoRestore)
 
 	// Create tray (this also calls runtime.LockOSThread)
 	tray, err := newTray(cfg, binding, defaultDaemonPort())
@@ -262,7 +274,7 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 			if !hotkeyRunning.Swap(true) {
 				go func() {
 					defer hotkeyRunning.Store(false)
-					if err := handleHotkeyPress(host, remoteDir, binding, delay); err != nil {
+					if err := handleHotkeyPress(cfg, binding); err != nil {
 						log.Printf("hotkey: send failed: %v", err)
 						return
 					}
@@ -277,7 +289,7 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	}
 }
 
-func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time.Duration) error {
+func handleHotkeyPress(cfg hotkeyConfig, binding hotkeyBinding) error {
 	log.Printf("hotkey: %s pressed", binding.String())
 
 	tray := globalTray
@@ -285,7 +297,7 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 		tray.showBalloon("cc-clip", "Uploading clipboard image...", niifInfo)
 	}
 
-	result, err := uploadImage(host, remoteDir, "")
+	result, err := uploadImage(cfg.Host, cfg.RemoteDir, "")
 	if err != nil {
 		if tray != nil {
 			if strings.Contains(err.Error(), "no image in clipboard") {
@@ -304,7 +316,8 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 
 	log.Printf("hotkey: uploaded %s", result.RemotePath)
 
-	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, delay, true); err != nil {
+	delay := time.Duration(cfg.DelayMS) * time.Millisecond
+	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, delay, !cfg.NoRestore); err != nil {
 		if tray != nil {
 			tray.showBalloon("cc-clip", "Paste failed: "+err.Error(), niifError)
 		}
@@ -312,17 +325,27 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 	}
 
 	if tray != nil {
-		tray.showBalloon("cc-clip", "Image pasted to "+host, niifInfo)
+		if cfg.NoRestore {
+			tray.showBalloon("cc-clip", "Remote path on clipboard for "+cfg.Host, niifInfo)
+		} else {
+			tray.showBalloon("cc-clip", "Image pasted to "+cfg.Host, niifInfo)
+		}
 	}
 	return nil
 }
 
 func printHotkeyStatus() {
-	pid, ok := hotkeyProcessPID()
-	if !ok {
-		fmt.Println("hotkey: not running")
-	} else {
+	switch pid, state, reason := hotkeyProcessPID(); state {
+	case hotkeyProcessRunning:
 		fmt.Printf("hotkey: running (PID %d)\n", pid)
+	case hotkeyProcessUnknown:
+		// Never report this as "not running": that is a claim we cannot make,
+		// and making it anyway is the bug this branch exists to prevent.
+		fmt.Printf("hotkey: PID %d recorded but could not be verified (%s)\n", pid, reason)
+	case hotkeyProcessOther:
+		fmt.Printf("hotkey: not running (PID %d belongs to another process)\n", pid)
+	default:
+		fmt.Println("hotkey: not running")
 	}
 
 	if hotkeyAutostartEnabled() {
@@ -345,6 +368,7 @@ func printHotkeyStatus() {
 	fmt.Printf("hotkey: remote dir %s\n", cfg.RemoteDir)
 	fmt.Printf("hotkey: delay %dms\n", cfg.DelayMS)
 	fmt.Printf("hotkey: key %s\n", cfg.Hotkey)
+	fmt.Printf("hotkey: restore image clipboard after paste: %t\n", !cfg.NoRestore)
 }
 
 func stopHotkeyProcess() {
@@ -354,15 +378,18 @@ func stopHotkeyProcess() {
 	// up on the next --run-loop start.
 	writeHotkeyStopFile()
 
-	pid, ok := hotkeyProcessPID()
-	if !ok {
+	pid, state, reason := hotkeyProcessPID()
+	switch state {
+	case hotkeyProcessGone:
 		fmt.Println("hotkey: not running (stop sentinel written)")
 		return
-	}
-
-	cmdline, err := localProcessCommand(pid)
-	if err == nil && !strings.Contains(strings.ToLower(cmdline), " hotkey ") {
-		fmt.Printf("hotkey: pid %d is not a cc-clip hotkey process, refusing to kill\n", pid)
+	case hotkeyProcessUnknown:
+		fmt.Printf("hotkey: cannot verify PID %d (%s); refusing to kill it. "+
+			"Check it yourself and remove %s if it is stale.\n",
+			pid, reason, hotkeyPIDPath())
+		return
+	case hotkeyProcessOther:
+		fmt.Printf("hotkey: PID %d is not a cc-clip hotkey process, refusing to kill\n", pid)
 		os.Remove(hotkeyPIDPath())
 		return
 	}
@@ -378,33 +405,71 @@ func stopHotkeyProcess() {
 	fmt.Printf("hotkey: stopped PID %d\n", pid)
 }
 
+// hotkeyStopIfStale clears the PID file when it points at something that is
+// definitely not our hotkey loop. An indeterminate probe leaves the file
+// alone: deleting it there is how a live loop became invisible to --status
+// and unkillable by --stop.
 func hotkeyStopIfStale() {
-	pid, ok := hotkeyProcessPID()
-	if !ok {
-		return
-	}
-	cmdline, err := localProcessCommand(pid)
-	if err != nil || !strings.Contains(strings.ToLower(cmdline), " hotkey ") {
+	if _, state, _ := hotkeyProcessPID(); state == hotkeyProcessOther {
 		os.Remove(hotkeyPIDPath())
 	}
 }
 
-func hotkeyProcessPID() (int, bool) {
+// hotkeyProcessState is the outcome of probing the PID recorded in the PID
+// file. The distinction between "not ours" and "could not tell" is the whole
+// point: only the former justifies discarding the record.
+type hotkeyProcessState int
+
+const (
+	hotkeyProcessRunning hotkeyProcessState = iota // a live cc-clip hotkey loop
+	hotkeyProcessGone                              // no PID file, or no such process
+	hotkeyProcessOther                             // that PID belongs to something else
+	hotkeyProcessUnknown                           // the process may exist; we cannot tell
+)
+
+// hotkeyProcessPID reads the recorded PID and classifies it.
+//
+// Identity is established from the process image path via the Win32 API, not
+// from Win32_Process.CommandLine: that property comes back empty whenever the
+// caller lacks rights to read it, and treating an unreadable command line as
+// "not our process" is what made a running hotkey loop report itself as not
+// running (issue #140). The command line is still consulted when it is
+// available, to tell a hotkey loop apart from another cc-clip subcommand, but
+// its absence never downgrades a positive image match.
+// The third return value explains a hotkeyProcessUnknown result so callers can
+// say what actually went wrong instead of "not running"; it is empty otherwise.
+func hotkeyProcessPID() (int, hotkeyProcessState, string) {
 	data, err := os.ReadFile(hotkeyPIDPath())
 	if err != nil {
-		return 0, false
+		return 0, hotkeyProcessGone, ""
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || pid <= 0 {
 		_ = os.Remove(hotkeyPIDPath())
-		return 0, false
+		return 0, hotkeyProcessGone, ""
 	}
-	cmdline, err := localProcessCommand(pid)
-	if err != nil || !strings.Contains(strings.ToLower(cmdline), " hotkey ") {
+
+	image, err := win32.ProcessImageName(pid)
+	switch {
+	case errors.Is(err, win32.ErrProcessNotFound):
 		_ = os.Remove(hotkeyPIDPath())
-		return 0, false
+		return pid, hotkeyProcessGone, ""
+	case err != nil:
+		return pid, hotkeyProcessUnknown, err.Error()
 	}
-	return pid, true
+
+	if !strings.Contains(strings.ToLower(filepath.Base(image)), "cc-clip") {
+		return pid, hotkeyProcessOther, ""
+	}
+
+	// The image is ours. Narrow it to the hotkey subcommand when the command
+	// line is readable; when it is not, the image match stands on its own.
+	if cmdline, cmdErr := localProcessCommand(pid); cmdErr == nil {
+		if !strings.Contains(strings.ToLower(cmdline), " hotkey") {
+			return pid, hotkeyProcessOther, ""
+		}
+	}
+	return pid, hotkeyProcessRunning, ""
 }
 
 var hotkeyPIDPathOverride string

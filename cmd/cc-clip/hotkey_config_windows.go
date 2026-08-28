@@ -33,11 +33,18 @@ var hotkeyRegQuery = func(key, name string) (string, error) {
 }
 
 type hotkeyConfig struct {
-	Host          string `json:"host"`
-	RemoteDir     string `json:"remote_dir"`
-	DelayMS       int    `json:"delay_ms"`
-	Hotkey        string `json:"hotkey"`
-	Notifications *bool  `json:"notifications,omitempty"`
+	Host      string `json:"host"`
+	RemoteDir string `json:"remote_dir"`
+	DelayMS   int    `json:"delay_ms"`
+	Hotkey    string `json:"hotkey"`
+	// NoRestore leaves the remote path on the clipboard instead of putting the
+	// image back after the paste keystroke. It is the working fallback on
+	// terminals that drop synthetic input: with restore on, the image returns
+	// 150ms later, so the user's own Ctrl+V pastes the image rather than the
+	// remote path (issue #140). `send` has carried --no-restore since it
+	// existed; this is the same switch for the hotkey loop.
+	NoRestore     bool  `json:"no_restore,omitempty"`
+	Notifications *bool `json:"notifications,omitempty"`
 }
 
 func loadHotkeyConfig() (hotkeyConfig, bool, error) {

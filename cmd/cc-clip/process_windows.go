@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
 
 // stopLocalProcess reads a PID file, verifies the process command, and stops it.
@@ -68,7 +70,11 @@ func localProcessCommandImpl(pid int) (string, error) {
 	// Use PowerShell Get-CimInstance instead of wmic, which is deprecated
 	// and removed by default on Windows 11 24H2+.
 	psCmd := fmt.Sprintf(`(Get-CimInstance Win32_Process -Filter "ProcessId=%d" -ErrorAction SilentlyContinue).CommandLine`, pid)
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", psCmd).CombinedOutput()
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
+	// Every other PowerShell child in cc-clip is created with CREATE_NO_WINDOW;
+	// this one was not, so `hotkey --status` and `--stop` flashed a console.
+	win32.HideConsoleWindow(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("Get-CimInstance failed: %w", err)
 	}

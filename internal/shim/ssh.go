@@ -146,7 +146,11 @@ func WrapRemoteShell(cmd string) string {
 const remotePathPrelude = "export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH\"\n"
 
 // shSingleQuote renders s as a single single-quoted shell token, escaping any
-// embedded single quote via the portable '\'' close-escape-reopen idiom.
+// embedded single quote via the portable close-escape-reopen idiom (end the
+// quoted run, emit a backslash-escaped quote, reopen). Spelling that idiom out
+// in prose rather than literally is deliberate: gofmt's doc-comment printer
+// rewrites a doubled apostrophe into a typographic quote, which silently
+// corrupts the example.
 func shSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
