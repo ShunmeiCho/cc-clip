@@ -108,6 +108,15 @@ func buildNotifyAdapters() []detectInstallAdapter {
 			detect:   shim.RemoteHasOpencode,
 			install:  shim.EnsureRemoteOpencodePlugin,
 		},
+		{
+			id:       shim.AdapterCursorNotify,
+			label:    "Cursor",
+			step:     "N5.9",
+			fileNote: "~/.cursor/hooks.json stop hook merged",
+			targeted: cursorTargeted,
+			detect:   shim.RemoteHasCursor,
+			install:  shim.EnsureRemoteCursorHooks,
+		},
 	}
 }
 
@@ -195,6 +204,7 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	codexOut := adapterOutcomes[shim.AdapterCodexNotify]
 	agyOut := adapterOutcomes[shim.AdapterAntigravityNotify]
 	opencodeOut := adapterOutcomes[shim.AdapterOpencodeNotify]
+	cursorOut := adapterOutcomes[shim.AdapterCursorNotify]
 	mergeNotifyDeployState(state, notifyOutcome{
 		hookScriptInstalled: hookInstalled,
 		claudeAttempted:     claudeTargeted(opts.targets),
@@ -205,6 +215,8 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 		agyInstalled:        agyOut.installed,
 		opencodeAttempted:   opencodeOut.attempted,
 		opencodeInstalled:   opencodeOut.installed,
+		cursorAttempted:     cursorOut.attempted,
+		cursorInstalled:     cursorOut.installed,
 		healthVerified:      healthVerified,
 	})
 }
@@ -225,6 +237,8 @@ type notifyOutcome struct {
 	agyInstalled        bool // cc-clip-notify agy plugin installed via the agy CLI
 	opencodeAttempted   bool // this connect probed/attempted opencode notify (N5.7)
 	opencodeInstalled   bool // cc-clip-notify.js opencode plugin dropped into the plugins dir
+	cursorAttempted     bool // this connect probed/attempted Cursor notify (N5.9)
+	cursorInstalled     bool // the managed stop hook is present in ~/.cursor/hooks.json
 	healthVerified      bool // N6 health probe passed
 }
 
@@ -256,6 +270,11 @@ func mergeNotifyDeployState(state *shim.DeployState, o notifyOutcome) {
 	// because a successful plugin drop proves only the file landed, not that
 	// opencode loads it or that session.idle fires.
 	applyAdapterState(state.Notify, shim.AdapterOpencodeNotify, o.opencodeAttempted, o.opencodeInstalled)
+	// cursor-notify likewise has no legacy boolean mirror. Verified stays false
+	// because a successful merge proves only that hooks.json now names our
+	// command — not that Cursor loads the file, nor that its stop event fires
+	// in the CLI, which is the part that has historically been unreliable.
+	applyAdapterState(state.Notify, shim.AdapterCursorNotify, o.cursorAttempted, o.cursorInstalled)
 }
 
 // applyAdapterState records one adapter's per-connect truth without over-claiming:

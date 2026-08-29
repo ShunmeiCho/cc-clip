@@ -13,6 +13,7 @@ const (
 	AdapterCodexNotify       = "codex-notify"
 	AdapterAntigravityNotify = "agy-notify"
 	AdapterOpencodeNotify    = "opencode-notify" // MUST equal shim.AdapterOpencodeNotify
+	AdapterCursorNotify      = "cursor-notify"   // MUST equal shim.AdapterCursorNotify
 )
 
 // Run dispatches to the named adapter handler. stdin/stdout are injected for
@@ -28,6 +29,8 @@ func Run(name string, port int, stdin io.Reader, stdout io.Writer) error {
 		return runAntigravityNotify(port, stdin, stdout)
 	case AdapterOpencodeNotify:
 		return runOpencodeNotify(port, stdin)
+	case AdapterCursorNotify:
+		return runCursorNotify(port, stdin)
 	default:
 		return fmt.Errorf("unknown plugin adapter: %q", name)
 	}
@@ -97,6 +100,26 @@ func runOpencodeNotify(port int, stdin io.Reader) error {
 	parsed, perr := parseOpencodeNotifyPayload(string(b))
 	if perr != nil {
 		return nil // fail-soft: invalid payload must not block opencode
+	}
+	_ = PostNotification(port, parsed)
+	return nil
+}
+
+// runCursorNotify reads the Cursor `stop` hook payload from stdin, parses it
+// into a generic message, and posts it. Fail-soft like every other adapter.
+//
+// It deliberately writes NOTHING to stdout. Cursor reads a stop hook's stdout
+// as an optional {"followup_message": ...}, which restarts the agent — a
+// notification adapter emitting that would turn every finished turn into a new
+// one, bounded only by Cursor's loop_limit. Silence is the correct response.
+func runCursorNotify(port int, stdin io.Reader) error {
+	b, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil // fail-soft
+	}
+	parsed, perr := parseCursorNotifyPayload(string(b))
+	if perr != nil {
+		return nil // fail-soft: invalid payload must not block Cursor
 	}
 	_ = PostNotification(port, parsed)
 	return nil
