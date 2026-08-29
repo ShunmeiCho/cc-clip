@@ -40,11 +40,10 @@ func defaultRemoteHost() (string, bool, error) {
 
 func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreClipboard bool) error {
 	// Pin the window this paste is aimed at BEFORE touching the clipboard.
-	// The keystroke below goes to whatever is focused when it fires, and the
-	// gap is wider than `delay` alone: windowsSendCtrlShiftV spawns a fresh
-	// PowerShell process, so its cold start counts too. Without this guard a
-	// window switch in that gap delivers the remote path into whatever the
-	// user moved to — a password manager, a chat box, a browser URL bar.
+	// The keystroke below goes to whatever is focused when it fires. Without
+	// this guard a window switch during `delay` delivers the remote path into
+	// whatever the user moved to — a password manager, a chat box, a browser
+	// URL bar.
 	guard, err := newFocusGuard(systemFocusProbe)
 	if err != nil {
 		return err
@@ -140,11 +139,17 @@ try {
 	return nil
 }
 
+// windowsSendCtrlShiftV delivers the paste keystroke via SendInput.
+//
+// It used to shell out to WinForms SendKeys, which Electron/Chromium terminals
+// (Wave, Hyper, Tabby, VS Code's integrated terminal) ignore outright while
+// SendWait still returned success — so a paste that never happened was
+// reported as a success by the log, the tray balloon and the exit code
+// (issue #140). win32.SendCtrlShiftV checks how many events the input stream
+// actually accepted, so a refusal surfaces as an error.
 func windowsSendCtrlShiftV() error {
-	script := `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^+v')`
-	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to send Ctrl+Shift+V: %s: %w", string(out), err)
+	if err := win32.SendCtrlShiftV(); err != nil {
+		return fmt.Errorf("failed to send Ctrl+Shift+V: %w", err)
 	}
 	return nil
 }

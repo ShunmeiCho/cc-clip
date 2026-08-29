@@ -149,8 +149,15 @@ func TestExtractBinary(t *testing.T) {
 		if string(got) != "binary-bytes" {
 			t.Fatalf("extracted content = %q", got)
 		}
-		if info, _ := os.Stat(dest); info.Mode().Perm()&0o100 == 0 {
-			t.Fatalf("extracted binary must be executable, mode=%v", info.Mode())
+		// Windows has no execute bit — it decides executability by file
+		// extension — and reports every file as 0666. The chmod extractBinary
+		// performs is a no-op there, so asserting on it would fail for a
+		// reason that says nothing about the code. This test only started
+		// running on Windows when the windows-latest job was added.
+		if runtime.GOOS != "windows" {
+			if info, _ := os.Stat(dest); info.Mode().Perm()&0o100 == 0 {
+				t.Fatalf("extracted binary must be executable, mode=%v", info.Mode())
+			}
 		}
 	})
 

@@ -18,8 +18,8 @@ var (
 	procDeleteObject           = gdi32DLL.NewProc("DeleteObject")
 	procSetPixel               = gdi32DLL.NewProc("SetPixel")
 
-	procGetDC        = user32DLL.NewProc("GetDC")
-	procReleaseDC    = user32DLL.NewProc("ReleaseDC")
+	procGetDC              = user32DLL.NewProc("GetDC")
+	procReleaseDC          = user32DLL.NewProc("ReleaseDC")
 	procCreateIconIndirect = user32DLL.NewProc("CreateIconIndirect")
 	procDestroyIconProc    = user32DLL.NewProc("DestroyIcon")
 )
