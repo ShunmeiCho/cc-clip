@@ -72,6 +72,12 @@ func (s *Server) handleClipboardWrite(w http.ResponseWriter, r *http.Request) {
 			// preserved: at least one notification always fires per window.
 			Body:    "A remote session wrote to this clipboard.",
 			Urgency: 0,
+			// The daemon authored this text itself; none of it came from the
+			// request. Leaving Verified false made formatNotification prefix
+			// the daemon's own message with "[unverified]", which is the one
+			// marker a user has for "this text is not ours" — spending it on
+			// our own notification is what makes it stop meaning anything.
+			Verified: true,
 		},
 	})
 
