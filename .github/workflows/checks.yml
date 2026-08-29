@@ -85,8 +85,14 @@ jobs:
       - name: Test (race)
         run: go test ./... -race -count=1
 
+      # Pinned, not @latest. This job runs under GOTOOLCHAIN=local on the
+      # toolchain go.mod declares, and staticcheck raises its own Go floor on
+      # its own schedule: v0.8.x requires Go 1.26, so @latest turned green CI
+      # red the day it published, on commits that had not changed. v0.7.0 is
+      # the last release that builds on the Go version this project promises
+      # to support. Bump it deliberately, together with the go.mod floor.
       - name: Staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 
       # A Linux runner compiles none of the //go:build windows files, so the
       # entire Windows surface — hotkey loop, tray, SendInput, the PowerShell
