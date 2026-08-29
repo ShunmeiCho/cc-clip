@@ -29,3 +29,32 @@ docs/marketing/hyperframes/CLAUDE.md
 /findings.md
 /progress.md
 /task_plan.md
+
+# Internal promotion and planning drafts. These live on the maintainer's
+# machine and are deliberately NOT part of the public repo — outreach target
+# lists, approval runbooks, response playbooks, unpublished copy. They were
+# swept in once by a `git add -A` in a working tree where they had sat
+# untracked for a long time; listed explicitly so that cannot happen again.
+#
+# Note docs/marketing/ is only PARTLY untracked: the demo GIFs, .tape sources
+# and hyperframes/ ARE part of the repo, which is why this is a file list and
+# not a directory rule.
+/docs/marketing/README.md
+/docs/marketing/chinese-launch-kit.md
+/docs/marketing/community-outreach-targets.md
+/docs/marketing/feedback-log.md
+/docs/marketing/global-launch-kit.md
+/docs/marketing/launch-readiness-checklist.md
+/docs/marketing/openai-codex-25465-approval-packet.md
+/docs/marketing/openai-codex-25465-comment.md
+/docs/marketing/openai-codex-25465-followups.md
+/docs/marketing/post-launch-response-playbook.md
+/docs/marketing/promotion-approval-runbook.md
+/docs/marketing/promotion-preflight-audit.md
+/docs/marketing/social-posts.md
+/docs/marketing/v0.9.0-beta.1-release-notes.md
+/docs/marketing/x-article-launch.md
+/docs/plans/2026-03-16-global-promotion-design.md
+/docs/plans/2026-03-16-global-promotion-implementation-plan.md
+/docs/plans/2026-06-28-introspection-surface-design.md
+/docs/superpowers/plans/2026-04-01-notification-bridge-implementation.md
