@@ -14,12 +14,17 @@ var (
 	procOpenProcess           = kernel32DLL.NewProc("OpenProcess")
 	procCloseHandle           = kernel32DLL.NewProc("CloseHandle")
 	procQueryFullProcessImage = kernel32DLL.NewProc("QueryFullProcessImageNameW")
+	procGetExitCodeProcess    = kernel32DLL.NewProc("GetExitCodeProcess")
 )
 
 const (
 	processQueryLimitedInformation = 0x1000
 
 	errorInvalidParameter = syscall.Errno(87)
+
+	// STILL_ACTIVE, the exit code Windows reports for a process that has not
+	// exited yet.
+	stillActive = 259
 )
 
 // ErrProcessNotFound reports that no process with the requested PID exists.
@@ -62,6 +67,23 @@ func ProcessImageName(pid int) (string, error) {
 		return "", fmt.Errorf("OpenProcess(%d): %w", pid, callErr)
 	}
 	defer procCloseHandle.Call(handle)
+
+	// A process that has exited stays resolvable by PID for as long as any
+	// handle to it remains open, so OpenProcess above can succeed on a dead
+	// process. QueryFullProcessImageNameW then fails with ERROR_GEN_FAILURE,
+	// which at the call site is indistinguishable from a genuine "cannot
+	// tell" — and the two answers have opposite consequences: one discards
+	// the PID record, the other must not. Ask about liveness directly instead
+	// of inferring it from an error code.
+	//
+	// A process that exits with code 259 reads as alive here. That is the
+	// documented STILL_ACTIVE ambiguity, and it errs in the safe direction:
+	// the caller keeps a PID it might have dropped, rather than dropping one
+	// it needed.
+	var exitCode uint32
+	if r, _, _ := procGetExitCodeProcess.Call(handle, uintptr(unsafe.Pointer(&exitCode))); r != 0 && exitCode != stillActive {
+		return "", ErrProcessNotFound
+	}
 
 	buf := make([]uint16, syscall.MAX_LONG_PATH)
 	size := uint32(len(buf))
