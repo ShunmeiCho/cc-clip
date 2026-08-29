@@ -131,19 +131,21 @@ refuses it, `cc-clip` now reports the refusal instead of claiming success — a
 window running as administrator, for example, rejects input from a
 non-elevated process.
 
-The reliable fallback is to skip the synthetic keystroke and press `Ctrl+V`
-yourself:
+The fallback does not stop the keystroke — it makes the keystroke optional.
+`--no-restore` leaves the remote path on the clipboard afterwards, so if the
+terminal did drop the synthetic `Ctrl+Shift+V`, your own `Ctrl+V` still pastes
+the right thing:
 
 ```powershell
 cc-clip hotkey myserver --no-restore
 ```
 
-`--no-restore` leaves the remote path on the clipboard. Without it the image is
-put back 150 ms after the keystroke, so a manual `Ctrl+V` pastes the *image* —
-which in an Electron terminal becomes a local `%TEMP%` path the remote agent
-cannot read. The setting is stored in `hotkey.json` as `"no_restore": true`, so
-it survives the autostart launcher and a reboot. The same flag has always been
-available on `cc-clip send --paste`.
+Without it the image is put back 150 ms after the keystroke, so a manual
+`Ctrl+V` pastes the *image* — which in an Electron terminal becomes a local
+`%TEMP%` path the remote agent cannot read. The setting is stored in
+`hotkey.json` as `"no_restore": true`, so it survives the autostart launcher
+and a reboot. The same flag has always been available on
+`cc-clip send --paste`.
 
 ## Experimental: Direct Remote Clipboard
 
