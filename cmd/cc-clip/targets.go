@@ -294,7 +294,12 @@ func shimTargeted(t DeployTargets) bool { return t.Claude || t.Opencode || t.Cur
 // already intercept. The one prerequisite the deploy cannot satisfy is
 // environmental — Cursor only attempts a clipboard read when DISPLAY or
 // WAYLAND_DISPLAY is set in its shell (issue #109, option C: documented
-// prerequisite, no DISPLAY injection). No notify adapter exists yet.
+// prerequisite, no DISPLAY injection).
+//
+// It also gates the notify hook merged into ~/.cursor/hooks.json. Unlike
+// opencode, which needs its own opencodeNotifyTargeted because it has no
+// tool-level predicate, Cursor's shim and notify axes are the same flag, so
+// this one predicate serves both.
 func cursorTargeted(t DeployTargets) bool { return t.Cursor }
 
 // agyTargeted reports whether the Antigravity (agy CLI) integration is selected.

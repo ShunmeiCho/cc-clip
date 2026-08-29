@@ -27,8 +27,8 @@ func TestTargetMembership(t *testing.T) {
 		{"codex only", DeployTargets{Codex: true}, false, true, false, false, false},
 		{"opencode only", DeployTargets{Opencode: true}, false, false, true, false, false},
 		{"agy only", DeployTargets{Antigravity: true}, false, false, false, true, false},
-		// Cursor rides the same xclip/wl-paste shim as Claude/opencode; it has
-		// no notify adapter yet, so only the shim axis and its own predicate fire.
+		// Cursor rides the same xclip/wl-paste shim as Claude/opencode, and its
+		// own predicate gates both that shim and the hooks.json notify hook.
 		{"cursor only", DeployTargets{Cursor: true}, false, false, true, false, true},
 		{"all", DeployTargets{Claude: true, Codex: true, Opencode: true, Antigravity: true, Cursor: true}, true, true, true, true, true},
 	}
@@ -442,4 +442,49 @@ func TestMergeNotifyDeployStateAgyAdapter(t *testing.T) {
 			t.Fatalf("stale agy adapter must be downgraded to Installed=false, Verified=false: %+v", a)
 		}
 	})
+}
+
+// TestCursorNotifyAdapterIDsMatch pins the shim deploy-state AdapterID for
+// cursor-notify to the plugin dispatcher key. They live in separate packages
+// but MUST be the same string, or connect records deploy-state under a key the
+// runner never uses — and the mismatch is invisible until someone wonders why
+// the adapter never shows as installed.
+func TestCursorNotifyAdapterIDsMatch(t *testing.T) {
+	t.Parallel()
+	if string(shim.AdapterCursorNotify) != string(plugin.AdapterCursorNotify) {
+		t.Fatalf("shim.AdapterCursorNotify=%q != plugin.AdapterCursorNotify=%q",
+			shim.AdapterCursorNotify, plugin.AdapterCursorNotify)
+	}
+	if shim.AdapterCursorNotify != "cursor-notify" {
+		t.Fatalf("AdapterCursorNotify=%q want \"cursor-notify\"", shim.AdapterCursorNotify)
+	}
+}
+
+// TestBuildNotifyAdaptersCursorRow asserts the detect-install table registers a
+// cursor-notify row gated on the Cursor flag: on under --cursor, off under an
+// unrelated run. The gate matters because an untargeted adapter must leave
+// ~/.cursor/hooks.json untouched rather than merged.
+func TestBuildNotifyAdaptersCursorRow(t *testing.T) {
+	t.Parallel()
+
+	var row *detectInstallAdapter
+	adapters := buildNotifyAdapters()
+	for i := range adapters {
+		if adapters[i].id == shim.AdapterCursorNotify {
+			row = &adapters[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("buildNotifyAdapters() registers no cursor-notify row")
+	}
+	if !row.targeted(DeployTargets{Cursor: true}) {
+		t.Error("cursor-notify row must be targeted under --cursor")
+	}
+	if row.targeted(DeployTargets{Claude: true}) {
+		t.Error("cursor-notify row must not be targeted under --claude only")
+	}
+	if row.detect == nil || row.install == nil {
+		t.Error("cursor-notify row must carry both a detector and an installer")
+	}
 }

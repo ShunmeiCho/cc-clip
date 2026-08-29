@@ -246,3 +246,52 @@ func antigravityStopBody(raw map[string]interface{}) string {
 	}
 	return "Stopped"
 }
+
+// parseCursorNotifyPayload turns a Cursor `stop` hook payload into a generic
+// message.
+//
+// Cursor delivers the payload on stdin as JSON. The only field that carries
+// meaning for a notification is `status`, documented as "completed" | "aborted"
+// | "error"; the rest of the envelope (conversation_id, generation_id, model,
+// workspace_roots, transcript_path) identifies the session rather than
+// describing what happened, and none of it belongs in a notification body.
+//
+// Verified is true because every string in the result is authored here — the
+// payload's own text is never echoed, only its status is switched on. That
+// keeps the daemon's "[unverified]" marker meaningful for the notifications
+// where the text really did come from somewhere untrusted.
+func parseCursorNotifyPayload(payload string) (daemon.GenericMessagePayload, error) {
+	var raw struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		return daemon.GenericMessagePayload{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	body, urgency := cursorStopBody(raw.Status)
+	return daemon.GenericMessagePayload{
+		Title:    "Cursor",
+		Body:     body,
+		Urgency:  urgency,
+		Verified: true,
+	}, nil
+}
+
+// cursorStopBody maps a stop status to a body and an urgency.
+//
+// "error" is the only status that raises urgency: it is the one case where the
+// turn ended without the work being done, so it deserves to outrank the
+// ordinary end-of-turn ping rather than blending into it. An unknown status is
+// NOT echoed — it would put remote-authored text into a body this adapter
+// claims to have authored — so it falls back to the neutral end-of-turn text.
+func cursorStopBody(status string) (string, int) {
+	switch status {
+	case "completed":
+		return "Turn finished - awaiting input", 1
+	case "aborted":
+		return "Turn aborted", 1
+	case "error":
+		return "Turn ended with an error", 2
+	default:
+		return "Turn finished - awaiting input", 1
+	}
+}

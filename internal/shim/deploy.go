@@ -34,6 +34,8 @@ const (
 	// The string MUST match plugin.AdapterAntigravityNotify (the runner dispatcher
 	// key) so connect records deploy-state under the key the runner actually uses.
 	AdapterAntigravityNotify AdapterID = "agy-notify"
+	// AdapterCursorNotify is the Cursor CLI notification adapter.
+	AdapterCursorNotify AdapterID = "cursor-notify"
 )
 
 // AdapterState records the per-adapter installation/verification status.

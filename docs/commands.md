@@ -24,7 +24,8 @@ Complete cc-clip command reference. For the 10 most common commands, see the [Co
 | `cc-clip connect <host> --codex` | Codex CLI **only**: Xvfb + x11-bridge + codex-notify, no Claude shim (v0.9.0 breaking; use `--all` for both) |
 | `cc-clip connect <host> --opencode` | opencode: clipboard shim + opencode-notify |
 | `cc-clip connect <host> --agy` | Antigravity: agy-notify (alias `--antigravity`) |
-| `cc-clip connect <host> --all` | Every target (Claude + Codex + opencode + agy) |
+| `cc-clip connect <host> --cursor` | Cursor CLI: clipboard shim + cursor-notify (needs `DISPLAY` in Cursor's shell — see below) |
+| `cc-clip connect <host> --all` | Every target (Claude + Codex + opencode + agy + Cursor) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |
 | `cc-clip setup <host> --use-remote-bin` | Full setup using `cc-clip` from the remote PATH; skip binary upload |
 | `cc-clip connect <host> --use-remote-bin` | Incremental deploy using `cc-clip` from the remote PATH; skip binary upload |
