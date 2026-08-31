@@ -214,6 +214,9 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 		return nil, fmt.Errorf("clipboard probe failed: %w", err)
 	}
 	if info.Type != daemon.ClipboardImage {
+		if file := daemon.DroppedImageFile(); file != "" {
+			return uploadLocalFile(host, remoteDir, file)
+		}
 		return nil, fmt.Errorf("no image in clipboard (type: %s); use --file PATH or a positional image path to upload a saved image", info.Type)
 	}
 
@@ -374,6 +377,12 @@ func imageExt(format string) string {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "jpeg", "jpg":
 		return "jpg"
+	case "gif":
+		return "gif"
+	case "webp":
+		return "webp"
+	case "bmp":
+		return "bmp"
 	default:
 		return "png"
 	}
