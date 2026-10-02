@@ -18,6 +18,9 @@ func NewClipboardTextWriter() ClipboardTextWriter {
 
 func (w *darwinTextWriter) WriteText(text string) error {
 	cmd := exec.Command("pbcopy")
+	// launchd need not provide a UTF-8 locale. With the default C locale,
+	// pbcopy can exit successfully while discarding non-ASCII input.
+	cmd.Env = append(cmd.Environ(), "LC_ALL=en_US.UTF-8")
 	cmd.Stdin = strings.NewReader(text)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pbcopy failed: %s: %w", strings.TrimSpace(string(out)), err)
