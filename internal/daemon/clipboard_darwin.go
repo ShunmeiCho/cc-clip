@@ -60,6 +60,7 @@ func (c *darwinClipboard) Type() (ClipboardInfo, error) {
 
 	// Check for text via pbpaste
 	cmd := exec.CommandContext(ctx, "pbpaste")
+	cmd.Env = append(cmd.Environ(), "LC_ALL=en_US.UTF-8")
 	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
 	if errors.Is(err, errClipboardOutputTooLarge) {
 		return ClipboardInfo{Type: ClipboardText}, nil
@@ -98,6 +99,7 @@ func (c *darwinClipboard) Text() (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "pbpaste")
+	cmd.Env = append(cmd.Environ(), "LC_ALL=en_US.UTF-8")
 	out, err := limitedCommandOutput(cmd, maxTextSize(), fmt.Sprintf("clipboard text exceeds %dMB limit", maxTextMB()))
 	if err != nil {
 		return "", fmt.Errorf("no text in clipboard: %w", err)
