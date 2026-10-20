@@ -3,6 +3,7 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -194,5 +195,68 @@ func TestParsePlistPortIgnoresComments(t *testing.T) {
 </dict></plist>`
 	if _, ok := parsePlistPort(outside); ok {
 		t.Fatal("a --port outside ProgramArguments must not be read as the service port")
+	}
+}
+
+// TestInstallReloadsLoadedJob: launchctl load on an already loaded job keeps the
+// old definition, so a re-install with new arguments must unload it first.
+func TestInstallReloadsLoadedJob(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origList, origUnload, origLoad := launchctlList, launchctlUnload, launchctlLoad
+	t.Cleanup(func() { launchctlList, launchctlUnload, launchctlLoad = origList, origUnload, origLoad })
+
+	for _, loaded := range []bool{false, true} {
+		var calls []string
+		launchctlList = func(string) (bool, error) { return loaded, nil }
+		launchctlUnload = func(string) error { calls = append(calls, "unload"); return nil }
+		launchctlLoad = func(string) error { calls = append(calls, "load"); return nil }
+
+		if err := Install("/x/cc-clip", 18339); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		want := "load"
+		if loaded {
+			want = "unload,load"
+		}
+		if got := strings.Join(calls, ","); got != want {
+			t.Fatalf("loaded=%v: launchctl calls = %s, want %s", loaded, got, want)
+		}
+	}
+}
+
+// TestInstallRestoresPreviousPlistOnLoadFailure: a failed re-install must not
+// leave the user without a service, or lose the settings stored in the plist.
+func TestInstallRestoresPreviousPlistOnLoadFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	origList, origUnload, origLoad := launchctlList, launchctlUnload, launchctlLoad
+	t.Cleanup(func() { launchctlList, launchctlUnload, launchctlLoad = origList, origUnload, origLoad })
+
+	launchctlList = func(string) (bool, error) { return false, nil }
+	launchctlLoad = func(string) error { return nil }
+	if err := Install("/x/cc-clip", 19001); err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+	previous, _ := os.ReadFile(PlistPath())
+
+	var loads []string
+	launchctlList = func(string) (bool, error) { return true, nil }
+	launchctlUnload = func(string) error { return nil }
+	launchctlLoad = func(path string) error {
+		data, _ := os.ReadFile(path)
+		loads = append(loads, string(data))
+		if len(loads) == 1 {
+			return errors.New("launchctl load failed")
+		}
+		return nil
+	}
+	if err := Install("/y/cc-clip", 18339); err == nil {
+		t.Fatal("Install should report the load failure")
+	}
+	got, err := os.ReadFile(PlistPath())
+	if err != nil || string(got) != string(previous) {
+		t.Fatalf("previous plist not restored (err %v):\n%s", err, got)
+	}
+	if len(loads) != 2 || loads[1] != string(previous) {
+		t.Fatalf("previous plist should be reloaded after the failure, loads = %d", len(loads))
 	}
 }

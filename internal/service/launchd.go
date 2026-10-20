@@ -106,14 +106,38 @@ func Install(binaryPath string, port int) error {
 		return fmt.Errorf("cannot create LaunchAgents directory: %w", err)
 	}
 
+	// `launchctl load` on a job that is already loaded keeps the old definition,
+	// so a re-install with different arguments would go on running the old
+	// ones until the next login. Unload it first. If the new plist then cannot
+	// be written or loaded, the previous one is put back (and reloaded if it
+	// was running) rather than leaving the user with no service at all.
+	previous, readErr := os.ReadFile(plist)
+	wasLoaded, _ := launchctlList(plistLabel)
+	if wasLoaded {
+		if err := launchctlUnload(plist); err != nil {
+			if removeErr := launchctlRemove(plistLabel); removeErr != nil {
+				return fmt.Errorf("cannot unload the running service: %w", err)
+			}
+		}
+	}
+	restore := func() {
+		if readErr != nil {
+			os.Remove(plist)
+			return
+		}
+		if os.WriteFile(plist, previous, 0644) == nil && wasLoaded {
+			_ = launchctlLoad(plist)
+		}
+	}
+
 	content := generatePlist(binaryPath, port)
 	if err := os.WriteFile(plist, []byte(content), 0644); err != nil {
+		restore()
 		return fmt.Errorf("cannot write plist: %w", err)
 	}
 
 	if err := launchctlLoad(plist); err != nil {
-		// Clean up plist on load failure
-		os.Remove(plist)
+		restore()
 		return err
 	}
 
