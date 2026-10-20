@@ -198,8 +198,29 @@ func TestParsePlistPortIgnoresComments(t *testing.T) {
 	}
 }
 
+// TestPlistServeArgsRoundTrip pins extra serve flags (here --features) into the
+// plist and back out, so update/setup can re-register without dropping them.
+func TestPlistServeArgsRoundTrip(t *testing.T) {
+	plist := generatePlist("/usr/local/bin/cc-clip", 19001, "--features", "image")
+	if !strings.Contains(plist, "<string>--port</string>\n        <string>19001</string>\n        <string>--features</string>\n        <string>image</string>\n    </array>") {
+		t.Fatalf("serve args not appended to ProgramArguments:\n%s", plist)
+	}
+	if got, ok := parsePlistFlag(plist, "features"); !ok || got != "image" {
+		t.Fatalf("parsePlistFlag(features) = %q, %v; want image, true", got, ok)
+	}
+	if port, ok := parsePlistPort(plist); !ok || port != 19001 {
+		t.Fatalf("extra args broke port parsing: %d, %v", port, ok)
+	}
+	if _, ok := parsePlistFlag(generatePlist("/usr/local/bin/cc-clip", 18339), "features"); ok {
+		t.Fatal("a plist without --features must report no features flag")
+	}
+	if got, _ := parsePlistFlag(generatePlist("/x", 1, "--features", "<&>"), "features"); got != "<&>" {
+		t.Fatalf("serve args must be XML-escaped and unescaped, got %q", got)
+	}
+}
+
 // TestInstallReloadsLoadedJob: launchctl load on an already loaded job keeps the
-// old definition, so a re-install with new arguments must unload it first.
+// old definition, so a re-install with new serve flags must unload it first.
 func TestInstallReloadsLoadedJob(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	origList, origUnload, origLoad := launchctlList, launchctlUnload, launchctlLoad
@@ -211,7 +232,7 @@ func TestInstallReloadsLoadedJob(t *testing.T) {
 		launchctlUnload = func(string) error { calls = append(calls, "unload"); return nil }
 		launchctlLoad = func(string) error { calls = append(calls, "load"); return nil }
 
-		if err := Install("/x/cc-clip", 18339); err != nil {
+		if err := Install("/x/cc-clip", 18339, "--features", "image"); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
 		want := "load"

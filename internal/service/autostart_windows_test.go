@@ -275,3 +275,15 @@ func TestStatusIgnoresHostnamesContainingServe(t *testing.T) {
 		}
 	}
 }
+
+// TestVBSServeArgsRoundTrip: serve flags baked into the launcher are read back,
+// so setup/connect re-registration on Windows keeps --features.
+func TestVBSServeArgsRoundTrip(t *testing.T) {
+	vbs := generateVBS(`C:\tools\cc-clip.exe`, 18339, "--features", "image,notify")
+	if got, ok := parseVBSFlag(vbs, "features"); !ok || got != "image,notify" {
+		t.Fatalf("parseVBSFlag(features) = %q, %v; want image,notify, true", got, ok)
+	}
+	if _, ok := parseVBSFlag(generateVBS(`C:\tools\cc-clip.exe`, 18339), "features"); ok {
+		t.Fatal("a launcher without --features must report no features flag")
+	}
+}

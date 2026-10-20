@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -54,8 +55,12 @@ func daemonStopFilePath() string {
 // generateVBS creates a VBScript that launches cc-clip serve with no visible window.
 // Uses a restart loop with a stop-file sentinel, matching the hotkey VBS pattern
 // and providing KeepAlive-like reliability (matching macOS launchd behavior).
-func generateVBS(binaryPath string, port int) string {
+func generateVBS(binaryPath string, port int, serveArgs ...string) string {
 	logFile := logPath()
+	extra := ""
+	if len(serveArgs) > 0 {
+		extra = " " + strings.Join(serveArgs, " ")
+	}
 	stopFile := daemonStopFilePath()
 	return fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -64,14 +69,14 @@ Do
     fso.DeleteFile "%s", True
     Exit Do
   End If
-  WshShell.Run "cmd.exe /c """"%s"" serve --port %d >> ""%s"" 2>&1""", 0, True
+  WshShell.Run "cmd.exe /c """"%s"" serve --port %d%s >> ""%s"" 2>&1""", 0, True
   If fso.FileExists("%s") Then
     fso.DeleteFile "%s", True
     Exit Do
   End If
   WScript.Sleep 5000
 Loop
-`, stopFile, stopFile, binaryPath, port, logFile, stopFile, stopFile)
+`, stopFile, stopFile, binaryPath, port, extra, logFile, stopFile, stopFile)
 }
 
 // regAdd adds a registry value. Overridable for testing.
@@ -104,7 +109,18 @@ var regQuery = func(key, name string) (string, error) {
 
 // Install registers cc-clip daemon for auto-start at user logon via the registry.
 // Uses a VBScript wrapper to launch the daemon with no visible window.
-func Install(binaryPath string, port int) error {
+func Install(binaryPath string, port int, serveArgs ...string) error {
+	// A running daemon keeps the flags it was started with, and its VBS loop
+	// would keep restarting it while the new launcher fails to bind the port.
+	// Stop both so the new flags (e.g. a narrower --features) actually apply.
+	if running, _ := Status(); running {
+		writeDaemonStopFile()
+		if err := stopDaemonProcess(); err != nil {
+			return fmt.Errorf("cannot stop the running daemon: %w", err)
+		}
+		waitForDaemonStopConsumed(10 * time.Second)
+	}
+
 	// Remove stale stop sentinel from a previous Uninstall, so the VBS loop doesn't exit immediately.
 	os.Remove(daemonStopFilePath())
 
@@ -121,7 +137,7 @@ func Install(binaryPath string, port int) error {
 	}
 
 	// Write VBScript launcher
-	content := generateVBS(binaryPath, port)
+	content := generateVBS(binaryPath, port, serveArgs...)
 	if err := os.WriteFile(vbs, []byte(content), 0644); err != nil {
 		return fmt.Errorf("cannot write VBS launcher: %w", err)
 	}
@@ -209,6 +225,19 @@ var stopDaemonProcess = func() error {
 }
 
 // writeDaemonStopFile writes the sentinel that tells the VBS restart loop to exit.
+// waitForDaemonStopConsumed waits for the old VBS loop to see the stop
+// sentinel (it deletes the file on its way out). Install removes stale
+// sentinels next; done too early, the old loop would restart the old daemon.
+func waitForDaemonStopConsumed(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(daemonStopFilePath()); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 func writeDaemonStopFile() {
 	path := daemonStopFilePath()
 	os.MkdirAll(filepath.Dir(path), 0755)
@@ -272,4 +301,43 @@ func Status() (bool, error) {
 // macOS-only (cmdUpdate returns early on Windows).
 func InstalledPort() (int, bool) {
 	return 0, false
+}
+
+// InstalledFlag reports the value of a `--name value` serve flag in the
+// installed VBS launcher, so re-registration keeps flags the user chose at
+// install time (notably --features) instead of silently resetting them. Like
+// the launchd version, a launcher that exists but cannot be read is an error.
+func InstalledFlag(name string) (string, bool, error) {
+	data, err := os.ReadFile(vbsPath())
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !strings.Contains(string(data), " serve --port ") {
+		return "", false, fmt.Errorf("cannot find the serve command in %s", vbsPath())
+	}
+	value, ok := parseVBSFlag(string(data), name)
+	return value, ok, nil
+}
+
+// parseVBSFlag reads a flag from the `serve --port N ... >>` command line that
+// generateVBS writes.
+func parseVBSFlag(vbs, name string) (string, bool) {
+	_, rest, ok := strings.Cut(vbs, " serve --port ")
+	if !ok {
+		return "", false
+	}
+	cmdline, _, ok := strings.Cut(rest, " >> ")
+	if !ok {
+		return "", false
+	}
+	fields := strings.Fields(cmdline)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "--"+name {
+			return fields[i+1], true
+		}
+	}
+	return "", false
 }

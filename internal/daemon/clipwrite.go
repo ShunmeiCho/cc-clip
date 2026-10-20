@@ -34,6 +34,10 @@ func (s *Server) SetTextWriter(w ClipboardTextWriter) {
 // deliberately absent from the notification — it may be a secret, and
 // notification text reaches tmux status lines and notification centers.
 func (s *Server) handleClipboardWrite(w http.ResponseWriter, r *http.Request) {
+	if !s.features.TextWrite {
+		s.featureDisabled(w, "text-write")
+		return
+	}
 	if s.textWriter == nil {
 		http.Error(w, "clipboard write not supported by this daemon", http.StatusNotImplemented)
 		return

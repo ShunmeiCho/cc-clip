@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -338,7 +339,9 @@ remote has a valid claude binary installed.
 		if !opts.noNotify {
 			fmt.Println("      syncing notification nonce")
 			notifyNonce, err := syncNotificationNonce(session, port, daemonToken, host)
-			if err != nil {
+			if errors.Is(err, errNotifyDisabled) {
+				fmt.Println("      skipped: the local daemon has notifications off; run connect without --token-only to remove the agent hooks")
+			} else if err != nil {
 				log.Printf("      warning: failed to sync notification nonce: %v", err)
 			} else if err := runNotificationHealthProbe(port, notifyNonce); err != nil {
 				log.Printf("      warning: notification health probe failed: %v", err)
@@ -617,6 +620,8 @@ remote has a valid claude binary installed.
 		if err := shim.WriteRemoteState(session, newState); err != nil {
 			log.Printf("      warning: could not write remote deploy state: %v", err)
 		}
+	} else {
+		removeClaudeHooksIfRequested(session, port, opts)
 	}
 
 	// Steps 8-11: Codex support (only if Codex is among the resolved targets).
@@ -720,11 +725,11 @@ func newDeployStateFromBinary(binaryHash, binaryVersion, shimTarget string, path
 
 func cmdSetup() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+		log.Fatal("usage: cc-clip setup <host> [--port PORT] [--features LIST]")
 	}
 	host, err := hostFromArgs(os.Args[2:])
 	if err != nil {
-		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+		log.Fatal("usage: cc-clip setup <host> [--port PORT] [--features LIST]")
 	}
 	port := getPort()
 
@@ -789,13 +794,17 @@ func cmdSetup() {
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err == nil {
 		fmt.Printf("      daemon already running on :%d\n", port)
+		if featuresExplicit() && getFeatures() != installedFeatures() {
+			fmt.Printf("      warning: --features=%s not applied to the running daemon (installed: %s);\n", getFeatures(), installedFeatures())
+			fmt.Printf("      run: cc-clip service install --features=%s\n", getFeatures())
+		}
 	} else if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		exePath, err := os.Executable()
 		if err != nil {
 			log.Fatalf("      cannot determine executable path: %v", err)
 		}
 		exePath, _ = filepath.EvalSymlinks(exePath)
-		if err := service.Install(exePath, port); err != nil {
+		if err := service.Install(exePath, port, featureServeArgs(serviceFeatures())...); err != nil {
 			log.Fatalf("      service install failed: %v", err)
 		}
 		if runtime.GOOS == "darwin" {

@@ -163,7 +163,14 @@ func connectNotifySetup(session *shim.SSHSession, port int, daemonToken, host st
 	fmt.Println("  [N1] Generating notification nonce...")
 	notifyNonce, err := syncNotificationNonce(session, port, daemonToken, host)
 	if err != nil {
+		if errors.Is(err, errNotifyDisabled) {
+			fmt.Println("      skipped: the local daemon has notifications off (serve --features without notify)")
+			removeNotifyHooks(session, state, opts)
+			return
+		}
 		log.Printf("      warning: failed to sync notification nonce: %v", err)
+		// --no-hooks is a removal request and must not depend on the nonce.
+		removeClaudeHooksIfRequested(session, port, opts)
 		return
 	}
 	fmt.Println("      nonce synced")
@@ -335,22 +342,103 @@ type claudeHooksResult struct {
 	usedFallback bool
 }
 
+// removeClaudeHooksIfRequested honours --no-hooks on paths that skip the rest
+// of the notification setup (--no-notify, or a daemon with notifications off).
+func removeClaudeHooksIfRequested(session shim.SessionExecutor, port int, opts connectOpts) {
+	if !opts.noHooks || !claudeTargeted(opts.targets) {
+		return
+	}
+	fmt.Println("  [N4] Removing Claude hooks (--no-hooks)...")
+	configureRemoteClaudeHooks(session, port, opts)
+}
+
+// removeNotifyHooks handles a local daemon whose --features leaves out notify.
+// Its nonce can never register, so every agent hook wired by an earlier connect
+// would only start a process per turn whose POST is refused. The managed
+// Claude, Cursor, Codex and opencode integrations of the targeted agents are
+// removed without writing the no-hooks marker, so adding notify back and
+// re-running connect restores them; an explicit --no-hooks still writes it.
+// The Antigravity plugin has no removal helper yet and is left in place.
+// The deploy state stops claiming an integration only once it is removed.
+func removeNotifyHooks(session shim.SessionExecutor, state *shim.DeployState, opts connectOpts) {
+	removed := map[shim.AdapterID]bool{}
+	if claudeTargeted(opts.targets) {
+		fmt.Println("  [N4] Removing Claude hooks (notifications are off)...")
+		if opts.noHooks {
+			configureRemoteClaudeHooks(session, 0, opts)
+			removed[shim.AdapterClaudeNotify] = true
+		} else {
+			removed[shim.AdapterClaudeNotify] = removeClaudeManagedHooks(session)
+		}
+	}
+	if cursorTargeted(opts.targets) {
+		if changed, err := shim.RemoveRemoteCursorManagedHooks(session); err != nil {
+			log.Printf("      warning: failed to remove managed Cursor hooks: %v", err)
+		} else {
+			removed[shim.AdapterCursorNotify] = true
+			if changed {
+				fmt.Println("      managed stop hook removed from ~/.cursor/hooks.json")
+			}
+		}
+	}
+	if codexTargeted(opts.targets) {
+		if err := shim.StripRemoteCodexNotifyConfig(session); err != nil {
+			log.Printf("      warning: failed to remove the Codex notify config: %v", err)
+		} else {
+			removed[shim.AdapterCodexNotify] = true
+		}
+	}
+	if opencodeNotifyTargeted(opts.targets) {
+		if err := shim.StripRemoteOpencodePlugin(session); err != nil {
+			log.Printf("      warning: failed to remove the opencode notify plugin: %v", err)
+		} else {
+			removed[shim.AdapterOpencodeNotify] = true
+		}
+	}
+
+	if state == nil || state.Notify == nil {
+		return
+	}
+	state.Notify.Enabled = false
+	state.Notify.HealthVerified = false
+	for id, ok := range removed {
+		if !ok {
+			continue
+		}
+		applyAdapterState(state.Notify, id, true, false)
+		if id == shim.AdapterCodexNotify {
+			state.Notify.CodexInjected = false
+		}
+	}
+}
+
+// removeClaudeManagedHooks removes cc-clip's managed hooks from
+// ~/.claude/settings.json and the legacy claude wrapper, and reports whether
+// both steps succeeded. User-authored hooks are left alone.
+func removeClaudeManagedHooks(session shim.SessionExecutor) bool {
+	ok := true
+	if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
+		log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
+		ok = false
+	} else if changed {
+		fmt.Println("      managed hooks removed from ~/.claude/settings.json")
+	}
+	if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
+		log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
+		ok = false
+	} else if removed {
+		fmt.Println("      legacy claude wrapper removed; original entry restored")
+	}
+	return ok
+}
+
 func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts connectOpts) claudeHooksResult {
 	if opts.noHooks {
-		if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
-			log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
-		} else if changed {
-			fmt.Println("      managed hooks removed from ~/.claude/settings.json")
-		}
+		removeClaudeManagedHooks(session)
 		if err := shim.SetRemoteClaudeHooksEnabled(session, false); err != nil {
 			log.Printf("      warning: failed to disable Claude hooks: %v", err)
 		} else {
 			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
-		}
-		if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
-			log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
-		} else if removed {
-			fmt.Println("      legacy claude wrapper removed; original entry restored")
 		}
 		return claudeHooksResult{}
 	}
@@ -364,16 +452,7 @@ func configureRemoteClaudeHooks(session shim.SessionExecutor, port int, opts con
 		if err != nil {
 			log.Printf("      warning: failed to check Claude hook opt-out marker: %v", err)
 		} else if disabled {
-			if changed, err := shim.RemoveRemoteClaudeManagedHooks(session); err != nil {
-				log.Printf("      warning: failed to remove managed Claude settings hooks: %v", err)
-			} else if changed {
-				fmt.Println("      managed hooks removed from ~/.claude/settings.json")
-			}
-			if removed, err := shim.UninstallRemoteClaudeWrapperIfPresent(session); err != nil {
-				log.Printf("      warning: failed to remove legacy claude wrapper: %v", err)
-			} else if removed {
-				fmt.Println("      legacy claude wrapper removed; original entry restored")
-			}
+			removeClaudeManagedHooks(session)
 			fmt.Println("      Claude hook injection disabled by ~/.cache/cc-clip/no-hooks")
 			return claudeHooksResult{}
 		}
@@ -456,11 +535,17 @@ func registerNonceWithDaemon(port int, bearerToken, nonce, host string) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.Header.Get(daemon.DisabledFeatureHeader) == "notify" {
+		return errNotifyDisabled
+	}
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("daemon returned status %d", resp.StatusCode)
 	}
 	return nil
 }
+
+// errNotifyDisabled means the local daemon's --features leaves out notify.
+var errNotifyDisabled = errors.New("daemon has notifications disabled")
 
 // runNotificationHealthProbe sends a test notification to the local daemon
 // via /notify and checks for 204. This proves the nonce is registered and

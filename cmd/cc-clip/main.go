@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/daemon"
@@ -160,8 +161,15 @@ Local daemon and diagnostics (run on your local machine):
   serve              Run the clipboard daemon in the foreground
     --port           Listen port (default: 18339, env: CC_CLIP_PORT)
     --rotate-token   Force new token generation (ignore existing)
+    --features LIST  Bridges to serve, comma-separated (default: all, env:
+                     CC_CLIP_FEATURES): image, text (= text-read,text-write),
+                     text-read, text-write, notify, all, none. Anything not
+                     listed answers 403, e.g. --features image for image paste
+                     only. Features added in later versions stay off for an
+                     explicit list
   service            Run the daemon at login (macOS launchd / Windows logon)
-    install          Install and start service
+    install          Install and start service (accepts --port and
+                     --features; both are kept across setup/connect/update)
     uninstall        Stop and remove service
     status           Show service status
   status             Show daemon, port and token status
@@ -290,6 +298,77 @@ func hasFlag(name string) bool {
 		}
 	}
 	return false
+}
+
+// getFeatures resolves the daemon's feature allowlist from --features or
+// CC_CLIP_FEATURES (default all). An invalid value is fatal: silently falling
+// back to "all" would re-open exactly what the user asked to close.
+func getFeatures() daemon.Features {
+	value := os.Getenv("CC_CLIP_FEATURES")
+	if hasFlag("features") {
+		flag, ok := flagValue("features")
+		// An explicit empty list (e.g. --features "$UNSET") must not mean all.
+		if !ok || strings.TrimSpace(flag) == "" {
+			log.Fatal("--features needs a list, e.g. --features image (or all / none)")
+		}
+		value = flag
+	}
+	f, err := daemon.ParseFeatures(value)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	return f
+}
+
+// featuresExplicit reports whether the user chose features on this run.
+func featuresExplicit() bool {
+	_, ok := flagValue("features")
+	return ok || os.Getenv("CC_CLIP_FEATURES") != ""
+}
+
+// serviceFeatures is the allowlist a (re)installed service should run with.
+// An explicit --features / CC_CLIP_FEATURES wins; otherwise the installed
+// service's value is kept, so re-registering (setup, connect, update) never
+// silently re-enables a feature.
+func serviceFeatures() daemon.Features {
+	if featuresExplicit() {
+		return getFeatures()
+	}
+	return installedFeatures()
+}
+
+// installedFeatures reads --features back from the installed service. No
+// service, or one without the flag, means the default (all). A service
+// definition that cannot be read, or an unparsable value, fails closed to
+// none, with a warning: re-registering would otherwise write "none" back and
+// leave the user with a daemon that silently serves nothing.
+func installedFeatures() daemon.Features {
+	value, ok, err := service.InstalledFlag("features")
+	if err == nil && !ok {
+		return daemon.AllFeatures
+	}
+	f, parseErr := daemon.ParseFeatures(value)
+	if err == nil && parseErr == nil {
+		return f
+	}
+	if err == nil {
+		err = parseErr
+	}
+	installedFeaturesWarning.Do(func() {
+		log.Printf("warning: cannot read --features from the installed service (%v); using none. Reinstall with: cc-clip service install --features <list>", err)
+	})
+	return daemon.Features{}
+}
+
+var installedFeaturesWarning sync.Once
+
+// featureServeArgs returns the serve flags that persist f in a service
+// definition. The default adds nothing, so existing service files are unchanged.
+func featureServeArgs(f daemon.Features) []string {
+	if f == daemon.AllFeatures {
+		return nil
+	}
+	return []string{"--features", f.String()}
 }
 
 func getTokenTTL() time.Duration {
@@ -741,9 +820,11 @@ func cmdService() {
 			log.Fatalf("cannot resolve executable path: %v", err)
 		}
 		port := getPort()
-		if err := service.Install(exePath, port); err != nil {
+		features := serviceFeatures()
+		if err := service.Install(exePath, port, featureServeArgs(features)...); err != nil {
 			log.Fatalf("service install failed: %v", err)
 		}
+		fmt.Printf("Features: %s\n", features)
 		if runtime.GOOS == "windows" {
 			fmt.Printf("Scheduled task created and running.\n")
 			fmt.Printf("  task: %s\n", service.PlistPath())

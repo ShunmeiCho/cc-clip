@@ -79,6 +79,7 @@ type Server struct {
 	addr              string
 	mux               *http.ServeMux
 	textWriter        ClipboardTextWriter // nil until SetTextWriter; POST /clipboard/text answers 501 without it
+	features          Features            // bridges served; AllFeatures unless SetFeatures
 	receiptCh         chan receiptEvent   // nil until EnableDeliveryReceipts; drained by the single receipt writer
 	receiptDrops      atomic.Int64        // receipts dropped on a full queue; reported by the writer, never the handler
 	version           string              // reported by /health when set via SetVersion (#22 P2)
@@ -88,6 +89,7 @@ type Server struct {
 func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, sessions *session.Store) *Server {
 	s := &Server{
 		clipboard:         clipboard,
+		features:          AllFeatures,
 		tokens:            tokens,
 		sessions:          sessions,
 		dedup:             NewDeduper(12 * time.Second),
@@ -514,6 +516,16 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// SetFeatures sets which bridges the daemon serves (see Features). With
+// Notify off, /notify and /register-nonce answer 403 and image transfers are
+// not announced; locally raised safety notices (a remote clipboard write, see
+// clipwrite.go) are kept, since they exist to make clipboard poisoning
+// visible. With Image or TextRead off, /clipboard/type reports that kind as
+// an empty clipboard, so the remote shim falls through to the real xclip.
+func (s *Server) SetFeatures(f Features) {
+	s.features = f
+}
+
 // SetVersion sets the version string /health reports (#22 P2), letting
 // `cc-clip status` detect a running daemon that predates an in-place binary
 // upgrade. The field is additive: tunnel.ProbeHealth decodes service/status
@@ -563,6 +575,10 @@ func (s *Server) handleTunnelIdentity(w http.ResponseWriter, r *http.Request) {
 // the prior credential instead of waiting for TTL or FIFO eviction.
 // Protected by authMiddleware (requires clipboard bearer token).
 func (s *Server) handleRegisterNonce(w http.ResponseWriter, r *http.Request) {
+	if !s.features.Notify {
+		s.featureDisabled(w, "notify")
+		return
+	}
 	var req struct {
 		Nonce string `json:"nonce"`
 		Host  string `json:"host"`
@@ -584,11 +600,23 @@ func (s *Server) handleClipboardType(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// A disabled kind would still tell the caller that the user has copied
+	// something, so it is reported as an empty clipboard.
+	if info.Type == ClipboardText && !s.features.TextRead {
+		info = ClipboardInfo{Type: ClipboardEmpty}
+	}
+	if info.Type == ClipboardImage && !s.features.Image {
+		info = ClipboardInfo{Type: ClipboardEmpty}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
 }
 
 func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
+	if !s.features.Image {
+		s.featureDisabled(w, "image")
+		return
+	}
 	info, err := s.clipboard.Type()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -636,7 +664,7 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := r.Header.Get("X-CC-Clip-Session")
-	if sessionID != "" && s.sessions != nil {
+	if sessionID != "" && s.sessions != nil && s.features.Notify {
 		hash := sha256.Sum256(data)
 		fingerprint := hex.EncodeToString(hash[:8])
 
@@ -658,6 +686,10 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
+	if !s.features.TextRead {
+		s.featureDisabled(w, "text-read")
+		return
+	}
 	info, err := s.clipboard.Type()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -695,6 +727,10 @@ func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
 // or generic senders. Auth is via notification nonce (separate from
 // clipboard bearer token).
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
+	if !s.features.Notify {
+		s.featureDisabled(w, "notify")
+		return
+	}
 	// Each auth failure gets its own message so notify-health.log tells an
 	// operator which step broke: a hook deployed before any nonce existed
 	// sends no header at all, a hand-rolled sender usually gets the scheme

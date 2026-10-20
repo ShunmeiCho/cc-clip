@@ -65,7 +65,12 @@ func cmdServe() {
 	}
 	instanceID := loadInstanceIDOrUnavailable(tokenDir)
 
-	srv.SetTextWriter(daemon.NewClipboardTextWriter())
+	features := getFeatures()
+	srv.SetFeatures(features)
+	if features.TextWrite {
+		srv.SetTextWriter(daemon.NewClipboardTextWriter())
+	}
+	log.Printf("Features: %s", features)
 	srv.SetVersion(version)
 	srv.SetInstanceID(instanceID)
 	srv.EnableNoncePersistence()
