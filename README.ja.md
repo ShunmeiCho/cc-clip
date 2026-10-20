@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ 9055ecbd62edb0fab586ab2ecfffc7963ed013c6 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -168,6 +168,10 @@ Windows サポートは引き続き実験的です。まずは [Windows クイ�
   `--cursor` を追加）、**新しい** `ssh myserver` を開いて通常どおり貼り付けてください。
 - **結果:** agent はローカルと同じように画像を添付します。また Mac には画像のサイズと形式を
   示す `cc-clip #N` 通知が表示されるため、貼り付けの抜けや重複にすぐ気づけます。
+- **不要な場合:** テキストは双方向に流れます。リモートの token を持つプロセスは、ローカルのクリップボードの
+  テキストを読むこともできます。デーモンは指定した機能だけを提供します。`cc-clip service install --features image`
+  なら画像の貼り付けだけを残して他をすべて無効にし、`--features image,text-write` ならこの方向だけを残します。
+  詳しくは [SECURITY.md](SECURITY.md) を参照してください。
 
 ### Codex CLI に画像を貼り付ける
 

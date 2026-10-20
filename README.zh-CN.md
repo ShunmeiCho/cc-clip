@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ 9055ecbd62edb0fab586ab2ecfffc7963ed013c6 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -165,6 +165,9 @@ Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/w
   或 `--cursor`），然后打开一个**新的** `ssh myserver`，照常粘贴。
 - **你会看到：**代理像在本地一样附上图片；同时 Mac 会弹出一条 `cc-clip #N` 通知，
   显示图片的尺寸和格式，漏粘或重复粘贴一眼就能看出来。
+- **用不到？**文本是双向的：持有远程 token 的进程也能读取你本地剪贴板中的文本。
+  守护进程只提供你列出的功能：`cc-clip service install --features image` 只保留图片粘贴、关闭其余功能，
+  `--features image,text-write` 则只保留这个方向。详见 [SECURITY.md](SECURITY.md)。
 
 ### 把图片粘贴到 Codex CLI
 
