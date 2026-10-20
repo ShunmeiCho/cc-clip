@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ 020ef8e6c161c5950ee0197c35fcf3a9e6f95ba3 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -191,6 +191,9 @@ Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/w
 
 - **你会看到：**文本出现在本地剪贴板，并弹出一条 "Clipboard set by remote" 通知。
   通知里不会包含复制的内容，连续多次 yank 只显示为一条通知。
+- **用不到？**文本是双向的：持有远程 token 的进程也能读取你本地剪贴板中的文本。
+  如果你只粘贴图片，可以用 `cc-clip service install --text off` 关闭文本桥接
+  （若只想保留这个方向，用 `--text write`）。详见 [SECURITY.md](SECURITY.md)。
 
 ### 代理需要你时收到桌面通知
 

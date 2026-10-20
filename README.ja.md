@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ 020ef8e6c161c5950ee0197c35fcf3a9e6f95ba3 -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -194,6 +194,9 @@ Windows サポートは引き続き実験的です。まずは [Windows クイ�
 
 - **結果:** テキストがローカルのクリップボードに入り、"Clipboard set by remote" という通知が
   表示されます。通知の本文にコピーした内容が含まれることはなく、連続した yank は 1 つの通知にまとめられます。
+- **不要な場合:** テキストは双方向に流れます。リモートの token を持つプロセスは、ローカルのクリップボードの
+  テキストを読むこともできます。画像の貼り付けしか使わない場合は、`cc-clip service install --text off` で
+  テキストのブリッジを無効にできます（この方向だけ残すなら `--text write`）。詳しくは [SECURITY.md](SECURITY.md) を参照してください。
 
 ### agent が操作を待っているときにデスクトップ通知を受け取る
 
