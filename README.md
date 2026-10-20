@@ -199,6 +199,11 @@ and what you should see when it works. Replace `myserver` with your host.
 - **You'll see:** the text in your local clipboard, and a notification
   "Clipboard set by remote". Its text never includes what was copied, and a
   burst of yanks shows up as one notification.
+- **Don't need it?** Text goes both ways: a process holding the remote token
+  can also read your local clipboard text. The daemon serves only the features
+  you list: `cc-clip service install --features image` keeps image paste and
+  turns everything else off, and `--features image,text-write` keeps just this
+  direction. See [SECURITY.md](SECURITY.md).
 
 ### Get a desktop notification when the agent needs you
 

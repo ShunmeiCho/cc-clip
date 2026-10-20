@@ -35,6 +35,7 @@ cc-clip is designed with the following security principles:
 - **Shim isolation:** The shim only intercepts specific `xclip` / `wl-paste` clipboard read patterns; unrelated calls pass through to the real binary unchanged
 - **Resource caps:** Clipboard images are capped at 20MB and clipboard text at 1MB by default (`CC_CLIP_MAX_IMAGE_MB` / `CC_CLIP_MAX_TEXT_MB`), and notification bodies at 64KB to reduce OOM and disk-fill exposure
 - **Windows direct-path scope:** The experimental Windows RemoteForward/shim path lets the remote shim request local Windows clipboard text as well as images while the SSH tunnel is open
+- **Feature allowlist:** `cc-clip serve --features <list>` (or `CC_CLIP_FEATURES`) chooses which bridges the daemon serves: `image`, `text` (or just `text-read` / `text-write`) and `notify`. The default is `all`. Anything not listed answers 403 and never touches the local clipboard or the notification queue, and `/clipboard/type` reports `empty` for a kind that cannot be read. Without `notify`, nonce registration is refused, image transfers are not announced, and `connect` removes the managed agent hooks. Because it is an allowlist, a feature added in a later version stays off for anyone with an explicit list. The list is stored in the service definition and survives `setup`, `connect` and `update`; an unreadable stored value fails closed to `none`. Local safety notices (a remote clipboard write) are kept
 - **No persistent storage of clipboard data:** Clipboard data is served on-demand; Windows only keeps a short in-memory cache keyed by the OS clipboard sequence number
 
 ## Threat Model
@@ -49,7 +50,7 @@ cc-clip is designed with the following security principles:
 ### What cc-clip is not intended to defend against
 
 - **Other users on the same remote host.** SSH `RemoteForward` exposes the daemon to `127.0.0.1` on the remote host, and loopback is reachable by other local users on that machine. The token is the access control boundary.
-- **A remote host you do not trust.** A remote process with access to the synced clipboard token can request the current local clipboard text or image while the SSH tunnel is open. Only deploy cc-clip to hosts where you trust your account and the software running as that account.
+- **A remote host you do not trust.** A remote process with access to the synced clipboard token can request the current local clipboard text or image while the SSH tunnel is open, and can replace the local clipboard text. Reading text gives no local signal, so a password copied from a password manager is readable. `--features` without `text-read` removes text reads, and without `image` removes image reads. Only deploy cc-clip to hosts where you trust your account and the software running as that account.
 - **Compromise of your Unix account.** If another process can read `~/.cache/cc-clip/session.token`, `~/.cache/cc-clip/notify.nonce`, your shell rc files, or your process memory as your user, it can likely use cc-clip as you.
 - **A compromised local machine.** cc-clip reads the local clipboard by design; malware on the local machine can already read that data.
 - **Denial of service by local users.** cc-clip sets HTTP timeouts and resource guards, but it does not try to prevent all localhost abuse by users who can reach the tunnel.

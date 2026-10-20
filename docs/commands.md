@@ -8,6 +8,8 @@ Complete cc-clip command reference. For what each feature is for and what you sh
 |---------|-------------|
 | `cc-clip serve` | Start daemon in foreground |
 | `cc-clip serve --rotate-token` | Start daemon with forced new token |
+| `cc-clip serve --features <list>` | Serve only the listed bridges, comma-separated: `image`, `text` (= `text-read,text-write`), `text-read`, `text-write`, `notify`, or `all` (default) / `none` (env `CC_CLIP_FEATURES`). Anything not listed answers 403. Example: `--features image` for image paste only |
+| `cc-clip service install --features <list>` | Install (or reinstall) the service with a feature list. It is written to the service definition and kept by `setup`, `connect`, `update` and a re-run `service install`; `service uninstall` forgets it. Without `notify`, the next `connect` removes the managed agent hooks |
 | `cc-clip service install` | Install local daemon service (macOS launchd / Windows logon launcher) |
 | `cc-clip service uninstall` | Remove local daemon service |
 | `cc-clip service status` | Show service status |
