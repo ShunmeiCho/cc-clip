@@ -199,6 +199,10 @@ and what you should see when it works. Replace `myserver` with your host.
 - **You'll see:** the text in your local clipboard, and a notification
   "Clipboard set by remote". Its text never includes what was copied, and a
   burst of yanks shows up as one notification.
+- **Don't need it?** Text goes both ways: a process holding the remote token
+  can also read your local clipboard text. If you only paste images, turn the
+  text bridge off with `cc-clip service install --text off` (or keep just this
+  direction with `--text write`). See [SECURITY.md](SECURITY.md).
 
 ### Get a desktop notification when the agent needs you
 

@@ -79,6 +79,7 @@ type Server struct {
 	addr              string
 	mux               *http.ServeMux
 	textWriter        ClipboardTextWriter // nil until SetTextWriter; POST /clipboard/text answers 501 without it
+	textMode          TextMode            // which text directions are served; TextModeBoth unless SetTextMode
 	receiptCh         chan receiptEvent   // nil until EnableDeliveryReceipts; drained by the single receipt writer
 	receiptDrops      atomic.Int64        // receipts dropped on a full queue; reported by the writer, never the handler
 	version           string              // reported by /health when set via SetVersion (#22 P2)
@@ -88,6 +89,7 @@ type Server struct {
 func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, sessions *session.Store) *Server {
 	s := &Server{
 		clipboard:         clipboard,
+		textMode:          TextModeBoth,
 		tokens:            tokens,
 		sessions:          sessions,
 		dedup:             NewDeduper(12 * time.Second),
@@ -584,6 +586,11 @@ func (s *Server) handleClipboardType(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// With text reads disabled, "text" would still tell the caller that the
+	// user has copied something, so it is reported as an empty clipboard.
+	if info.Type == ClipboardText && !s.textMode.Read {
+		info = ClipboardInfo{Type: ClipboardEmpty}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
 }
@@ -658,6 +665,10 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClipboardText(w http.ResponseWriter, r *http.Request) {
+	if !s.textMode.Read {
+		http.Error(w, "clipboard text read disabled (serve --text="+s.textMode.String()+")", http.StatusForbidden)
+		return
+	}
 	info, err := s.clipboard.Type()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

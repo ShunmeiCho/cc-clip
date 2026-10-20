@@ -8,6 +8,8 @@ Complete cc-clip command reference. For what each feature is for and what you sh
 |---------|-------------|
 | `cc-clip serve` | Start daemon in foreground |
 | `cc-clip serve --rotate-token` | Start daemon with forced new token |
+| `cc-clip serve --text <mode>` | Limit the text clipboard bridge: `off`, `read`, `write` or `both` (default; env `CC_CLIP_TEXT`). Disabled directions answer 403. Image paste is unaffected |
+| `cc-clip service install --text off` | Install the service with a text mode. The mode is written to the service definition and kept by `setup`, `connect`, `update` and a re-run `service install`; `service uninstall` forgets it |
 | `cc-clip service install` | Install local daemon service (macOS launchd / Windows logon launcher) |
 | `cc-clip service uninstall` | Remove local daemon service |
 | `cc-clip service status` | Show service status |

@@ -160,8 +160,13 @@ Local daemon and diagnostics (run on your local machine):
   serve              Run the clipboard daemon in the foreground
     --port           Listen port (default: 18339, env: CC_CLIP_PORT)
     --rotate-token   Force new token generation (ignore existing)
+    --text MODE      Text clipboard bridge: off | read | write | both
+                     (default: both, env: CC_CLIP_TEXT). Image paste is
+                     unaffected; "off" stops remote processes reading or
+                     replacing local clipboard text
   service            Run the daemon at login (macOS launchd / Windows logon)
-    install          Install and start service
+    install          Install and start service (accepts --port, --text;
+                     --text is kept across setup/connect/update)
     uninstall        Stop and remove service
     status           Show service status
   status             Show daemon, port and token status
@@ -290,6 +295,59 @@ func hasFlag(name string) bool {
 		}
 	}
 	return false
+}
+
+// getTextMode resolves the daemon's text clipboard mode from --text or
+// CC_CLIP_TEXT (default both). An invalid value is fatal: silently falling back
+// to "both" would re-open exactly what the user asked to close.
+func getTextMode() daemon.TextMode {
+	value := os.Getenv("CC_CLIP_TEXT")
+	if flag, ok := flagValue("text"); ok {
+		value = flag
+	}
+	mode, err := daemon.ParseTextMode(value)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	return mode
+}
+
+// textModeExplicit reports whether the user chose a text mode on this run.
+func textModeExplicit() bool {
+	_, ok := flagValue("text")
+	return ok || os.Getenv("CC_CLIP_TEXT") != ""
+}
+
+// serviceTextMode is the text mode a (re)installed service should run with.
+// An explicit --text / CC_CLIP_TEXT wins; otherwise the installed service's
+// value is kept, so re-registering (setup, connect, update) never silently
+// re-enables text. An unreadable installed value fails closed to off.
+func serviceTextMode() daemon.TextMode {
+	if textModeExplicit() {
+		return getTextMode()
+	}
+	return installedTextMode()
+}
+
+func installedTextMode() daemon.TextMode {
+	value, ok := service.InstalledFlag("text")
+	if !ok {
+		return daemon.TextModeBoth
+	}
+	mode, err := daemon.ParseTextMode(value)
+	if err != nil {
+		return daemon.TextMode{}
+	}
+	return mode
+}
+
+// textModeServeArgs returns the serve flags that persist mode in a service
+// definition. The default adds nothing, so existing service files are unchanged.
+func textModeServeArgs(mode daemon.TextMode) []string {
+	if mode == daemon.TextModeBoth {
+		return nil
+	}
+	return []string{"--text", mode.String()}
 }
 
 func getTokenTTL() time.Duration {
@@ -741,9 +799,11 @@ func cmdService() {
 			log.Fatalf("cannot resolve executable path: %v", err)
 		}
 		port := getPort()
-		if err := service.Install(exePath, port); err != nil {
+		textMode := serviceTextMode()
+		if err := service.Install(exePath, port, textModeServeArgs(textMode)...); err != nil {
 			log.Fatalf("service install failed: %v", err)
 		}
+		fmt.Printf("Text clipboard: %s\n", textMode)
 		if runtime.GOOS == "windows" {
 			fmt.Printf("Scheduled task created and running.\n")
 			fmt.Printf("  task: %s\n", service.PlistPath())

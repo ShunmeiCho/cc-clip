@@ -4,6 +4,7 @@ package service
 
 import (
 	"fmt"
+	"html"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +38,12 @@ func logPath() string {
 // generatePlist creates the launchd plist XML content.
 // Includes an explicit PATH so Homebrew tools (pngpaste) are found
 // even though launchd doesn't source the user's shell profile.
-func generatePlist(binaryPath string, port int) string {
+// serveArgs are extra `serve` flags (e.g. "--text", "off") appended after --port.
+func generatePlist(binaryPath string, port int, serveArgs ...string) string {
+	var extra strings.Builder
+	for _, arg := range serveArgs {
+		fmt.Fprintf(&extra, "\n        <string>%s</string>", html.EscapeString(arg))
+	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -49,7 +55,7 @@ func generatePlist(binaryPath string, port int) string {
         <string>%s</string>
         <string>serve</string>
         <string>--port</string>
-        <string>%d</string>
+        <string>%d</string>%s
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -66,7 +72,7 @@ func generatePlist(binaryPath string, port int) string {
     <string>%s</string>
 </dict>
 </plist>
-`, plistLabel, binaryPath, port, logPath(), logPath())
+`, plistLabel, binaryPath, port, extra.String(), logPath(), logPath())
 }
 
 // launchctlLoad loads a plist via launchctl. Overridable for testing.
@@ -97,7 +103,9 @@ var launchctlList = func(label string) (bool, error) {
 }
 
 // Install writes the plist file and loads the service via launchctl.
-func Install(binaryPath string, port int) error {
+// serveArgs are extra `serve` flags baked into the plist; read them back with
+// InstalledFlag before re-registering so they survive updates.
+func Install(binaryPath string, port int, serveArgs ...string) error {
 	plist := PlistPath()
 
 	// Ensure LaunchAgents directory exists
@@ -106,7 +114,7 @@ func Install(binaryPath string, port int) error {
 		return fmt.Errorf("cannot create LaunchAgents directory: %w", err)
 	}
 
-	content := generatePlist(binaryPath, port)
+	content := generatePlist(binaryPath, port, serveArgs...)
 	if err := os.WriteFile(plist, []byte(content), 0644); err != nil {
 		return fmt.Errorf("cannot write plist: %w", err)
 	}
@@ -192,6 +200,31 @@ func parsePlistPort(plist string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// InstalledFlag reports the value of a `--name value` pair in the installed
+// plist's ProgramArguments. Like InstalledPort, it lets re-registration keep
+// flags the user chose at install time instead of silently resetting them.
+func InstalledFlag(name string) (string, bool) {
+	data, err := os.ReadFile(PlistPath())
+	if err != nil {
+		return "", false
+	}
+	return parsePlistFlag(string(data), name)
+}
+
+func parsePlistFlag(plist, name string) (string, bool) {
+	args, ok := programArgumentsArray(stripXMLComments(plist))
+	if !ok {
+		return "", false
+	}
+	values := plistStringValues(args)
+	for i := 0; i+1 < len(values); i++ {
+		if values[i] == "--"+name {
+			return html.UnescapeString(values[i+1]), true
+		}
+	}
+	return "", false
 }
 
 // stripXMLComments removes <!-- ... --> spans. An unterminated comment makes

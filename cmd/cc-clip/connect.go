@@ -720,11 +720,11 @@ func newDeployStateFromBinary(binaryHash, binaryVersion, shimTarget string, path
 
 func cmdSetup() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+		log.Fatal("usage: cc-clip setup <host> [--port PORT] [--text off|read|write|both]")
 	}
 	host, err := hostFromArgs(os.Args[2:])
 	if err != nil {
-		log.Fatal("usage: cc-clip setup <host> [--port PORT]")
+		log.Fatal("usage: cc-clip setup <host> [--port PORT] [--text off|read|write|both]")
 	}
 	port := getPort()
 
@@ -789,13 +789,17 @@ func cmdSetup() {
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err == nil {
 		fmt.Printf("      daemon already running on :%d\n", port)
+		if textModeExplicit() && getTextMode() != installedTextMode() {
+			fmt.Printf("      warning: --text=%s not applied to the running daemon (installed: %s);\n", getTextMode(), installedTextMode())
+			fmt.Printf("      run: cc-clip service install --text=%s\n", getTextMode())
+		}
 	} else if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		exePath, err := os.Executable()
 		if err != nil {
 			log.Fatalf("      cannot determine executable path: %v", err)
 		}
 		exePath, _ = filepath.EvalSymlinks(exePath)
-		if err := service.Install(exePath, port); err != nil {
+		if err := service.Install(exePath, port, textModeServeArgs(serviceTextMode())...); err != nil {
 			log.Fatalf("      service install failed: %v", err)
 		}
 		if runtime.GOOS == "darwin" {

@@ -111,6 +111,7 @@ func cmdUpdate() {
 	// existing SSH tunnel forwards, and the conflict check below would have
 	// been inspecting the wrong port too.
 	servicePort := installedServicePort()
+	serviceArgs := textModeServeArgs(installedTextMode())
 	if conflict, err := detectDaemonConflict(servicePort, selfPath); err != nil {
 		fmt.Printf("warning: could not detect port conflicts: %v\n", err)
 	} else if conflict != "" {
@@ -185,8 +186,8 @@ func cmdUpdate() {
 	// launchd reloads the job pointing at the new binary. Failure here is
 	// treated the same as any other post-install failure: roll back before
 	// returning.
-	if err := reinstallMacOSService(selfPath, serviceWasRunning, servicePort); err != nil {
-		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort)
+	if err := reinstallMacOSService(selfPath, serviceWasRunning, servicePort, serviceArgs...); err != nil {
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort, serviceArgs...)
 		log.Fatalf("service restart failed (%v); rolled back to previous version.", err)
 	}
 
@@ -196,11 +197,11 @@ func cmdUpdate() {
 	// macOS, broken linked library, etc.).
 	installedVersion, verifyErr := runVersionCommand(selfPath)
 	if verifyErr != nil {
-		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort)
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort, serviceArgs...)
 		log.Fatalf("post-install: installed binary failed to run (%v); rolled back to previous version.\ncheck %s for the archive you were trying to install.", verifyErr, backup)
 	}
 	if !stagedVersionMatches(installedVersion, target) {
-		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort)
+		rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort, serviceArgs...)
 		log.Fatalf("post-install: installed binary reports %q, expected %s; rolled back.", installedVersion, target)
 	}
 	fmt.Printf("verified binary: %s\n", installedVersion)
@@ -213,7 +214,7 @@ func cmdUpdate() {
 	// silently succeeded but launchd's job crash-looped.
 	if serviceWasRunning {
 		if err := verifyRunningDaemon(selfPath, servicePort); err != nil {
-			rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort)
+			rollbackAfterInstall(selfPath, backup, serviceWasRunning, servicePort, serviceArgs...)
 			log.Fatalf("post-install: daemon verification failed (%v); rolled back to previous version.\nresolve the stray process on :%d (see `docs/upgrading.md`) and try again.", err, servicePort)
 		}
 		fmt.Println("verified daemon: responding on :" + strconv.Itoa(servicePort) + " from the new binary")
@@ -260,14 +261,14 @@ func describeServiceState(wasRunning bool) string {
 // reinstallMacOSService re-registers the launchd plist against binaryPath,
 // but only if a service was running before the update. Returns a non-nil
 // error so the caller can rollback; the function does not panic or exit.
-func reinstallMacOSService(binaryPath string, serviceWasRunning bool, port int) error {
+func reinstallMacOSService(binaryPath string, serviceWasRunning bool, port int, serveArgs ...string) error {
 	if runtime.GOOS != "darwin" || !serviceWasRunning {
 		return nil
 	}
 	if err := service.Uninstall(); err != nil {
 		return fmt.Errorf("service uninstall: %w", err)
 	}
-	if err := service.Install(binaryPath, port); err != nil {
+	if err := service.Install(binaryPath, port, serveArgs...); err != nil {
 		return fmt.Errorf("service install: %w", err)
 	}
 	return nil
@@ -338,14 +339,14 @@ func verifyRunningDaemon(expectedPath string, port int) error {
 // operation fails, we still try the remaining ones because the user is
 // already in a broken state and we want to leave them as close to the
 // pre-update world as possible.
-func rollbackAfterInstall(selfPath, backup string, serviceWasRunning bool, port int) {
+func rollbackAfterInstall(selfPath, backup string, serviceWasRunning bool, port int, serveArgs ...string) {
 	_ = os.Remove(selfPath)
 	_ = os.Rename(backup, selfPath)
 	if runtime.GOOS != "darwin" || !serviceWasRunning {
 		return
 	}
 	_ = service.Uninstall()
-	_ = service.Install(selfPath, port)
+	_ = service.Install(selfPath, port, serveArgs...)
 }
 
 func parseUpdateFlags(args []string) updateOptions {

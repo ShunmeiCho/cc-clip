@@ -196,3 +196,24 @@ func TestParsePlistPortIgnoresComments(t *testing.T) {
 		t.Fatal("a --port outside ProgramArguments must not be read as the service port")
 	}
 }
+
+// TestPlistServeArgsRoundTrip pins extra serve flags (here --text) into the
+// plist and back out, so update/setup can re-register without dropping them.
+func TestPlistServeArgsRoundTrip(t *testing.T) {
+	plist := generatePlist("/usr/local/bin/cc-clip", 19001, "--text", "off")
+	if !strings.Contains(plist, "<string>--port</string>\n        <string>19001</string>\n        <string>--text</string>\n        <string>off</string>\n    </array>") {
+		t.Fatalf("serve args not appended to ProgramArguments:\n%s", plist)
+	}
+	if got, ok := parsePlistFlag(plist, "text"); !ok || got != "off" {
+		t.Fatalf("parsePlistFlag(text) = %q, %v; want off, true", got, ok)
+	}
+	if port, ok := parsePlistPort(plist); !ok || port != 19001 {
+		t.Fatalf("extra args broke port parsing: %d, %v", port, ok)
+	}
+	if _, ok := parsePlistFlag(generatePlist("/usr/local/bin/cc-clip", 18339), "text"); ok {
+		t.Fatal("a plist without --text must report no text flag")
+	}
+	if got, _ := parsePlistFlag(generatePlist("/x", 1, "--text", "<&>"), "text"); got != "<&>" {
+		t.Fatalf("serve args must be XML-escaped and unescaped, got %q", got)
+	}
+}

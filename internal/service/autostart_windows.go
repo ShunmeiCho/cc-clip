@@ -54,8 +54,12 @@ func daemonStopFilePath() string {
 // generateVBS creates a VBScript that launches cc-clip serve with no visible window.
 // Uses a restart loop with a stop-file sentinel, matching the hotkey VBS pattern
 // and providing KeepAlive-like reliability (matching macOS launchd behavior).
-func generateVBS(binaryPath string, port int) string {
+func generateVBS(binaryPath string, port int, serveArgs ...string) string {
 	logFile := logPath()
+	extra := ""
+	if len(serveArgs) > 0 {
+		extra = " " + strings.Join(serveArgs, " ")
+	}
 	stopFile := daemonStopFilePath()
 	return fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -64,14 +68,14 @@ Do
     fso.DeleteFile "%s", True
     Exit Do
   End If
-  WshShell.Run "cmd.exe /c """"%s"" serve --port %d >> ""%s"" 2>&1""", 0, True
+  WshShell.Run "cmd.exe /c """"%s"" serve --port %d%s >> ""%s"" 2>&1""", 0, True
   If fso.FileExists("%s") Then
     fso.DeleteFile "%s", True
     Exit Do
   End If
   WScript.Sleep 5000
 Loop
-`, stopFile, stopFile, binaryPath, port, logFile, stopFile, stopFile)
+`, stopFile, stopFile, binaryPath, port, extra, logFile, stopFile, stopFile)
 }
 
 // regAdd adds a registry value. Overridable for testing.
@@ -104,7 +108,7 @@ var regQuery = func(key, name string) (string, error) {
 
 // Install registers cc-clip daemon for auto-start at user logon via the registry.
 // Uses a VBScript wrapper to launch the daemon with no visible window.
-func Install(binaryPath string, port int) error {
+func Install(binaryPath string, port int, serveArgs ...string) error {
 	// Remove stale stop sentinel from a previous Uninstall, so the VBS loop doesn't exit immediately.
 	os.Remove(daemonStopFilePath())
 
@@ -121,7 +125,7 @@ func Install(binaryPath string, port int) error {
 	}
 
 	// Write VBScript launcher
-	content := generateVBS(binaryPath, port)
+	content := generateVBS(binaryPath, port, serveArgs...)
 	if err := os.WriteFile(vbs, []byte(content), 0644); err != nil {
 		return fmt.Errorf("cannot write VBS launcher: %w", err)
 	}
@@ -272,4 +276,10 @@ func Status() (bool, error) {
 // macOS-only (cmdUpdate returns early on Windows).
 func InstalledPort() (int, bool) {
 	return 0, false
+}
+
+// InstalledFlag is not read back on Windows, for the same reason as
+// InstalledPort.
+func InstalledFlag(name string) (string, bool) {
+	return "", false
 }

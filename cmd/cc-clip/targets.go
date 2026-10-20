@@ -183,7 +183,7 @@ func resolveImplicitTargets(isTTY bool, in io.Reader, out, errOut io.Writer, fal
 // getFlag) and --local-bin (resolveLocalBinary -> getFlag) take a value; every
 // other connect/setup flag is boolean. --to is an `update` flag (update.go
 // FlagSet), NOT a connect/setup flag, so it is intentionally absent here.
-var valueFlags = map[string]bool{"--port": true, "--local-bin": true}
+var valueFlags = map[string]bool{"--port": true, "--local-bin": true, "--text": true}
 
 // errNoHost is returned by hostFromArgs when args carry no positional host token.
 var errNoHost = errors.New("missing <host>: usage: cc-clip <connect|setup> <host> [flags]")

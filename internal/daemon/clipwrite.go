@@ -23,6 +23,12 @@ func (s *Server) SetTextWriter(w ClipboardTextWriter) {
 	s.textWriter = w
 }
 
+// SetTextMode restricts which text clipboard directions the daemon serves.
+// Disabled directions answer 403 and never touch the local clipboard.
+func (s *Server) SetTextMode(m TextMode) {
+	s.textMode = m
+}
+
 // handleClipboardWrite accepts text from an authenticated remote and places it
 // on the local clipboard verbatim. Newlines are NOT normalized: preserving the
 // exact bytes is the point (#128) — the terminal's soft-wrap mangling is what
@@ -34,6 +40,10 @@ func (s *Server) SetTextWriter(w ClipboardTextWriter) {
 // deliberately absent from the notification — it may be a secret, and
 // notification text reaches tmux status lines and notification centers.
 func (s *Server) handleClipboardWrite(w http.ResponseWriter, r *http.Request) {
+	if !s.textMode.Write {
+		http.Error(w, "clipboard text write disabled (serve --text="+s.textMode.String()+")", http.StatusForbidden)
+		return
+	}
 	if s.textWriter == nil {
 		http.Error(w, "clipboard write not supported by this daemon", http.StatusNotImplemented)
 		return
