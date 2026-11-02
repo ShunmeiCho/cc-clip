@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -18,6 +19,7 @@ func NewClipboardTextWriter() ClipboardTextWriter {
 
 func (w *darwinTextWriter) WriteText(text string) error {
 	cmd := exec.Command("pbcopy")
+	cmd.Env = utf8TextEnv(os.Environ())
 	cmd.Stdin = strings.NewReader(text)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pbcopy failed: %s: %w", strings.TrimSpace(string(out)), err)
