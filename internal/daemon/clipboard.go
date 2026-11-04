@@ -11,8 +11,9 @@ const (
 
 // ClipboardInfo holds clipboard content metadata.
 type ClipboardInfo struct {
-	Type   ClipboardType `json:"type"`
-	Format string        `json:"format,omitempty"`
+	Type     ClipboardType `json:"type"`
+	Format   string        `json:"format,omitempty"`
+	Revision uint32        `json:"revision,omitempty"`
 }
 
 // ClipboardReader reads clipboard content from the OS.

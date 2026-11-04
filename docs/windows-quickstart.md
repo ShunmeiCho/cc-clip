@@ -147,7 +147,112 @@ Without it the image is put back 150 ms after the keystroke, so a manual
 and a reboot. The same flag has always been available on
 `cc-clip send --paste`.
 
-## Experimental: Direct Remote Clipboard
+## Native Windows remote hosts (fork development build)
+
+This fork also supports the hotkey/send workflow when the SSH server and the
+coding agent run natively on Windows. It does not require Git Bash, WSL, Xvfb,
+or a desktop login on the remote. This support is not in upstream v0.13.1.
+The local and remote Windows machines must use the same architecture (amd64
+or arm64) for this first implementation.
+
+Build the development binary, then use it on your local Windows machine:
+
+```powershell
+go build -o .\dist\cc-clip-dev.exe .\cmd\cc-clip
+.\dist\cc-clip-dev.exe send myserver .\screenshot.png
+.\dist\cc-clip-dev.exe hotkey myserver
+```
+
+The first send probes the remote with Windows PowerShell, then deploys a
+matching helper with SFTP. Images travel as raw bytes over SSH stdin; length
+and SHA256 are checked before the final file is saved and before any path is
+pasted. The helper is stored by binary hash under
+`%LOCALAPPDATA%\cc-clip\bin`, and reused on later sends. Existing installed
+`cc-clip.exe` files are left in place. PowerShell and SFTP must be available;
+changing the SSH server's default shell is unnecessary.
+
+Images are saved in `%LOCALAPPDATA%\cc-clip\uploads`. The receiver restricts
+that directory and inherited file permissions to the SSH account and SYSTEM.
+The default image limit is 20 MiB. Failed or incomplete transfers are removed.
+Saved images are retained until you remove them. A Windows `--remote-dir` may
+select a subdirectory of the managed uploads directory (relative paths are
+resolved within that directory); paths outside that tree
+are rejected to avoid changing permissions on an unrelated directory.
+
+Press `Alt+Shift+V` with an image copied locally and the remote agent terminal
+focused. The hotkey uploads the image and pastes its native Windows path.
+Paths containing spaces are quoted. If synthetic paste does not work in your
+terminal, use `hotkey myserver --no-restore` to keep the path on the clipboard
+and paste it manually. This attaches images by file path. The native image
+clipboard alternative is described below; Windows remote
+`setup`/`connect`/`doctor --host` integration remains unavailable.
+
+To start the development hotkey automatically at login, put its executable in
+a stable location and run `cc-clip-dev.exe hotkey myserver --enable-autostart`.
+Stop it with `cc-clip-dev.exe hotkey --disable-autostart`. For manual use, stop
+it with `cc-clip-dev.exe hotkey --stop`.
+
+### Native image clipboard bridge
+
+Launch the remote agent through `bridge` from your local Windows terminal:
+
+```powershell
+.\dist\cc-clip-dev.exe bridge myserver -- codex.exe --no-daemon
+```
+
+If the agent is not in the remote PATH, an absolute executable path also works:
+
+```powershell
+.\dist\cc-clip-dev.exe bridge myserver -- C:\Users\you\.bun\bin\codex.exe --no-daemon
+```
+
+Copy an image locally, then use the agent's image paste shortcut. Codex accepts
+`Alt+V`, which avoids terminal shortcuts that intercept `Ctrl+V`. The image
+becomes a normal attachment in the remote agent. This workflow supports native
+Windows executables that read PNG or DIBV5 clipboard images. Batch wrappers must
+be launched through their shell explicitly, or replaced with their executable.
+
+The wrapper starts a local loopback daemon, deploys the same build's helper
+with SFTP, creates an authenticated SSH reverse tunnel on an automatically
+selected remote loopback port, and starts the clipboard bridge and agent in
+the same Windows window station. It does not require a remote desktop login,
+WSL, or a change to SSH configuration. Existing configured forwards are excluded
+from this connection. Windows OpenSSH must allow TCP forwarding.
+
+Use `--no-daemon` with Codex versions that support a background server. A server
+running in another Windows window station cannot read this SSH session's
+clipboard. Start a new agent through `bridge`; an agent in an already-open SSH
+session or a separate desktop session does not share the bridge's clipboard.
+
+The bridge polls image metadata every 250 ms and fetches bytes when a native
+consumer requests an image. It advertises PNG and CF_DIBV5, supports clipboard
+updates, and rejects an image that changes while being fetched. Encoded images
+are limited to 20 MiB and decoded pixels to 80 MiB. Text is not mirrored into
+the remote clipboard. Run this against a trusted SSH account: the bridge's
+authenticated local daemon retains the existing text and image read endpoints.
+
+The token is unique to each invocation, stays out of command-line arguments,
+and is stored remotely with permissions restricted to the SSH account and
+SYSTEM. On exit, the local endpoint closes and the remote token file is removed
+when reachable. Remote clipboard data owned by the bridge is cleared when the
+agent exits. If the clipboard source stays unavailable for 10 seconds, the
+bridge stops the agent. A lost connection can leave an expired token file, but
+it cannot reconnect to a later invocation's endpoint.
+
+To verify the native image path without launching an agent, copy an image and
+run:
+
+```powershell
+.\dist\cc-clip-dev.exe bridge myserver --check
+```
+
+The diagnostic reports the remote window station, image dimensions, PNG SHA256,
+and the two native formats read by an independent child process. If port
+selection conflicts with a Windows excluded port range or another connection,
+retry or specify `--remote-port 18339` before `--`. An unavailable port stops
+startup instead of reusing another session's tunnel.
+
+## Experimental: Direct Remote Clipboard on Linux
 
 This section is for source builds and future explicit prereleases only. It is
 not part of the latest stable release.

@@ -225,38 +225,19 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 		return nil, fmt.Errorf("clipboard image is empty")
 	}
 
-	remoteHome, err := remoteHomeDir(host)
-	if err != nil {
-		return nil, err
-	}
-
-	remoteAbsDir := resolveRemoteDir(remoteHome, remoteDir)
 	ext := imageExt(info.Format)
-	filename, err := randomFilename(ext)
-	if err != nil {
-		return nil, err
-	}
-	remotePath := path.Join(remoteAbsDir, filename)
-
-	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
-		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
-	}
-
 	localPath, err := writeTempImage(data, ext)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := sshUploadNoForward(host, localPath, remotePath); err != nil {
+	result, err := uploadLocalFile(host, remoteDir, localPath)
+	if err != nil {
 		os.Remove(localPath)
-		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
+		return nil, err
 	}
-
-	return &uploadResult{
-		RemotePath:     remotePath,
-		LocalImagePath: localPath,
-		TempFile:       true,
-	}, nil
+	result.TempFile = true
+	return result, nil
 }
 
 func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
@@ -275,7 +256,11 @@ func uploadLocalFile(host, remoteDir, localFile string) (*uploadResult, error) {
 
 	remoteHome, err := remoteHomeDir(host)
 	if err != nil {
-		return nil, err
+		probe, probeErr := probeWindowsUploadHost(host)
+		if probeErr != nil {
+			return nil, fmt.Errorf("%w; Windows probe also failed: %v", err, probeErr)
+		}
+		return uploadWindowsFile(host, remoteDir, localFile, probe)
 	}
 
 	remoteAbsDir := resolveRemoteDir(remoteHome, remoteDir)
@@ -315,6 +300,9 @@ func remoteHomeDir(host string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve remote home: %w", err)
 	}
+	if nativeWindowsHomeProbe(out) {
+		return "", fmt.Errorf("native Windows host exposes a POSIX compatibility shell")
+	}
 	home, err := parseRemoteHome(out)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve remote home: %w", err)
@@ -322,12 +310,22 @@ func remoteHomeDir(host string) (string, error) {
 	return home, nil
 }
 
+// Git Bash exposes a POSIX home, but native agents need Windows paths. WSL's
+// Linux uname keeps the POSIX workflow even when Windows interop is enabled.
+func nativeWindowsHomeProbe(out string) bool {
+	if end := strings.Index(out, remoteHomeMarkerEnd); end >= 0 {
+		osName := strings.TrimSpace(out[end+len(remoteHomeMarkerEnd):])
+		return strings.HasPrefix(osName, "MSYS") || strings.HasPrefix(osName, "MINGW") || strings.HasPrefix(osName, "CYGWIN")
+	}
+	return false
+}
+
 // remoteHomeProbeCmd prints $HOME wrapped in sentinel markers and nothing else.
 // printf emits no trailing newline, so the text between the markers is exactly
-// $HOME. The markers let parseRemoteHome discard any banner lines emitted by
-// SSH or the remote login shell on the same stream.
+// $HOME, followed by uname to distinguish native Windows compatibility shells
+// from Linux/WSL. Markers isolate the home from any shell banners.
 func remoteHomeProbeCmd() string {
-	return "sh -lc 'printf " + remoteHomeMarkerStart + "%s" + remoteHomeMarkerEnd + ` "$HOME"'`
+	return "sh -lc 'printf " + remoteHomeMarkerStart + "%s" + remoteHomeMarkerEnd + ` "$HOME"; uname -s'`
 }
 
 // parseRemoteHome extracts the remote $HOME from probe output, tolerating

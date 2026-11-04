@@ -53,7 +53,9 @@ func (c *windowsClipboard) Type() (ClipboardInfo, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	if info, ok := c.cachedType(clipboardSequenceNumber()); ok {
+	seq := clipboardSequenceNumber()
+	if info, ok := c.cachedType(seq); ok {
+		info.Revision = seq
 		return info, nil
 	}
 
@@ -61,18 +63,19 @@ func (c *windowsClipboard) Type() (ClipboardInfo, error) {
 		return ClipboardInfo{}, err
 	}
 	defer closeClipboard()
+	seq = clipboardSequenceNumber()
 
 	switch {
 	case clipboardFormatAvailable(registeredPNGFormat()):
-		return ClipboardInfo{Type: ClipboardImage, Format: "png"}, nil
+		return ClipboardInfo{Type: ClipboardImage, Format: "png", Revision: seq}, nil
 	case clipboardFormatAvailable(cfDIBV5), clipboardFormatAvailable(cfDIB):
-		return ClipboardInfo{Type: ClipboardImage, Format: "png"}, nil
+		return ClipboardInfo{Type: ClipboardImage, Format: "png", Revision: seq}, nil
 	case clipboardFormatAvailable(cfUnicodeText):
-		return ClipboardInfo{Type: ClipboardText}, nil
+		return ClipboardInfo{Type: ClipboardText, Revision: seq}, nil
 	case clipboardFormatAvailable(cfText):
-		return ClipboardInfo{Type: ClipboardText}, nil
+		return ClipboardInfo{Type: ClipboardText, Revision: seq}, nil
 	default:
-		return ClipboardInfo{Type: ClipboardEmpty}, nil
+		return ClipboardInfo{Type: ClipboardEmpty, Revision: seq}, nil
 	}
 }
 

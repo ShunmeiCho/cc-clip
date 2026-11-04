@@ -57,7 +57,7 @@ func pasteRemotePath(guard *focusGuard, remotePath, imagePath string, delay time
 		}
 	}
 
-	if err := windowsSetClipboardText(remotePath); err != nil {
+	if err := windowsSetClipboardText(formatRemotePastePath(remotePath)); err != nil {
 		return err
 	}
 

@@ -32,13 +32,19 @@ type Session struct {
 }
 
 type Manager struct {
-	mu      sync.RWMutex
-	session *Session
-	ttl     time.Duration
+	mu        sync.RWMutex
+	session   *Session
+	ttl       time.Duration
+	ephemeral bool
 }
 
 func NewManager(ttl time.Duration) *Manager {
 	return &Manager{ttl: ttl}
+}
+
+// NewEphemeralManager never writes credentials while sliding expiration.
+func NewEphemeralManager(ttl time.Duration) *Manager {
+	return &Manager{ttl: ttl, ephemeral: true}
 }
 
 func (m *Manager) Generate() (Session, error) {
@@ -112,7 +118,9 @@ func (m *Manager) Validate(tok string) error {
 	if m.ttl > 0 && remaining < m.ttl/2 {
 		m.session.ExpiresAt = time.Now().Add(m.ttl)
 		// Best-effort persist; failure here is non-fatal.
-		_, _ = WriteTokenFile(m.session.Token, m.session.ExpiresAt)
+		if !m.ephemeral {
+			_, _ = WriteTokenFile(m.session.Token, m.session.ExpiresAt)
+		}
 	}
 
 	return nil

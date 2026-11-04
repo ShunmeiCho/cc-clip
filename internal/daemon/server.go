@@ -452,6 +452,28 @@ func (s *Server) ServeListener(listener net.Listener) error {
 	return s.httpServer().Serve(listener)
 }
 
+// ServeListenerContext closes accepted connections as well as the listener
+// when a temporary session ends, including authenticated keep-alive clients.
+func (s *Server) ServeListenerContext(ctx context.Context, listener net.Listener) error {
+	if err := requireLoopbackListener(listener.Addr()); err != nil {
+		listener.Close()
+		return err
+	}
+	server := s.httpServer()
+	done := make(chan struct{})
+	defer close(done)
+	defer server.Close()
+	go func() {
+		select {
+		case <-ctx.Done():
+			server.Close()
+		case <-done:
+		}
+	}()
+	log.Printf("cc-clip daemon listening on %s", listener.Addr())
+	return server.Serve(listener)
+}
+
 func (s *Server) httpServer() *http.Server {
 	return &http.Server{
 		Handler:           s.mux,
