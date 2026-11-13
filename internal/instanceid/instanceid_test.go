@@ -1,9 +1,12 @@
 package instanceid
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -76,15 +79,75 @@ func TestLoadOrCreateConcurrentCallersShareIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadOrCreateRejectsIncompleteExistingIdentity(t *testing.T) {
+func TestLoadOrCreateRejectsCorruptIdentityWithoutReplacingIt(t *testing.T) {
+	for _, tc := range []struct{ name, content string }{
+		{"empty", ""},
+		{"partial", "partial\n"},
+		{"non-hex", strings.Repeat("z", 64)},
+		{"short-hex", strings.Repeat("a", 62)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := tc.content
+			dir := t.TempDir()
+			path := filepath.Join(dir, fileName)
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, load := range []func(string) (string, error){Load, LoadOrCreate} {
+				id, err := load(dir)
+				if err == nil || id != "" {
+					t.Fatalf("corrupt identity accepted: id=%q err=%v", id, err)
+				}
+				for _, hint := range []string{strconv.Quote(path), "stop the daemon and managed tunnels", "restore a valid backup", "move this file aside and restart", "disabling/re-enabling", "--reset"} {
+					if !strings.Contains(err.Error(), hint) {
+						t.Fatalf("missing repair hint %q: %v", hint, err)
+					}
+				}
+			}
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != content || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) || before.Mode() != after.Mode() {
+				t.Fatal("corrupt identity was replaced or modified")
+			}
+		})
+	}
+}
+
+func TestLoadOrCreateHardLinkFailureLeavesIdentityUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, fileName)
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
+	linkErr := errors.New("filesystem does not support hard links")
+	id, err := loadOrCreate(dir, func(old, new string) error {
+		if new != path {
+			t.Fatalf("publish path = %q, want %q", new, path)
+		}
+		if _, err := read(old); err != nil {
+			t.Fatalf("temporary identity is incomplete at publication: %v", err)
+		}
+		return linkErr
+	})
+	if id != "" || !errors.Is(err, linkErr) {
+		t.Fatalf("hard-link failure: id=%q err=%v", id, err)
+	}
+	if !strings.Contains(err.Error(), strconv.Quote(path)) || !strings.Contains(err.Error(), "hard-link support") {
+		t.Fatalf("missing filesystem guidance: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := LoadOrCreate(dir); err == nil {
-		t.Fatal("LoadOrCreate accepted an incomplete instance-id file")
+	if len(entries) != 0 {
+		t.Fatalf("hard-link failure published an identity or left temporary files: %v", entries)
 	}
 }
 

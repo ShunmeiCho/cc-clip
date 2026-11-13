@@ -202,3 +202,21 @@ func TestDefaultStorePath(t *testing.T) {
 		t.Fatalf("unexpected store path %q", path)
 	}
 }
+
+func TestDescribeSpecDifferences(t *testing.T) {
+	persisted := Spec{Host: "old-host", Port: 18339, ExpectedInstanceID: "old-instance"}
+	if got := DescribeSpecDifferences(persisted, persisted); got != "" {
+		t.Fatalf("equal specs: %q", got)
+	}
+	requested := Spec{Host: "new-host", Port: 18340, ExpectedInstanceID: "new-instance"}
+	want := `host: persisted="old-host", requested="new-host"; port: persisted=18339, requested=18340; expected_instance_id: persisted="old-instance", requested="new-instance"`
+	if got := DescribeSpecDifferences(persisted, requested); got != want {
+		t.Fatalf("differences: %q", got)
+	}
+	requested = persisted
+	requested.Host = "host\nwith\"quotes"
+	got := DescribeSpecDifferences(persisted, requested)
+	if strings.ContainsAny(got, "\r\n") || !strings.Contains(got, `requested="host\nwith\"quotes"`) {
+		t.Fatalf("unescaped spec value: %q", got)
+	}
+}

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/shunmei/cc-clip/internal/token"
 	"github.com/shunmei/cc-clip/internal/tunnel"
+	"github.com/shunmei/cc-clip/internal/tunnelmgr"
 )
 
 func TestCmdTunnelProbeIdentity(t *testing.T) {
@@ -48,6 +51,52 @@ func TestCmdTunnelProbeIdentity(t *testing.T) {
 	state, identity := tunnel.ClassifyRemoteIdentityProbeOutput(out.String())
 	if state != tunnel.RemoteIdentityOK || identity.InstanceID != "instance-123" {
 		t.Fatalf("helper result = %q %+v; output=%s", state, identity, out.String())
+	}
+}
+
+func TestParseTunnelRunServiceArgs(t *testing.T) {
+	id := tunnelmgr.TunnelID("host")
+	for _, args := range [][]string{{"--id", id}, {"--id=" + id}} {
+		opts, err := parseTunnelRunOptions(args)
+		if err != nil || opts.id != id || opts.host != "" || opts.reset {
+			t.Fatalf("parse %v = %+v, %v", args, opts, err)
+		}
+	}
+	for _, args := range [][]string{
+		{"--id"}, {"--id="}, {"--id", "../host"}, {"--id", id, "host"},
+		{"--id", id, "--reset"}, {"--id", id, "--port", "18340"},
+		{"--port=18340", "--id=" + id}, {"--id", id, "--id", id},
+		{"host", "--port"}, {"host", "--port="}, {"host", "--port=0"},
+		{"host", "--port=65536"}, {"host", "--port=invalid"},
+	} {
+		if _, err := parseTunnelRunOptions(args); err == nil {
+			t.Fatalf("accepted invalid arguments %v", args)
+		}
+	}
+}
+
+func TestCmdTunnelRunDisabledServiceDoesNotInitializeIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("LaunchAgent specs use Unix permissions")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CC_CLIP_PORT", "invalid")
+	configs, err := tunnelmgr.DefaultServiceStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := tunnelmgr.ServiceConfig{SchemaVersion: 1, ID: tunnelmgr.TunnelID("host"), Enabled: false,
+		Spec: tunnelmgr.Spec{Host: "host", Port: 18399, ExpectedInstanceID: "persisted-instance"}}
+	if err := configs.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	cmdTunnelRun([]string{"--id", c.ID})
+	if _, err := os.Stat(filepath.Join(home, ".cache", "cc-clip", "instance-id")); !os.IsNotExist(err) {
+		t.Fatalf("service driver initialized installation identity: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cache", "cc-clip", "tunnel-runtime")); !os.IsNotExist(err) {
+		t.Fatalf("disabled service created runtime: %v", err)
 	}
 }
 
@@ -117,10 +166,16 @@ func TestTunnelUsageDocumentsCurrentLimitations(t *testing.T) {
 		`$HOME/.local/bin/cc-clip`,
 		`--use-remote-bin`,
 		`30-day sliding expiration`,
-		`token active while the supervisor runs`,
+		`identity probes do not renew`,
+		`actual clipboard requests keep their normal renewal behavior`,
+		`remote-token-invalid`,
+		`cc-clip connect <host> --token-only`,
 	} {
 		if !strings.Contains(usage, want) {
 			t.Errorf("tunnelUsage() missing %q", want)
 		}
+	}
+	if strings.Contains(usage, "token active while the supervisor runs") {
+		t.Fatal("help still claims monitoring keeps tokens alive")
 	}
 }

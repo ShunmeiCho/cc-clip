@@ -23,6 +23,8 @@ func TestMasterArgs(t *testing.T) {
 	for _, want := range []string{
 		"-M", "-N", "-T", "-S", "/ctl/dir/ctl-ab12.sock",
 		"BatchMode=yes",
+		"StrictHostKeyChecking=yes",
+		"ForkAfterAuthentication=no",
 		"ClearAllForwardings=yes",
 		"ExitOnForwardFailure=yes",
 		"ControlMaster=yes",

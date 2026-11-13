@@ -44,6 +44,23 @@ type Spec struct {
 	ExpectedInstanceID string `json:"expected_instance_id"`
 }
 
+// DescribeSpecDifferences compares only persisted configuration fields, in a
+// fixed order. Callers supply an explicit request or validated desired spec;
+// this function never resolves environment defaults or probes a daemon.
+func DescribeSpecDifferences(persisted, requested Spec) string {
+	var differences []string
+	if persisted.Host != requested.Host {
+		differences = append(differences, fmt.Sprintf("host: persisted=%q, requested=%q", persisted.Host, requested.Host))
+	}
+	if persisted.Port != requested.Port {
+		differences = append(differences, fmt.Sprintf("port: persisted=%d, requested=%d", persisted.Port, requested.Port))
+	}
+	if persisted.ExpectedInstanceID != requested.ExpectedInstanceID {
+		differences = append(differences, fmt.Sprintf("expected_instance_id: persisted=%q, requested=%q", persisted.ExpectedInstanceID, requested.ExpectedInstanceID))
+	}
+	return strings.Join(differences, "; ")
+}
+
 // Runtime is the supervisor's persisted runtime state. It is rebuildable
 // observability, not an authoritative desired-state record.
 type Runtime struct {
@@ -144,10 +161,7 @@ func (s *Store) Save(rec *Record) error {
 	if err := rec.Validate(); err != nil {
 		return fmt.Errorf("refusing to save invalid tunnel state: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), stateDirMode); err != nil {
-		return fmt.Errorf("create tunnel state dir: %w", err)
-	}
-	if err := os.Chmod(filepath.Dir(s.path), stateDirMode); err != nil {
+	if err := ensurePrivateDir(filepath.Dir(s.path)); err != nil {
 		return fmt.Errorf("secure tunnel state dir: %w", err)
 	}
 	data, err := json.MarshalIndent(rec, "", "  ")

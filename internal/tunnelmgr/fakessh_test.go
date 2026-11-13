@@ -38,6 +38,9 @@ if [ "$has_n" = "1" ]; then
   case "$FAKE_SSH_MODE" in
     authfail) echo "ssh: Permission denied (publickey,password)." >&2; exit 255 ;;
     hostkey)  echo "Host key verification failed." >&2; exit 255 ;;
+    configfail) echo "Bad configuration option: invalid-option" >&2; exit 255 ;;
+    secretfail) printf '%s\n' "$FAKE_SSH_SECRET" >&2; echo "Permission denied (publickey)." >&2; exit 255 ;;
+    connectfail) echo "ssh: connect to host fake-host: Connection refused" >&2; exit 255 ;;
     die)      [ -n "$cp" ] && echo $$ > "$cp"; sleep "${FAKE_SSH_UPTIME:-0}"; echo "Connection closed by remote host." >&2; exit 255 ;;
     *)        [ -n "$cp" ] && echo $$ > "$cp"; trap 'rm -f "$cp"; exit 0' TERM; while :; do sleep 0.05; done ;;
   esac
@@ -64,7 +67,11 @@ case "$op" in
     ;;
 esac
 case "$*" in
-  *probe-identity*) printf '%s' "${FAKE_SSH_IDENTITY_OUT:-cc-clip-identity:ok:{\"service\":\"cc-clip\",\"status\":\"ok\",\"protocol_version\":1,\"instance_id\":\"instance-123\"}}"; exit "${FAKE_SSH_IDENTITY_EXIT:-0}" ;;
+  *probe-identity*)
+    if [ -n "$FAKE_SSH_IDENTITY_HELPER" ]; then
+      exec "$FAKE_SSH_IDENTITY_HELPER" -test.run '^TestSupervisorDaemonIdentityHelper$'
+    fi
+    printf '%s' "${FAKE_SSH_IDENTITY_OUT:-cc-clip-identity:ok:{\"service\":\"cc-clip\",\"status\":\"ok\",\"protocol_version\":1,\"instance_id\":\"instance-123\"}}"; exit "${FAKE_SSH_IDENTITY_EXIT:-0}" ;;
 esac
 printf '%s' "$FAKE_SSH_PROBE_OUT"
 exit "${FAKE_SSH_PROBE_EXIT:-0}"

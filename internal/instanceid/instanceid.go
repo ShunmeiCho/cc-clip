@@ -13,9 +13,16 @@ import (
 
 const fileName = "instance-id"
 
+// Load reads an established identity without creating or repairing it.
+func Load(dir string) (string, error) { return read(filepath.Join(dir, fileName)) }
+
 // LoadOrCreate returns the stable random identity stored in dir. The file is
 // created once with mode 0600 and survives daemon restarts and upgrades.
 func LoadOrCreate(dir string) (string, error) {
+	return loadOrCreate(dir, os.Link)
+}
+
+func loadOrCreate(dir string, link func(string, string) error) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create instance-id directory: %w", err)
 	}
@@ -61,11 +68,11 @@ func LoadOrCreate(dir string) (string, error) {
 	// semantics without exposing a partially written final path. If another
 	// process wins the race, its linked file is already complete and safe to
 	// read; unlike rename, this never replaces an established installation ID.
-	if err := os.Link(tmpPath, path); err != nil {
+	if err := link(tmpPath, path); err != nil {
 		if os.IsExist(err) {
 			return read(path)
 		}
-		return "", fmt.Errorf("publish instance-id file: %w", err)
+		return "", fmt.Errorf("publish instance-id file %q: %w; check directory permissions and filesystem hard-link support", path, err)
 	}
 	return id, nil
 }
@@ -78,7 +85,7 @@ func read(path string) (string, error) {
 	id := strings.TrimSpace(string(data))
 	decoded, err := hex.DecodeString(id)
 	if err != nil || len(decoded) != 32 {
-		return "", fmt.Errorf("invalid instance-id file %s", path)
+		return "", fmt.Errorf("invalid instance-id file %q; stop the daemon and managed tunnels, then restore a valid backup or move this file aside and restart the daemon; a new identity requires explicitly disabling/re-enabling tunnel services or running foreground tunnels with --reset", path)
 	}
 	return id, nil
 }
