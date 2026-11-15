@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ bdc354dcc2876c6090756d9813465a66d28abcef -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -251,6 +251,8 @@ Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/w
 
 - **作用：**`cc-clip tunnel run myserver` 会维护一条到主机的私有 SSH 连接，由它持有粘贴用的
   隧道，并通过守护进程检查隧道状态，断开后按退避策略自动重连。
+  macOS 还支持通过每台主机独立的 LaunchAgent 在后台运行，使用
+  `tunnel enable/status/restart/disable/auth/logs` 管理。
 - **为什么：**平时是哪个 `ssh myserver` 先连上，隧道就归哪个会话。那个会话一关闭，或者在
   不稳定的网络上客户端消失而远程仍占着端口，粘贴就会失效，直到你找出并结束那个会话
   （参见[故障排查指南](docs/troubleshooting.md#stale-sshd-process-blocks-remoteforward)）。
@@ -262,13 +264,33 @@ Windows 支持仍处于实验阶段。请先使用 [Windows 快速开始](docs/w
   cc-clip tunnel run myserver        # 前台运行；按 Ctrl-C 停止
   ```
 
+  如果想改用 macOS 后台服务，先停止这台主机的前台隧道，确认本地 daemon 服务
+  正在运行，再执行下面的命令。
+
+  ```bash
+  cc-clip service status
+  cc-clip tunnel enable myserver
+  cc-clip tunnel status myserver
+  cc-clip tunnel logs myserver -n 50
+  ```
+
+  SSH 认证需要在 launchd 环境中通过，仅在终端登录成功还不够。具体要求见
+  [后台认证与故障恢复](docs/troubleshooting.md#managed-tunnel-service-experimental)。
+
 - **你会看到：**带时间戳的日志，例如 `managed tunnel state: healthy`，每次重连或等待时都会
   打印新的状态行。如果误在远程主机上运行，它会以 `identity-mismatch` 停止并说明原因。它不会
   修改你的 SSH 配置，所以每个 `ssh myserver` 仍会申请同一个端口，包括其他工具保持的后台连接。
   谁先拿到端口就由谁持有，supervisor 会报告 `port-conflict` 并等待。若想在试用期间让
   supervisor 独占端口，请在 `~/.ssh/config` 的 `Host myserver` 下注释掉 `RemoteForward` 那一行，
-  试用结束后再恢复。用 `--use-remote-bin` 设置的主机暂不支持；supervisor 运行期间，token 会
-  一直保持有效。
+  试用结束后再恢复。用 `--use-remote-bin` 设置的主机暂不支持。
+
+  后台模式下，`tunnel status myserver` 显示服务是否已启用、supervisor 是否在运行，
+  以及最近一次隧道检查的结果。它不会发起新的检查。用 `tunnel logs myserver -f`
+  持续查看日志，用 `tunnel disable myserver` 停止后台服务。
+
+  身份探测不会延长 token 的有效期，实际剪贴板请求仍会滑动续期。长期只监测隧道
+  而不使用剪贴板，token 仍会过期。恢复步骤见
+  [token 失效处理](docs/troubleshooting.md#token-expired-or-invalid)。
 
 ### 从主机上移除 cc-clip
 
@@ -368,6 +390,12 @@ Notifications
 | `cc-clip uninstall --host HOST` | 从主机上移除托管的 Claude hook 和 PATH 标记。请先在该主机上运行 `cc-clip uninstall`；参见[从主机上移除 cc-clip](#从主机上移除-cc-clip)。 |
 | `cc-clip uninstall --codex --host HOST` | 从主机上移除 Codex 支持：停止桥接器和 Xvfb，删除 Codex 的 `notify` 配置和显示设置。 |
 | `cc-clip tunnel run HOST` | **实验性。**由一条私有 SSH 连接持有并维护主机的粘贴隧道，断开后自动重连，而不是依赖先拿到端口的那个 `ssh` 会话。请在本机运行，不要在远程主机上运行。前台运行直到 Ctrl-C；需要先运行一次 `connect HOST --force`。`--reset` 清除已触发的崩溃循环保护。参见[让隧道自行保持连接](#让隧道自行保持连接-实验性)。 |
+| `cc-clip tunnel enable HOST [--port N]` | **实验性，本地 macOS。**验证后台 SSH 认证，启用并启动该主机的隧道服务。SSH 配置保持原样。 |
+| `cc-clip tunnel status [HOST] [--port N]` | **实验性，本地 macOS。**显示服务设置、进程和最近一次检查结果。`--port` 只比较请求值与保存值，不修改配置。 |
+| `cc-clip tunnel restart HOST` | **实验性，本地 macOS。**检查配置和认证后重启服务。修复 crash-loop 的原因后可用它重新启动。 |
+| `cc-clip tunnel disable HOST` | **实验性，本地 macOS。**停止服务并取消自动启动。保留配置、运行记录和日志供排查。 |
+| `cc-clip tunnel auth HOST` | **实验性，本地 macOS。**先在终端完成 SSH 认证，再检查后台认证。只恢复已启用的服务。 |
+| `cc-clip tunnel logs HOST [-n N] [-f]` | **实验性，本地 macOS。**显示最近 N 行日志（默认 200）。`-f` 持续显示新增日志，Ctrl-C 停止。 |
 
 **在本地机器上：守护进程和本机安装**
 
@@ -424,8 +452,10 @@ cc-clip doctor --host myserver
 
 最常见的三个修复方法是：
 
-- **隧道不可用：**保持一个新的 `ssh myserver` 会话打开。
-  `RemoteForward` 仅在 SSH 连接持有它时存在。
+- **隧道不可用：**使用旧的交互转发时，保持一个新的 `ssh myserver` 会话打开。
+  如果运行的是前台 `tunnel run myserver`，查看该终端的状态输出和错误信息。
+  后台服务通过 `tunnel status myserver` 和 `tunnel logs myserver` 排查。
+  旧转发与托管隧道使用同一远程端口时可能冲突。
 - **守护进程重启后 token 被拒绝：**运行
   `cc-clip connect myserver --token-only`。
 - **Codex 没有剪贴板：**打开新的 SSH 会话，以加载注入的 `DISPLAY`；
