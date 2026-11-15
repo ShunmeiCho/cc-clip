@@ -1,6 +1,6 @@
 ---
 created_at: "2026-07-15T13:32:13+08:00"
-updated_at: "2026-09-29T16:00:50+08:00"
+updated_at: "2026-11-13"
 ---
 
 # cc-clip 托管式持久 SSH 隧道设计
@@ -10,7 +10,9 @@ updated_at: "2026-09-29T16:00:50+08:00"
 > **状态**：方向已获维护者同意。Phase 1A 已在 PR
 > [#165](https://github.com/ShunmeiCho/cc-clip/pull/165) 的最终审查提交
 > `c736247` 中实现，通过自动化、升级兼容性和真实主机验证，并已获维护者批准；
-> Phase 1B 及后续阶段尚未实现。
+> 当前分支已完成 Phase 1B 服务与生命周期实现，范围见 §0.2 和 §14。
+> 历史实机验收和重放后的自动化复验记录见 §15.4。
+> 迁移 PR 和后续阶段尚未实现。托管隧道仍为 experimental。
 >
 > **决策优先级**：本文保留完整设计背景和演进记录；如果本文与 issue
 > [#108](https://github.com/ShunmeiCho/cc-clip/issues/108) 中维护者确认的决定存在
@@ -19,7 +21,7 @@ updated_at: "2026-09-29T16:00:50+08:00"
 >
 > **原始评审基线**：2026-08-30，基于 `main@c43295c`、issue
 > [#108](https://github.com/ShunmeiCho/cc-clip/issues/108) 的维护者回复、关联的
-> issue/PR，以及当时的主分支代码复核。实现状态更新见 §0.1 和 §15.0。
+> issue/PR，以及当时的主分支代码复核。实现与验证更新见 §0.1、§0.2 和 §15。
 
 **适用范围**：遵循 README 当前稳定路径——本机为 macOS
 13+，远端为 Linux（amd64/arm64），远端具备 `curl`、`bash` 以及 `xclip` 或
@@ -46,8 +48,9 @@ service manager、SSH backend 或 probe fallback。
    manager 和 supervisor 无法认证时的可用模式；
 3. `setup` 不得在 `reconnecting`、`auth-required`、`crash-loop`
    等状态经过真实主机观察前默认启用托管模式，已有 host 无论何时都不得静默迁移；
-4. 原 Phase 1 拆成两个 PR：先提交可手工驱动的 supervisor、SSH backend 和
-   state store，再提交 LaunchAgent、迁移与回滚；原 Phase 2、Phase 3 保持边界；
+4. 原 Phase 1 先提交可手工驱动的 supervisor、SSH backend 和 state store
+   （Phase 1A，已完成）；2026-10-01 的最新共识进一步将 Phase 1B 拆成服务/生命周期
+   和迁移两个 PR；原 Phase 2、Phase 3 保持边界；
 5. 状态必须穷尽且 fail closed，任何无法确定的探测结果保留独立状态，不能折叠成
    boolean 或邻近的成功/失败状态；
 6. legacy `RemoteForward` 的恢复不能只依赖 journal；journal 丢失或损坏时也必须有
@@ -69,6 +72,9 @@ per-host LaunchAgent、`tunnel` 命令组、迁移器或回滚事务。已落地
 GitHub 在 #108 时间线中显示 #20/#135，是因为 #135 明确写到未来更深的 connect
 解耦最可能由 #108 的 supervisor 驱动。#135 同时明确声明没有签名变化、没有新 seam、
 没有行为变化，因此该关联只代表前置整理，不代表 Phase 1 已开始实现。
+
+§0.1 保留 Phase 1A 的交付记录。当前服务 PR 的实现范围见 §0.2 和 §14，
+验收构建、结果及覆盖边界见 §15.4。
 
 ### 0.1 2026-09-29 实现状态更新
 
@@ -103,6 +109,17 @@ PR #165 的最终审查提交 `c736247` 已实现 Phase 1A，并获维护者 `AP
 
 “Phase 1A 已实现”只描述 PR #165 的功能边界，不表示 Phase 1B/2/3 已实现，也不表示
 §15 中跨后续阶段的完整验收矩阵已全部通过。
+
+### 0.2 Phase 1B 服务 PR 实现状态（2026-11-13）
+
+维护者在 [#108 的回复](https://github.com/ShunmeiCho/cc-clip/issues/108#issuecomment-5925364328)
+中将 Phase 1B 拆成服务与迁移两个 PR。当前服务 PR 提供 macOS 的
+`tunnel enable/status/restart/disable/auth/logs`，并将 identity probe 改为认证但
+不续期。交付范围和迁移 PR 的后续工作见 §14。
+
+§5 至 §13 保留完整设计目标，并在相关位置注明当前服务 PR 的实现。
+验收记录集中在 §15.4，分别标明自动化、本地 launchd fixture、真实远端和
+文件系统验证的范围及对应构建。
 
 ## 1. 为什么需要重新设计
 
@@ -317,12 +334,13 @@ $ cc-clip setup example-host --all
 ... legacy mode remains available ...
 
 $ cc-clip tunnel enable example-host
-[tunnel] installed and healthy
+$ cc-clip tunnel status example-host
 
 $ ssh example-host
 ```
 
-以后关闭任意 SSH 窗口或新开多个 SSH tab，都不影响 cc-clip tunnel。
+`enable` 只确认服务已启用，仍需通过 `status` 和日志核对隧道是否健康。
+完成迁移后，关闭任意 SSH 窗口或新开多个 SSH tab，都不影响 cc-clip tunnel。
 
 PR #165 已在真实主机上记录 `reconnecting`、`auth-required` 和 `crash-loop` 的进入与
 恢复，满足维护者为未来 default-on 讨论提出的证据前提；这不自动改变产品默认值。
@@ -332,39 +350,40 @@ PR #165 已在真实主机上记录 `reconnecting`、`auth-required` 和 `crash-
 
 ### 5.2 管理命令
 
-建议新增独立命令组，不把运行状态隐藏在 `connect` 中：
+下面的实验性服务命令均在运行本地 daemon 的 macOS 上执行。命令不修改 SSH
+配置，运行情况可通过 `status` 和 `logs` 查看。
 
 ```console
 cc-clip tunnel enable <host> [--port <port>]
                                       # 创建状态并安装/启动 LaunchAgent
-cc-clip tunnel status [<host>]     # 显示期望状态、进程状态和端到端健康
+cc-clip tunnel status [<host>]     # 显示服务设置、进程和最近健康观测
 cc-clip tunnel restart <host>      # 重启该 tunnel 的 LaunchAgent 并重建 SSH child
 cc-clip tunnel auth <host>         # 前台刷新认证并在 service 环境复验
-cc-clip tunnel disable <host>      # 停止服务并移除该 host 的持久配置
+cc-clip tunnel disable <host>      # 持久禁用并移除 job；保留配置/runtime/日志
 cc-clip tunnel logs <host>         # 给出或跟随该 host 的日志
-cc-clip tunnel restore-legacy <host> [--port <port>]
-                                    # 即使 journal 丢失也恢复最小 legacy forward
 ```
 
-Phase 1A 当前提供前台/manual 入口：
+`restore-legacy` 留给 Phase 1B 迁移 PR，当前分支尚未实现。
+
+Phase 1A 的前台/manual 入口继续可用。
 
 ```console
 cc-clip tunnel run <host> [--port <port>] [--reset]
 ```
 
-该入口直接从 host 和本地 daemon identity 构造当前 Phase 1A spec，用于手动验证
-supervisor 生命周期；`--reset` 只用于显式清除已确认的 crash-loop 熔断状态。它不写
-SSH config，也不安装 service。Phase 1B 接入 LaunchAgent 时仍需增加基于持久 spec
-标识的稳定内部入口；不能把当前 manual 参数形式直接视为已经完成的 service 接口。
+该入口直接从 host 和本地 daemon identity 构造 spec，用于前台运行 supervisor。
+`--reset` 按当前 spec 重建 runtime，可清除 crash-loop 熔断状态。本地 identity
+变化后，也可用它显式更新期望身份。它不写 SSH config，也不安装 service。
+当前服务 PR 已提供实验性内部入口 `tunnel run --id <tunnel-id>`，读取持久
+启用配置。该形式与 host、`--port`、`--reset` 互斥。
 Phase 1A 同时接受 `--port <port>` 和 `--port=<port>`。
 
-`tunnel enable --port` 是 §9.2 effective daemon
-port 解析链中的显式最高优先级输入。`tunnel restart` 不修改 spec 或 migration
-journal：supervisor 正在运行时通过 `launchctl kickstart -k`
-重启该 LaunchAgent；supervisor 已因 `crash-loop`/`config-error`
-退出时，先清除可恢复的 circuit-breaker runtime 状态，再 bootstrap/kickstart
-LaunchAgent。配置仍不可解析时重新落入
-`config-error`，不能靠 restart 绕过 schema 或安全校验。
+当前服务 PR 新建服务时，端口依次优先使用 `--port`、已安装 daemon 的端口、
+`CC_CLIP_PORT`，最后使用 18339。再次 enable 已启用的服务会复验已有配置，
+请求不同端口时明确报错。`tunnel restart` 先校验配置、runtime/schema、本地 identity 和后台
+认证，再停止旧 job、等待 lifetime lock 释放、重置有效 runtime 并重新安装启动。
+损坏或不支持的 schema、权限及 identity 问题需要先修复，再显式重启。
+迁移 PR 才增加 §9.2 的端口来源和 journal 契约。
 
 ### 5.3 setup 的目标行为与决策边界
 
@@ -462,6 +481,11 @@ const (
 每个 enabled tunnel spec 对应一个当前用户权限下的 LaunchAgent，统一执行
 `cc-clip tunnel run --id <tunnel-id>`。launchd 只负责登录启动和 supervisor 意外退出后的兜底拉起；SSH
 child 的健康检查与重连由 cc-clip supervisor 负责。
+
+当前服务 PR 的 job 与本地 daemon 分开管理。日志保存在
+`~/Library/Logs/cc-clip/tunnels/<tunnel-id>.log`，目录权限为 0700，文件为 0600。
+停止服务时会在规定时间内清理自己创建的 SSH 进程和 control socket，保留配置、
+runtime 和日志供排查。并发控制与配置存储见 §10。
 
 LaunchAgent 扩大了运行面，也把错误从当前终端移到后台：job 可能未加载，SSH
 可能在无 TTY 的 service context 中等待无法显示的 keychain/passphrase 交互，host
@@ -663,10 +687,17 @@ endpoint 前，不应通过真实 clipboard fetch 做周期性强验证。
 硬链接发布，因此并发创建者不能覆盖胜出者，也不会暴露半写入的最终文件。若已有
 `instance-id` 为空或内容无效，Phase 1A 不会自行修复：`serve` 继续以 identity
 unavailable 降级启动，`/health` 保持 200，未认证 `/tunnel/identity` 保持 401，经过
-认证的 `/tunnel/identity` 返回 503。用户需删除损坏文件并重启，或由后续修复命令
-处理。无法创建硬链接的 token 目录（例如部分 FUSE/exFAT）同样会保持 identity
+认证的 `/tunnel/identity` 返回 503。Phase 1B 的 identity 后续项保留这一降级行为，
+警告会给出文件路径和修复步骤。先停止 daemon 和 managed tunnels，
+恢复有效备份，或移走损坏文件后重启 daemon。若创建了新 identity，必须显式
+disable/re-enable 各 tunnel service，或通过 `tunnel run --reset` 更新前台 tunnel
+的期望值；不能静默轮换 identity 或把普通 restart 当作重新绑定。完整操作步骤见
+[故障排查文档](../troubleshooting.md#tunnel-identity-unavailable)。
+无法创建硬链接的 token 目录（例如部分 FUSE/exFAT）同样会保持 identity
 unavailable；这是已知兼容性限制，不得回退到可能暴露部分写入或覆盖既有 identity
-的发布方式。
+的发布方式。发布失败会提示检查目录权限和硬链接支持；用户文档说明将 token/identity
+目录放在支持硬链接的文件系统上，并在迁移时保留已有 identity 和凭据。已有有效
+identity 的读取不需要硬链接。
 
 所有 enable 路径都必须在写入 enabled spec、修改 SSH
 config 或安装 LaunchAgent 前，用本地 token 请求本地 identity
@@ -689,9 +720,10 @@ Phase 1A 固定从 `$HOME/.local/bin/cc-clip` 调用 helper，因此通过
 
 能力边界需要分别报告：建立 SSH master 和 reverse
 forward 不要求升级远端二进制；公开 `/health` 可由远端 `curl`
-验证；交付级 identity 校验要求支持认证 probe 的远端 helper。SSH 配置所有权迁移可以在 transport 建立后独立提交，但缺少最后一项能力时运行状态仍为
-`identity-helper-missing` 或 `identity-endpoint-unavailable`，不能对用户宣称托管模式
-已经 `healthy`。`connect`/`setup`
+验证；交付级 identity 校验要求支持认证 probe 的远端 helper。按维护者最新共识，
+迁移 PR 只有在 managed forward 持有端口并通过完整本地及远端 identity 检查后才
+提交 ownership。缺少 helper、identity 不可用或 token 被拒绝时不得提前提交迁移，
+也不能对用户宣称已经 `healthy`。当前服务 PR 不写 SSH config 或迁移 journal。`connect`/`setup`
 可以编排远端 helper 部署后再调用 enable，但 helper 部署成败不写入本地迁移 journal。
 
 ### 7.2 状态分类
@@ -719,14 +751,14 @@ forward 不要求升级远端二进制；公开 `/health` 可由远端 `curl`
 
 | 当前状态                                                                             | 默认动作与间隔                                                                                                                                                                                                                                                                         |
 | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `healthy`                                                                            | 每 60 秒执行一次四项检查；用户执行 status/doctor 时可立即检查                                                                                                                                                                                                                          |
+| `healthy`                                                                            | 每 60 秒执行一次四项检查；status 只读显示最近观测，不发起新检查                                                                                                                                                                                                                          |
 | `local-daemon-down`                                                                  | 每 15 秒只检查本地 daemon，恢复前不创建 SSH child                                                                                                                                                                                                                                      |
 | `auth-required` / `host-key-error`                                                   | 每 5 分钟做一次 service-context 预检，并允许 `tunnel auth` 立即触发                                                                                                                                                                                                                    |
 | `remote-down` / `remote-stale`                                                       | 每 15 秒复验 public health，并先利用本地 daemon 与 `-O check` 区分失败域；不能只靠重启 master 碰运气                                                                                                                                                                                   |
 | `remote-unverified` / `remote-unknown`                                               | 每 60 秒复验 public probe，保留原始分类，不在未知时报告成功                                                                                                                                                                                                                            |
 | `identity-helper-missing` / `identity-endpoint-unavailable` / `remote-token-invalid` | 每 60 秒复验对应 capability/identity，不重建健康的 SSH master                                                                                                                                                                                                                          |
 | `identity-mismatch`                                                                  | fail closed 并停止当前 supervisor；等待用户核对本地 identity、spec 与端口归属后显式修复                                                                                                                                                                                                |
-| `port-conflict`                                                                      | master 健康时每 45 秒只重试 bind；bind 成功即提交 pending ownership 迁移，再由 identity 决定进入 `healthy`、identity capability 状态或 token 错误。若 `-O check` 或重试前的 SSH 操作失败，则按原因转为 `reconnecting`、`auth-required` 或 `host-key-error`，不继续沿用 conflict 定时器 |
+| `port-conflict`                                                                      | master 健康时每 45 秒只重试 bind；bind 成功后继续完整 identity 检查，检查通过才允许提交 pending ownership 迁移；失败不得提交。运行状态分别进入 `healthy`、identity capability 状态或 token 错误。若 `-O check` 或重试前的 SSH 操作失败，则按原因转为 `reconnecting`、`auth-required` 或 `host-key-error`，不继续沿用 conflict 定时器 |
 | `reconnecting`                                                                       | 只按 SSH 指数退避重建 master；master 建立前不执行远端 HTTP probe                                                                                                                                                                                                                       |
 | `config-error` / `crash-loop`                                                        | 不自动重试，等待显式 repair/restart                                                                                                                                                                                                                                                    |
 
@@ -903,17 +935,16 @@ marker，因此不能假定所有同名配置都属于 cc-clip。迁移采用保
    `port-conflict`，提示用户关闭精确识别出的旧连接；supervisor 保留健康 master
    并每 45 秒自动重试 bind，不要求用户再次执行 continue，也不自动终止进程；
    master 自身失败时转入对应的 SSH 失败状态；
-10. 托管 service 成功建立 master、绑定远端端口且本地 daemon 仍健康后即可提交 tunnel
-    ownership 迁移；远端 public health 和 authenticated
-    identity 另行决定运行状态是否达到
-    `healthy`。这样迁移不依赖远端工具版本，同时也不会把未验证身份的通路报告为
-    健康。transport 建立失败或用户取消时停止新 service，并从 backup 恢复 SSH
-    config。
+10. managed forward 必须持有远端端口，并且本地 identity、经 forward 返回的
+    远端 identity 和公开 health 均通过一次完整端到端检查，才可提交 ownership
+    迁移。提交前发生 transport、认证、helper、identity 检查失败或用户取消时，
+    停止新 service 并恢复 SSH config。提交后的 ownership 与持续运行的 health
+    分别展示；不能仅凭 bind 成功或本地 health 提前提交。
 
-配置文件已经写入但 transport 尚未成功绑定的阶段属于迁移事务的“待提交”状态，
-需要在 state 文件中记录。若进程或机器在此阶段崩溃，下次 setup/doctor 必须根据
-backup、service、master 与 bind 状态决定继续提交或回滚，不能仅凭配置文件内容
-猜测迁移已完成。
+配置文件已经写入但 forward 尚未持有端口或完整 identity 检查尚未通过时，仍属于
+迁移事务的“待提交”状态，需要在 state 中记录。若此时崩溃，恢复路径须根据
+backup、service、master、bind 和 identity 检查决定继续提交或回滚，不能仅凭
+配置文件内容或端口绑定猜测迁移已完成。
 
 新版本若仍需要写 SSH 配置，必须使用明确的 managed block
 marker 或独立状态记录，避免再次出现无法判定归属的迁移。
@@ -971,9 +1002,9 @@ host，且 updater 没有足够上下文确认每条 forwarding 的归属。安�
 
 本设计保持远端 loopback port 和既有公开 HTTP
 health 协议不变，因此“把隧道从交互 SSH 迁移到 supervisor”本身不要求重新部署远端 shim/bridge。新增 authenticated
-identity 是交付级验证能力：旧远端可以先完成 tunnel ownership 迁移并进入
-`identity-helper-missing`，但只有通过现有 connect/redeploy 流程部署新版 helper 后
-才能达到 `healthy`。setup 可以按发布策略提示或编排该部署，迁移 journal 仍只记录
+identity 是交付级验证能力。旧远端缺少 helper 时，须先通过现有 connect/redeploy
+流程部署新版 helper，完整 identity 检查通过后才能提交 tunnel ownership 迁移。
+在此之前不能只凭 transport 成功提交。setup 可以按发布策略提示或编排该部署，迁移 journal 仍只记录
 本地 SSH config/service 事务，两类升级不能混为一次隐式操作。
 
 #### v0.9.0/v0.9.1 → T
@@ -983,9 +1014,9 @@ identity 是交付级验证能力：旧远端可以先完成 tunnel ownership �
 2. 新二进制发现 `tunnels.json` 不存在、`hosts.json` 存在且目标 Host
    block 含 legacy `RemoteForward`，将该 host 标为“待迁移”，但不自动修改配置。
 3. 用户针对该 host 触发迁移后，新版本执行后台认证预检、写入 migration
-   journal、移除 legacy forward、启动 service 并验证 transport/public
-   health；若缺少新版 identity helper，另行提示 redeploy 且状态保持
-   `identity-helper-missing`。
+   journal、移除 legacy forward、启动 service 并验证 transport/public health
+   与本地/远端 identity；缺少新版 helper 时提示独立 redeploy，不提交迁移，
+   并按 §9.2 恢复配置。
 4. `hosts.json` 中的 `Codex bool` 和 `LastDeployedVersion`
    仅用于展示历史信息，不能被解释为当前应执行 `--codex` 或
    `--all`；隧道迁移不触发远端 redeploy。
@@ -1029,6 +1060,15 @@ block；反向迁移只恢复 cc-clip 自己移除的行。若上下文已变化
 journal。进程在任一步骤崩溃后，新版本的 updater/doctor 应能判断当前处于 managed、legacy 还是切换中状态，并完成提交或回滚。
 
 ## 10. Host 身份与状态存储
+
+当前服务 PR 按用户输入的 SSH 目标名生成 `tunnel-id`，每个别名有独立的 job
+和状态。启用配置保存在 `~/.cache/cc-clip/tunnel-specs/<tunnel-id>.json`，runtime
+保存在 `~/.cache/cc-clip/tunnel-runtime/<tunnel-id>.json`，目录权限为 0700，文件
+为 0600。启用配置是权威来源，管理操作串行执行，同一隧道只允许一个 supervisor。
+`status` 只读展示设置、job/进程及最近健康观测，配置差异列出字段与保存值、请求值。
+
+下文的 `tunnels.json`、跨别名 canonical identity、迁移状态及配置来源诊断属于
+完整设计目标，当前服务 PR 使用上述独立文件，后续再接入 canonical registry。
 
 现有 `~/.cache/cc-clip/hosts.json` 以用户输入的命名 SSH `Host`
 为 key，适合记录部署历史，但不适合直接作为 tunnel runtime
@@ -1176,6 +1216,8 @@ mismatch，并要求显式 reconfigure，避免 supervisor 和 daemon 各自使�
   key 接受或 host key 变更诊断，随后再次运行 service-context `BatchMode=yes`
   预检；只有复验成功才 restart
   supervisor。它不收集、保存或转发用户密码，也不自动接受或替换 host key。
+  当前服务 PR 使用临时 LaunchAgent 执行复验；失败时保留已有服务设置。
+  `auth` 只恢复原先已启用的服务，已禁用或尚未配置的服务保持禁用。
 - 不设置 `StrictHostKeyChecking=no`，不自动删除 `known_hosts` 条目。
 - 不启用 agent forwarding、X11 forwarding 或远端 shell；master 使用 `-N -T`。
 - reverse listener 显式绑定远端 `127.0.0.1`，不得依赖服务端 `GatewayPorts`
@@ -1187,10 +1229,9 @@ mismatch，并要求显式 reconfigure，避免 supervisor 和 daemon 各自使�
   socket 限制。
 - 健康检查与重连不得绕过现有 clipboard token/notification nonce 边界。
 
-Phase 1A 的 authenticated identity probe 使用普通 token 校验，因此也算作一次 token
-使用，并可能触发 30 天 sliding expiration。由于 Phase 1A 只能由用户在前台手动运行，
-该行为按维护者决定先文档化接受；Phase 1B 引入常驻 LaunchAgent 前，identity probe
-必须改为不延长 token 有效期，避免后台探测让 token 永不过期。
+Phase 1A 的 authenticated identity probe 曾使用普通 token 校验，并可能触发
+30 天 sliding expiration，当时按维护者决定先文档化接受。当前 Phase 1B 分支
+已将 identity 端点改为认证但不续期（§0.2），实际剪贴板请求保留滑动续期语义。
 
 托管 reverse forward 会让远端 loopback
 listener 从“某个交互 SSH 存活期间”扩展为“用户启用 tunnel 的整个期间”，因此暴露窗口更长；在多人共享的远端主机上，其他本机用户或进程可能持续尝试访问该端口。公开
@@ -1306,13 +1347,14 @@ bridge 和已经运行的远端进程。端口随会话变化后，“哪个 end
 
 ## 14. 实施阶段
 
-各阶段只增加能力，不重复实现 supervisor 或迁移器。按照维护者要求，原 Phase 1
-拆成两个独立、可审查的 PR：
+各阶段只增加能力，不重复实现 supervisor 或迁移器。Phase 1A 已交付；按维护者
+2026-10-01 的决定，Phase 1B 再拆成两个 PR。
 
 | 阶段     | 触发入口                                              | SSH config 范围                                                | journal/回滚范围                                                                                     |
 | -------- | ----------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Phase 1A | 手工/前台驱动 `tunnel run` 或测试 harness             | 不修改 SSH config                                              | 只持久化 spec/runtime；无迁移副作用                                                                  |
-| Phase 1B | 用户显式执行 `tunnel enable/disable/auth/restart`     | 仅精确定位的主配置 `Host` block；effective config 残留则停止   | `none/pending/committed`、backup、失败恢复、disable 精确反向操作，以及无 journal 的 `restore-legacy` |
+| Phase 1B 服务 PR | 显式执行六个实验性 service 命令                       | 不编辑 SSH config；可手动注释 legacy forward 或试用空闲端口    | 无迁移 journal；持久 enabled spec 与独立 runtime；已实现并完成适用实机验收，见 §15.4                     |
+| Phase 1B 迁移 PR | 在服务 API 上接入显式迁移                             | 仅精确定位的主配置 `Host` block；effective 残留则停止          | 完整 identity 检查后才提交，此前失败回滚；journal、backup、disable 精确恢复及 `restore-legacy`；尚未实现 |
 | Phase 2  | setup 复用同一个 enable API，扩展 doctor/历史版本适配 | 增加旧版本 fixture、Include/通配来源诊断；仍不盲目改写未知文件 | 复用 Phase 1B journal，补齐幂等恢复和诊断，不另建 migrator                                           |
 | Phase 3  | update/downgrade 联动                                 | 跨 `T` 恢复 legacy directive                                   | `rollback-pending`、二进制/service/config 联合事务恢复                                               |
 
@@ -1335,15 +1377,25 @@ bridge 和已经运行的远端进程。端口随会话变化后，“哪个 end
 - 已通过自动化和真实 Linux host 证据验证核心生命周期、fail-closed 状态分类、升级
   兼容性及 token-invalid 恢复；验证边界详见 §15.0。
 
-### Phase 1B：LaunchAgent、opt-in 迁移与回滚
+### Phase 1B 服务 PR（当前分支）
 
-- 新增 `tunnel enable/status/restart/disable/auth/logs/restore-legacy`；
-- 实现 per-host macOS LaunchAgent `ServiceManager`、service-context 认证预检和后台
-  可观测性；
-- `tunnel enable <host>` 在显式确认后移除最小 legacy `RemoteForward`，写入
-  `none → pending → committed` journal，并在失败时回滚；
-- `restore-legacy` 在 journal 完整时精确恢复，在 journal 丢失/损坏时保守重建一条
-  最小 legacy forward；两种路径都不触碰无关用户 forward；
+- 已实现 `tunnel enable/status/restart/disable/auth/logs` 和 `run --id`；
+- 已实现 per-host macOS LaunchAgent、真实 service-context 认证预检及后台可观测性；
+- 已实现 enabled spec、独立 runtime、并发/幂等控制、有界清理及诊断；
+- identity probe 认证但不续期，保留实际 clipboard 请求的滑动续期；
+- 已补齐配置差异、本地执行位置、损坏 identity 与硬链接限制的指引及中日文 README；
+- 不改写 SSH config，不迁移/恢复 `RemoteForward`，不改变 setup/update 默认行为；
+- 已完成适用实机验收，自动化、真实 launchd fixture 与完整实机证据的边界见 §15.4。
+
+### Phase 1B 迁移 PR（尚未实现）
+
+- 复用服务 API，显式确认后仅删除可精确归属的 legacy `RemoteForward`；
+- 写入 `none → pending → committed` journal；managed forward 持有端口且完整
+  本地/远端 identity 检查通过之后才提交，此前任一失败恢复配置；
+- handover 覆盖另一工具的持久 SSH 连接占用端口；冲突分类仅作只读诊断；
+- 只回收 PID、启动时间与 control path 均验证的旧 cc-clip 本地 child，永不杀远端 sshd；
+- `restore-legacy` 在 journal 完整时精确恢复，丢失/损坏时保守重建最小 legacy
+  forward；不触碰无关用户 forward；
 - 不在 setup/update 中自动迁移，不要求用户放弃永久支持的 legacy 模式。
 
 ### Phase 2：安全迁移与 setup 集成
@@ -1366,6 +1418,9 @@ bridge 和已经运行的远端进程。端口随会话变化后，“哪个 end
 - 跨能力边界降级时恢复 legacy directive；旧交互模式永久支持，不设置弃用期限。
 
 ## 15. 测试计划与验收标准
+
+§15.1 至 §15.3 列出完整设计的测试目标，覆盖服务、迁移和后续阶段。
+当前服务 PR 的自动化覆盖、实机记录与执行边界见 §15.4。
 
 ### 15.0 Phase 1A 最终验证快照（2026-09-29）
 
@@ -1529,6 +1584,163 @@ bridge 和已经运行的远端进程。端口随会话变化后，“哪个 end
 - 旧配置迁移可回滚且不影响非 cc-clip SSH forward；journal 丢失时仍可通过一条
   文档化命令恢复最小 legacy 配置。
 
+### 15.4 Phase 1B 服务 PR 验证与验收记录
+
+本节记录服务 PR 的自动化、本地 launchd fixture、真实远端和文件系统验证。
+各项结果注明执行方式、对应构建及覆盖边界。迁移 PR 的范围见 §14，托管隧道
+仍为 **experimental**。
+
+#### 15.4.1 自动化覆盖与检查要求
+
+现有测试使用隔离状态，按场景替换 SSH 或 launchctl。真实 daemon 的 token 测试
+使用实际 HTTP 和 token 文件，但仍替换 SSH，不构成真实主机转发证据。
+
+| 验收要求                                  | 代表性测试                                                                                                                                                                       | 验证方式                |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| enable/disable、启用失败回滚及 host 隔离  | `TestTunnelEnablePreflightPersistenceAndIdempotence`、`TestTunnelEnableFailureDoesNotEnableJob`、`TestTunnelDisablePersistsBeforeStopAndIsolatesHosts`                           | 自动化                  |
+| 并发管理及重复 runner 排除                | `TestTunnelConcurrentEnableAndDisableAreSerialized`、`TestRunServiceExcludesDuplicateSupervisor`                                                                                 | 自动化                  |
+| 认证或 host-key 失败保持启用意图          | `TestTunnelAuthFailurePreservesServiceAndConfiguration`、`TestTunnelAuthenticationPreflightContextAndCleanup`                                                                    | 自动化                  |
+| daemon 健康门闩及低频认证等待             | `TestSupervisorLocalDaemonGatePreventsSSHStart`、`TestSupervisorAuthRequiredUsesAttentionWait`                                                                                   | 自动化                  |
+| crash-loop 恢复及无效 runtime/schema 拒绝 | `TestTunnelRestartRecoversOnlyValidatedRuntime`、`TestRunServiceConfigurationErrorDoesNotRelaunch`、`TestSupervisorCrashLoopStopsRestarting`                                     | 自动化                  |
+| token 拒绝、原地修复及 probe 不续期       | `TestSupervisorTokenRepairWithRealDaemonDoesNotRenew`、`TestTunnelIdentityDoesNotRenewTokenButClipboardStillDoes`、`TestTunnelIdentityAuthenticationStillFailsClosed`            | 真实 HTTP；替换 SSH     |
+| 配置差异及只读 status                     | `TestTunnelStatusReportsRuntimeSpecDifferencesWithoutMutation`、`TestTunnelServiceIdentityMismatchNamesValuesAndLocalMachine`                                                    | 自动化                  |
+| 过时健康观测、job/进程区分及实验性帮助    | `TestTunnelStatusIsReadOnlyAndDoesNotTrustStaleHealth`、`TestTunnelServiceHelpDocumentsExperimentalCommands`                                                                     | 自动化                  |
+| 有界归属进程清理及禁用意图生效            | `TestBackendStopSignalsOnlyOwnedChild`、`TestRunServiceDesiredStateStopsOwnedChild`、`TestWaitStoppedIsBoundedByContext`                                                         | 自动化                  |
+| 配置、日志和 control 资源私有性           | `TestTunnelLaunchAgentRejectsForeignPlistAndSymlinkLog`、`TestRunServiceRejectsUnsafeRuntimeDirectoryBeforeLocking`、`TestTunnelLogsTailAndPrivateFileValidation`                | 自动化                  |
+| identity 损坏及硬链接不可用               | `TestLoadOrCreateRejectsCorruptIdentityWithoutReplacingIt`、`TestLoadOrCreateHardLinkFailureLeavesIdentityUnavailable`、`TestLoadInstanceIDOrUnavailablePreservesDegradedDaemon` | 故障注入及 HTTP handler |
+
+服务 PR 需完成全仓 `go test ./... -race -count=1`、`go vet ./...`、`staticcheck`，
+以及 Linux、Windows、macOS 各自 amd64/arm64 的 build/vet、适用的格式与 lint 检查
+和 `make i18n-check`。跨平台 build/vet 不等于在这些系统上执行测试；普通 suite
+保留 Xvfb 和 opt-in launchd 测试的跳过条件，需分别说明实际覆盖。
+
+#### 15.4.2 真实 launchd 的本地 fixture 验证边界
+
+两个 opt-in 测试使用真实 GUI launchd domain，通过 `CC_CLIP_TEST_LAUNCHD=1`
+单独运行。
+
+- `TestTunnelAuthenticationRealLaunchAgent` 使用生产认证 helper 和 SSH backend，
+  核对 HOME、PATH、umask 及未继承终端临时 agent 环境，再替换为本地 SSH fixture。
+  它验证预检上下文及 `ok/auth-required/host-key-error` 结果，不能证明实际密钥、
+  keychain/agent 或网络认证可用。
+- `TestTunnelLaunchAgentRealLifecycle` 安装独立命名的 job 和隔离的本地可执行文件，
+  检查注册、运行 PID、重复安装不产生新进程、已核对归属的 fixture 进程退出后重启、
+  显式停止/重新安装、卸载及保留诊断文件。它不运行真实 supervisor 或远端 SSH，
+  也不覆盖重启系统后登录、睡眠或切网恢复。
+
+#### 15.4.3 真实远端验收记录（2026-10-02）
+
+2026-10-02 在隔离环境中完成后台服务的实机验收。以下结果对应当时的构建，
+重放后分支的自动化复验见 §15.4.5。
+
+##### 本次构建与隔离环境
+
+- 验收构建基于 `6089c56`，另含 UTF-8 剪贴板修复 `734244e`、对应回归测试，
+  以及 identity probe 不续期的 CLI 帮助修正。
+- 实测发现 `pbcopy` 在缺少 UTF-8 locale 时会返回成功，但中文剪贴板为空。
+  该行为也存在于上游基线 `2f60996`。历史构建通过 `LC_ALL=en_US.UTF-8` 修复，并新增中文、
+  日文多行文本回归测试。复现和修复记录见 [PR #189](https://github.com/ShunmeiCho/cc-clip/pull/189)。
+- 当前分支沿用上游 #195 的 `LC_CTYPE=UTF-8` 实现，代码核对和复验记录见
+  §15.4.5。
+- 本地 macOS 26.6.2 / arm64；远端 Linux / amd64、OpenSSH 9.6p1；Go 1.25.13。
+- 两端最终二进制版本为 `phase1b-acceptance-6089c56-utf8-fix`。
+- Darwin 二进制 SHA-256 为
+  `eeffd83510f619caa053e1d901c2b3cdd87aebf38cacef8aaa948d0d6b449ab7`。
+- Linux 二进制 SHA-256 为
+  `087d81e5aa41a859be4581d721047dd7bc1c32fad60e3177c2b4f384b727c001`。
+
+通过 Tailscale 访问 Linux 主机，使用独立的非特权 OpenSSH listener 和隔离的远端
+`HOME`，helper 位于该环境的 `$HOME/.local/bin/cc-clip`。复用原 Linux 账号，
+没有创建独立系统账号，也没有修改系统 sshd、原 helper 或原凭据。
+
+配套 macOS daemon 作为真实 GUI LaunchAgent 运行，使用隔离的 `HOME`、token、
+instance identity、receipt 和日志。daemon 与 managed reverse forward 均使用
+28441 端口。服务 job 和认证 job 使用实际生产实现及匹配的 launchd 环境。
+原 18339 端口的 daemon 和现有 SSH 连接持续保留；诊断 SSH 清除全部 forwarding，
+因此不能在测试端口提供另一条转发链路。
+
+##### 场景要求与实测证据
+
+| 场景                 | 必须观察的行为                                                                                           | 本次实测证据                                                                                                                                                                                                                            | 状态             |
+| -------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 启动、status 和 logs | 达到完整认证的端到端 `healthy`；区分启用意图、job 注册及 supervisor 运行状态                             | 显式密钥通过真实 launchd 预检；各状态分别可见，日志包含真实转换。重复 enable 保持同一 supervisor 和 SSH master。                                                                                                                        | 通过             |
+| 配置差异             | 显示持久配置与请求值的差异，status 不改写配置                                                            | 请求不同端口时显示 `persisted=28441, requested=28442`，持久化 spec 字节不变。                                                                                                                                                           | 通过             |
+| restart/disable      | restart 更换 supervisor/SSH child；disable 停止归属连接、listener/control 和 job，保留诊断状态           | restart 更换两类进程并恢复健康；disable 有界完成，移除 job、归属进程和 control 资源，远端测试 listener 消失；清理测试环境之前确认 disabled spec、stopped runtime 和日志仍保留。                                                         | 通过             |
+| 真实后台认证         | 服务可用的密钥或 keychain/agent 通过预检；仅终端可用的认证不能启用 job；`auth` 经 launchd 复验后恢复服务 | 显式密钥成功；临时终端 agent 能真实 SSH 登录，但后台 enable 失败且未安装持久 job。实际 `tunnel auth` 完成前台认证、launchd 复验和恢复。本入口未配置 password-only 或 keychain 专属认证，未将它们记为实测通过。                          | 通过（适用配置） |
+| host-key 保护        | 未知或变更的 key 被严格拒绝；交互确认后重新验证服务上下文                                                | 两类错误均被预检拒绝，未安装或替换 job。已有服务的实际 `tunnel auth` 提示确认测试 key，独立核对生成的 fingerprint 后确认；后台严格复验及恢复成功。仅使用隔离的 known-host 文件。                                                        | 通过             |
+| daemon 健康门闩      | daemon 停止时不反复创建 SSH master；以原端口和 identity 恢复后服务恢复                                   | 停止配套 daemon 并仅终止已核对归属的 SSH child，35 秒内没有新 child；同端口和 identity 的 daemon 重启后恢复健康。                                                                                                                       | 通过             |
+| 重连及 crash-loop    | 仅中断归属 child，观察重连；连续启动失败打开 breaker，修复后显式 restart                                 | 归属 child 被终止后新私有 master 恢复健康。测试别名的 transport 故障造成五次 SSH 早退，breaker 打开，已注册 job 的 supervisor 停止而不重新拉起；修复并 restart 后恢复。                                                                 | 通过             |
+| 睡眠/切网恢复        | 睡眠唤醒或切网后恢复完整认证健康，保留 enabled 配置                                                      | 第一次实际睡眠仅 2 秒，按短时覆盖记录；第二次 `pmset` 记录 12 秒和 54 秒睡眠，`14:05:05 UTC+08:00` 完整唤醒。唤醒后的新 supervisor 观测和独立远端认证 identity 检查均健康，enabled 配置及 GUI job 保留。本次覆盖睡眠分支，未另行切网。    | 通过             |
+| 远端 token 原地修复  | token 失效时保留原 master；token-only 同步后原地恢复                                                     | 仅替换隔离远端 token，进入 `remote-token-invalid`，原 master 保持运行；实际 `connect --token-only --no-notify --port 28441` 恢复健康，supervisor、master PID 和 control path 不变。                                                     | 通过             |
+| 本地 token 过期      | 仅 identity probe 不续期；过期拒绝；重启同步可恢复；剪贴板请求保留滑动续期                               | 95 秒 TTL 下持续真实本地/远端 identity 探测及后台监测，token 文件不变且按期过期；过期及错误 token 返回 HTTP 401。恢复正常 TTL、原端口和 identity 并同步、restart 后恢复；60 秒 TTL 的后半段实际远端 `paste` 延长 expiry，token 值不变。 | 通过             |
+| 托管链路剪贴板       | 排除无关 SSH forwarding，验证图片到远端和文本到本地，恢复原剪贴板                                        | 远端 `paste` 取得真实 macOS PNG，与本地剪贴板 reader 字节的 SHA-256 一致；修复后远端 `copy` 的中文 UTF-8、多行文本精确匹配。原 pasteboard 的全部 item、类型和字节已恢复并核对。                                                         | 通过             |
+| 托管链路通知         | 专用端口发送唯一标题通知，确认实际 UI 和 receipt                                                         | 远端通知经 managed forward 到达，写入对应 host-bound receipt；用户确认通知中心出现了唯一验收标题。未确认横幅是否弹出，也未验证声音；该测试使用默认 urgency=1，未显式指定 `--sound`。HTTP 成功未单独作为 UI 投递证明。                   | 通过             |
+| 清理及 legacy 恢复   | 禁用测试服务、恢复配置和 daemon 设置，确认普通 SSH forwarding 可用                                       | 原本地 daemon PID 不变；SSH 配置字节及权限匹配基线；原远端 helper、token、session ID 和 SSH 配置 hash 匹配基线。测试 job、daemon、远端 sshd、listener 和测试文件已清理，原 legacy 端口经普通 SSH 访问仍返回健康响应。                   | 通过             |
+
+##### 自动化检查与复测范围
+
+2026-10-02 使用 Go 1.25.13 完成全仓 race 测试、vet、staticcheck，
+以及 darwin/linux/windows 各自 amd64/arm64 的 build/vet，结果均通过。
+当时的 `TestDarwinTextClipboardUnderNonUTF8Locale`、`gofmt`、
+`make i18n-check` 和差异检查也通过。
+
+服务生命周期、后台认证和 crash-loop 实测先在修复前的构建上完成。
+UTF-8 修复后的最终构建再次覆盖真实 enable、剪贴板、通知、token 过期及恢复、
+睡眠唤醒、disable 和环境恢复。各场景的观察结果见上表。
+
+#### 15.4.4 真实 exFAT 文件系统补充验证（2026-10-02）
+
+使用服务分支 `569eee6` 构建的 `phase1b-exfat-569eee6`，通过 macOS `hdiutil`
+创建并挂载 128 MiB 隔离映像。`diskutil info` 确认文件系统为 ExFAT。
+测试二进制和配套 HOME 留在 APFS 上，仅通过 `CC_CLIP_TOKEN_DIR` 将测试状态
+指向卷内独立目录；daemon 使用空闲端口 28443，不安装新的 LaunchAgent，
+不访问远端主机，不读取或修改真实剪贴板。
+
+| 场景              | 实测结果                                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 文件系统能力      | 创建文件及 chmod 返回成功；硬链接返回 errno 45（Operation not supported）                                         |
+| 无已有 identity   | daemon 继续运行；`/health` 为 200，identity 未认证为 401、有效认证为 503、错误 token 为 401                       |
+| 失败诊断与清理    | 日志包含目标 identity 路径、硬链接支持指引及降级说明；没有最终 identity、半写入文件或 identity/token 临时文件残留 |
+| 已有有效 identity | 从正常文件系统复制测试 identity 后能加载，认证 identity 为 200；重启后字节保持不变，无重新创建或临时文件残留      |
+| 正常文件系统恢复  | 切回 APFS 测试状态目录后能创建有效 identity，权限为 0600，认证 identity 为 200                                    |
+
+该 exFAT 卷上 chmod 返回成功，但探测文件请求 0600 后报告为
+0700，因此不能据此声称该卷满足私有凭据目录要求。用户仍应将 token/identity
+目录放在支持硬链接且能落实 0700/0600 权限的文件系统上。本测试确认已知限制下
+的降级和既有 identity 读取，不扩大 exFAT 支持承诺，也不代表所有 FUSE 实现。
+FUSE 未实测。
+
+测试结束后停止全部测试 daemon、确认 28443 无 listener、卸载映像，并删除
+映像、二进制、脚本、测试凭据及日志。原 daemon PID 未变；原 LaunchAgent plist、
+SSH 配置和安装二进制 hash 与测试前一致，工作区保持干净。
+
+#### 15.4.5 重放后的自动化复验（2026-11-13）
+
+复验对应服务代码提交 `d1a5b80`，上游基线为 `c7e25a1`（#195）。
+服务 Go 代码与原服务分支 `569eee6` 的差异核对通过，五个 clipboard/locale
+实现及测试文件与上游一致。当前构建直接采用 #195 的 UTF-8 修复。
+
+使用 Go 1.25.13 在 macOS 上执行以下检查，结果均通过。
+
+```bash
+go test ./... -race -count=1
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+make i18n-check
+git diff --check
+```
+
+测试包含上游 #195 的 Darwin 回归测试。六个平台组合
+（darwin/linux/windows × amd64/arm64）的 `go build ./...` 与 `go vet ./...`
+均通过，修改的 Go 文件通过 `gofmt`。
+
+另使用 Go 1.26.11 和 govulncheck v1.7.0 查询官方漏洞库，扫描通过。
+当前代码可达或已导入包中的漏洞数为零，另有一条记录只涉及声明依赖模块中的
+未引用代码。
+
+本次执行范围为差异核对与自动化复验。真实远端、睡眠唤醒、剪贴板与通知 UI、
+LaunchAgent 生命周期及 exFAT 的实测证据对应 §15.4.3 和 §15.4.4 的历史构建。
+
 ## 16. 最终决策摘要
 
 1. 只要同时存在多个交互 SSH 连接，或远端 agent/通知 hook 的生命周期可能长于实际持有 forwarding 的连接，把长期数据通路绑定到该连接就是架构缺陷。
@@ -1545,9 +1757,9 @@ bridge 和已经运行的远端进程。端口随会话变化后，“哪个 end
    既有探测状态。
 9. `tunnels.json`
    保存期望状态和迁移 phase，独立 runtime 文件保存可重建状态；PR #165 的
-   Phase 1A 已实现可手工驱动的 supervisor/SSH backend/state store，Phase 1B 再交付
-   LaunchAgent、opt-in enable/disable、最小 journal 和回滚，跨版本完整事务在
-   Phase 3 实现。
+   Phase 1A 已实现可手工驱动的 supervisor/SSH backend/state store；Phase 1B 的
+   服务 PR 交付 LaunchAgent 和 opt-in 生命周期，迁移 PR 再交付最小 journal 与
+   回滚。跨版本完整事务在 Phase 3 实现。
 10. 托管模式初期显式 opt-in；legacy 交互 forwarding 永久支持；已有 host 永不静默
     迁移。PR #165 已提供关键失败状态的真实主机证据，但新 host 的 setup 是否默认
     启用仍须另行评审。

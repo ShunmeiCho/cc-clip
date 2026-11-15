@@ -43,12 +43,21 @@ Complete cc-clip command reference. For what each feature is for and what you sh
 | `cc-clip connect <host> --local-bin <path>` | Deploy this pre-downloaded remote binary instead of fetching one |
 | `cc-clip connect <host> --port <n>` | Use a tunnel port other than 18339 |
 | `cc-clip tunnel run <host>` | **Experimental, on your local machine (not the remote).** Foreground managed tunnel: a private SSH master holds the reverse forward, probes the daemon through it and reconnects with backoff. Needs `connect <host> --force` once (for the remote identity helper at `~/.local/bin/cc-clip`); not supported for `--use-remote-bin` hosts. `--port` for a non-default port, `--reset` to clear persisted crash-loop state. Any other `ssh <host>` that takes the `RemoteForward` from your SSH config holds the port first (`port-conflict`); comment that line out while trying it |
+| `cc-clip tunnel enable <host> [--port N]` | **Experimental, local macOS.** Check the daemon and background SSH authentication, enable and start the host's LaunchAgent |
+| `cc-clip tunnel status [<host>] [--port N]` | **Experimental, local macOS.** Show enabled state, job/process status and the last health result. `--port` compares saved and requested values |
+| `cc-clip tunnel restart <host>` | **Experimental, local macOS.** Check configuration and authentication, then restart. Use after fixing a crash-loop |
+| `cc-clip tunnel disable <host>` | **Experimental, local macOS.** Stop the service and cancel automatic startup. Keep configuration, runtime records and logs for diagnosis |
+| `cc-clip tunnel auth <host>` | **Experimental, local macOS.** Authenticate through OpenSSH in the terminal, then verify under launchd. Recover enabled services only |
+| `cc-clip tunnel logs <host> [--lines N] [--follow]` | **Experimental, local macOS.** Show the last N lines (default 200, maximum 10000). `-n` aliases `--lines` and `-f` aliases `--follow`. Ctrl-C stops following |
 | `cc-clip hosts list` | Show hosts this machine has deployed to (version, Codex, last seen) |
 | `cc-clip hosts forget <host>` | Stop tracking a host locally; the remote is not touched |
 | `cc-clip uninstall` | **On the remote host:** remove the clipboard shim and restore a program adopted with `--adopt-foreign-shim`. `--target wl-paste` on Wayland (also covers `wl-copy`); `--path` for a non-default install directory |
 | `cc-clip uninstall --host <host>` | **On your local machine:** remove the managed Claude hooks/wrapper and the PATH marker from the remote. Run the remote `cc-clip uninstall` first. Also tries a local shim, which warns harmlessly on a Mac |
 | `cc-clip uninstall --codex` | Remove Codex support (local) |
 | `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
+
+For background tunnel setup, authentication and recovery, see
+[Managed Tunnel Service](troubleshooting.md#managed-tunnel-service-experimental).
 
 ## Windows workflow
 
@@ -96,6 +105,7 @@ and tmux copy-mode — is covered in [reverse copy](reverse-copy.md).
 |---------|-------------|
 | `cc-clip install` | Install the shim; `connect` runs it on the remote (`--target`, `--path`, `--port`, `--adopt-foreign-shim`) |
 | `cc-clip plugin run <name>` | Notification hook each agent calls: `claude-notify`, `codex-notify`, `opencode-notify`, `agy-notify`, `cursor-notify` |
+| `cc-clip tunnel run --id <tunnel-id>` | Experimental LaunchAgent entry point. Read the enabled persisted service spec. `CC_CLIP_PORT` is ignored. A host, `--port` and `--reset` are rejected |
 | `cc-clip tunnel probe-identity` | Remote side of the managed tunnel's identity check; `tunnel run` invokes it over SSH |
 | `cc-clip x11-bridge` | Serve the clipboard to Codex through Xvfb; started by `connect --codex` |
 
@@ -105,6 +115,7 @@ and tmux copy-mode — is covered in [reverse copy](reverse-copy.md).
 |---------|---------|---------|
 | Port | 18339 | `CC_CLIP_PORT` |
 | Token TTL | 30d | `CC_CLIP_TOKEN_TTL` |
+| Token/identity directory | `~/.cache/cc-clip` | `CC_CLIP_TOKEN_DIR` |
 | Output dir | `$XDG_RUNTIME_DIR/claude-images` | `CC_CLIP_OUT_DIR` |
 | Max clipboard text | 1MB | `CC_CLIP_MAX_TEXT_MB` |
 | Max clipboard image | 20MB | `CC_CLIP_MAX_IMAGE_MB` |
