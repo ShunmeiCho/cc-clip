@@ -110,7 +110,7 @@ func cmdServe() {
 func loadInstanceIDOrUnavailable(tokenDir string) string {
 	instanceID, err := instanceid.LoadOrCreate(tokenDir)
 	if err != nil {
-		log.Printf("WARN: tunnel identity unavailable: %v", err)
+		log.Printf("WARN: tunnel identity unavailable: %v; daemon continues without tunnel identity; see docs/troubleshooting.md#tunnel-identity-unavailable", err)
 		return ""
 	}
 	return instanceID

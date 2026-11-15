@@ -93,26 +93,43 @@ func (m *Manager) LoadOrGenerate(ttl time.Duration) (Session, bool, error) {
 	return s, false, nil
 }
 
+// Validate authenticates a user request and preserves sliding expiration.
 func (m *Manager) Validate(tok string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
+	if err := m.validateLocked(tok, now); err != nil {
+		return err
+	}
 
+	// Sliding expiration: extend if remaining TTL < half of total TTL.
+	remaining := m.session.ExpiresAt.Sub(now)
+	if m.ttl > 0 && remaining < m.ttl/2 {
+		m.session.ExpiresAt = now.Add(m.ttl)
+		// Best-effort persist; failure here is non-fatal.
+		_, _ = WriteTokenFile(m.session.Token, m.session.ExpiresAt)
+	}
+	return nil
+}
+
+// ValidateWithoutRenewal authenticates monitoring requests without extending
+// the session's expiry or writing the token file. Expired tokens still fail.
+func (m *Manager) ValidateWithoutRenewal(tok string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.validateLocked(tok, time.Now())
+}
+
+// validateLocked requires at least a read lock on m.mu.
+func (m *Manager) validateLocked(tok string, now time.Time) error {
 	if m.session == nil {
 		return ErrTokenInvalid
 	}
-	if time.Now().After(m.session.ExpiresAt) {
+	if now.After(m.session.ExpiresAt) {
 		return ErrTokenExpired
 	}
 	if !constantTimeTokenEqual(m.session.Token, strings.TrimSpace(tok)) {
 		return ErrTokenInvalid
-	}
-
-	// Sliding expiration: extend if remaining TTL < half of total TTL.
-	remaining := time.Until(m.session.ExpiresAt)
-	if m.ttl > 0 && remaining < m.ttl/2 {
-		m.session.ExpiresAt = time.Now().Add(m.ttl)
-		// Best-effort persist; failure here is non-fatal.
-		_, _ = WriteTokenFile(m.session.Token, m.session.ExpiresAt)
 	}
 
 	return nil

@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"log"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shunmei/cc-clip/internal/daemon"
+	"github.com/shunmei/cc-clip/internal/session"
+	"github.com/shunmei/cc-clip/internal/token"
 )
 
 func TestServeRotateTokenLeavesTokenUntouchedWhenPortTaken(t *testing.T) {
@@ -78,13 +85,59 @@ func TestServeRotateTokenLeavesTokenUntouchedWhenPortTaken(t *testing.T) {
 	}
 }
 
-func TestLoadInstanceIDOrUnavailableAllowsIncompleteIdentity(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "instance-id"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestLoadInstanceIDOrUnavailablePreservesDegradedDaemon(t *testing.T) {
+	for _, content := range []string{"", "corrupt-instance-id"} {
+		t.Run(content, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "instance-id")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var warning bytes.Buffer
+			oldWriter := log.Writer()
+			log.SetOutput(&warning)
+			t.Cleanup(func() { log.SetOutput(oldWriter) })
+			id := loadInstanceIDOrUnavailable(dir)
+			if id != "" {
+				t.Fatalf("loadInstanceIDOrUnavailable() = %q, want unavailable identity", id)
+			}
+			for _, hint := range []string{"WARN: tunnel identity unavailable", strconv.Quote(path), "restore a valid backup", "move this file aside and restart", "daemon continues", "docs/troubleshooting.md#tunnel-identity-unavailable"} {
+				if !strings.Contains(warning.String(), hint) {
+					t.Fatalf("warning missing %q: %s", hint, &warning)
+				}
+			}
+			if content != "" && strings.Contains(warning.String(), content) {
+				t.Fatal("warning leaked corrupt file contents")
+			}
 
-	if got := loadInstanceIDOrUnavailable(dir); got != "" {
-		t.Fatalf("loadInstanceIDOrUnavailable() = %q, want unavailable identity", got)
+			tm := token.NewManager(time.Hour)
+			sess, err := tm.Generate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := daemon.NewServer("127.0.0.1:0", nil, tm, session.NewStore(time.Hour))
+			srv.SetInstanceID(id)
+			for _, check := range []struct {
+				path   string
+				bearer string
+				status int
+			}{
+				{"/health", "", http.StatusOK},
+				{"/tunnel/identity", "", http.StatusUnauthorized},
+				{"/tunnel/identity", "wrong-token", http.StatusUnauthorized},
+				{"/tunnel/identity", sess.Token, http.StatusServiceUnavailable},
+			} {
+				req := httptest.NewRequest(http.MethodGet, check.path, nil)
+				req.Header.Set("User-Agent", "cc-clip")
+				if check.bearer != "" {
+					req.Header.Set("Authorization", "Bearer "+check.bearer)
+				}
+				w := httptest.NewRecorder()
+				srv.Handler().ServeHTTP(w, req)
+				if w.Code != check.status {
+					t.Fatalf("%s status = %d, want %d", check.path, w.Code, check.status)
+				}
+			}
+		})
 	}
 }

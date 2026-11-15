@@ -268,6 +268,8 @@ and what you should see when it works. Replace `myserver` with your host.
 - **What:** `cc-clip tunnel run myserver` keeps a private SSH connection to the
   host that holds the paste tunnel, checks it through the daemon, and reconnects
   with backoff when it drops.
+  On macOS, you can also run it as a per-host LaunchAgent with
+  `tunnel enable/status/restart/disable/auth/logs`.
 - **Why:** normally whichever `ssh myserver` connects first owns the tunnel. When
   that session closes, or its client disappears on a flaky network while the
   remote side keeps the port, paste stops working until you find and end it
@@ -280,6 +282,20 @@ and what you should see when it works. Replace `myserver` with your host.
   cc-clip tunnel run myserver        # foreground; Ctrl-C stops it
   ```
 
+  To use the macOS background service, stop any foreground tunnel for this
+  host and check that the local daemon service is running. Start the service
+  with the following commands.
+
+  ```bash
+  cc-clip service status
+  cc-clip tunnel enable myserver
+  cc-clip tunnel status myserver
+  cc-clip tunnel logs myserver -n 50
+  ```
+
+  SSH authentication must work under launchd. A successful terminal login alone
+  is not enough. See [background authentication and recovery](docs/troubleshooting.md#managed-tunnel-service-experimental).
+
 - **You'll see:** timestamped lines such as `managed tunnel state: healthy`, and
   a new state line whenever it reconnects or waits. Run on the remote by
   mistake, it stops with `identity-mismatch` and says so. Your SSH config is
@@ -288,8 +304,16 @@ and what you should see when it works. Replace `myserver` with your host.
   it, and the supervisor reports `port-conflict` and waits. To let the
   supervisor own the port while you try it, comment out the `RemoteForward`
   line under `Host myserver` in `~/.ssh/config`, and restore it afterwards.
-  Hosts set up with `--use-remote-bin` are not supported yet, and while the
-  supervisor runs it keeps the token from expiring.
+  Hosts set up with `--use-remote-bin` are not supported yet.
+
+  For the background service, `tunnel status myserver` shows whether it is
+  enabled, whether the supervisor is running, and the most recent health result.
+  It does not run a new probe. Use `tunnel logs myserver -f` to follow the log and
+  `tunnel disable myserver` to stop the service.
+
+  Identity probes no longer renew token expiry. Clipboard requests still do.
+  An idle managed tunnel can therefore reach token expiry. See
+  [token recovery](docs/troubleshooting.md#token-expired-or-invalid).
 
 ### Remove cc-clip from a host
 
@@ -392,6 +416,12 @@ Every `cc-clip` command, grouped by the machine you run it on. The
 | `cc-clip uninstall --host HOST` | Removes the managed Claude hooks and the PATH marker from a host. Run `cc-clip uninstall` on the host first; see [Remove cc-clip](#remove-cc-clip-from-a-host). |
 | `cc-clip uninstall --codex --host HOST` | Removes Codex support from a host: stops the bridge and Xvfb, strips the Codex `notify` entry and the display setting. |
 | `cc-clip tunnel run HOST` | **Experimental.** Keeps the host's paste tunnel up from a private SSH connection and reconnects it, instead of relying on whichever `ssh` session got the port first. Run it here, not on the remote. Foreground until Ctrl-C; run `connect HOST --force` once first. `--reset` clears a tripped crash-loop breaker. See [Keep the tunnel up on its own](#keep-the-tunnel-up-on-its-own-experimental). |
+| `cc-clip tunnel enable HOST [--port N]` | **Experimental, local macOS.** Verify background SSH authentication, enable and start the host's service. SSH config is left unchanged. |
+| `cc-clip tunnel status [HOST] [--port N]` | **Experimental, local macOS.** Show saved settings, process information and the latest health result. `--port` compares requested and saved values without changing them. |
+| `cc-clip tunnel restart HOST` | **Experimental, local macOS.** Check configuration and authentication, then restart the service. Use it to recover after fixing a crash-loop. |
+| `cc-clip tunnel disable HOST` | **Experimental, local macOS.** Stop the service and cancel automatic startup. Keep configuration, runtime records and logs for diagnosis. |
+| `cc-clip tunnel auth HOST` | **Experimental, local macOS.** Authenticate through SSH in the terminal, then check background authentication. Recover enabled services only. |
+| `cc-clip tunnel logs HOST [-n N] [-f]` | **Experimental, local macOS.** Show the last N log lines (default 200). `-f` follows output until Ctrl-C. |
 
 **On your local machine: the daemon and your own install**
 
@@ -448,8 +478,11 @@ cc-clip doctor --host myserver
 
 The three most common fixes are:
 
-- **Tunnel unavailable:** keep a fresh `ssh myserver` session open. A
-  `RemoteForward` exists only while an SSH connection owns it.
+- **Tunnel unavailable:** with legacy forwarding, keep a fresh `ssh myserver`
+  session open. For foreground `tunnel run myserver`, check the state and error
+  messages in that terminal. For the background service, check
+  `tunnel status myserver` and `tunnel logs myserver`. A legacy forward can
+  conflict with a managed tunnel using the same remote port.
 - **Token rejected after daemon restart:** run
   `cc-clip connect myserver --token-only`.
 - **Codex has no clipboard:** open a new SSH session so the injected `DISPLAY`

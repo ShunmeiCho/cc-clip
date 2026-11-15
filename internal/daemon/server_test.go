@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,6 +172,107 @@ func TestTunnelIdentityReturnsUnavailableWithoutInstance(t *testing.T) {
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("identity status = %d, want 503: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTunnelIdentityDoesNotRenewTokenButClipboardStillDoes(t *testing.T) {
+	withTokenDirOverride(t)
+	expiry := time.Now().Add(10 * time.Minute).Truncate(time.Second)
+	path, err := token.WriteTokenFile("identity-test-token", expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := token.NewManager(time.Hour)
+	sess, reused, err := tm.LoadOrGenerate(time.Hour)
+	if err != nil || !reused {
+		t.Fatalf("load near-expiry session: reused=%v error=%v", reused, err)
+	}
+	srv := NewServer("127.0.0.1:0", &mockClipboard{clipType: ClipboardInfo{Type: ClipboardText}, text: "clipboard text"}, tm, session.NewStore(time.Hour))
+	srv.SetInstanceID("instance-123")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(endpoint, tok string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", endpoint, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("User-Agent", "cc-clip")
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w
+	}
+	for range 20 {
+		if w := request("/tunnel/identity", sess.Token); w.Code != http.StatusOK {
+			t.Fatalf("identity probe status = %d", w.Code)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tm.Current().ExpiresAt.Equal(expiry) || !bytes.Equal(before, after) || !os.SameFile(infoBefore, infoAfter) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+		t.Fatal("identity probes changed the session or token file")
+	}
+	if w := request("/clipboard/text", sess.Token); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "clipboard text") {
+		t.Fatalf("clipboard request failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !tm.Current().ExpiresAt.After(expiry) {
+		t.Fatal("clipboard requests no longer renew the token")
+	}
+	_, persistedExpiry, err := token.ReadTokenFileWithExpiry()
+	if err != nil || !persistedExpiry.Equal(tm.Current().ExpiresAt.Truncate(time.Second)) {
+		t.Fatalf("clipboard renewal was not persisted: %v", err)
+	}
+}
+
+func TestTunnelIdentityAuthenticationStillFailsClosed(t *testing.T) {
+	for _, mode := range []string{"expired", "wrong", "missing", "forbidden-agent", "unavailable"} {
+		t.Run(mode, func(t *testing.T) {
+			ttl := time.Hour
+			if mode == "expired" {
+				ttl = -time.Minute
+			}
+			tm := token.NewManager(ttl)
+			sess, err := tm.Generate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := NewServer("127.0.0.1:0", &mockClipboard{}, tm, session.NewStore(time.Hour))
+			if mode != "unavailable" {
+				srv.SetInstanceID("instance-123")
+			}
+			req := httptest.NewRequest("GET", "/tunnel/identity", nil)
+			req.Header.Set("User-Agent", "cc-clip")
+			req.Header.Set("Authorization", "Bearer "+sess.Token)
+			want := http.StatusUnauthorized
+			switch mode {
+			case "wrong":
+				req.Header.Set("Authorization", "Bearer wrong-token")
+			case "missing":
+				req.Header.Del("Authorization")
+			case "forbidden-agent":
+				req.Header.Set("User-Agent", "other-client")
+				want = http.StatusForbidden
+			case "unavailable":
+				want = http.StatusServiceUnavailable
+			}
+			w := httptest.NewRecorder()
+			srv.mux.ServeHTTP(w, req)
+			if w.Code != want || strings.Contains(w.Body.String(), "instance-123") {
+				t.Fatalf("identity status=%d want=%d body=%s", w.Code, want, w.Body.String())
+			}
+			if *tm.Current() != sess {
+				t.Fatal("failed probe changed the session")
+			}
+		})
 	}
 }
 

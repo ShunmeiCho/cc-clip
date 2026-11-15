@@ -2,11 +2,10 @@
 // issue #108 Phase 1A: a minimal state store, a managed non-interactive SSH
 // backend, and a single-tunnel supervisor that can be driven manually.
 //
-// Phase 1A scope only: no LaunchAgent, no enable/disable commands, no SSH
-// config migration, no rollback. The supervisor runs only when explicitly
-// started (foreground `cc-clip tunnel run <host>` or a test harness); the
-// legacy interactive `RemoteForward` workflow is untouched and remains the
-// default behavior of every existing command.
+// The same supervisor supports foreground runs and the per-host LaunchAgent
+// entry point, using independent desired service specs and runtime snapshots.
+// No enable/disable CLI, SSH config migration or rollback is implemented here;
+// the legacy interactive RemoteForward workflow remains the default.
 //
 // Health semantics are built on the v0.9.2 probe primitives in
 // internal/tunnel (ProbeHealth, RemoteHealthProbeCommand,

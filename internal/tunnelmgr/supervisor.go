@@ -66,6 +66,7 @@ type Supervisor struct {
 	retryFailures int
 	healthySince  time.Time
 	lastKey       string
+	lastPersist   time.Time
 }
 
 func NewSupervisor(spec Spec, store *Store, backend *Backend) *Supervisor {
@@ -324,7 +325,7 @@ func (s *Supervisor) loadOrInitialize() (*Record, error) {
 	rec, err := s.Store.Load()
 	if err == nil {
 		if rec.Spec != s.Spec {
-			return nil, fmt.Errorf("persisted tunnel spec differs from requested spec; run again with --reset")
+			return nil, fmt.Errorf("persisted tunnel spec differs from requested spec: %s; inspect the differences before explicitly retrying with --reset", DescribeSpecDifferences(rec.Spec, s.Spec))
 		}
 		return rec, nil
 	}
@@ -389,7 +390,7 @@ func (s *Supervisor) recordStartFailure(cause State, exit *ExitInfo) error {
 	oldState := s.state
 	s.healthySince = time.Time{}
 	s.lastErr = describeStartFailure(exit)
-	if cause == StateAuthRequired || cause == StateHostKeyError {
+	if cause == StateAuthRequired || cause == StateHostKeyError || cause == StateConfigError {
 		s.state = cause
 	} else {
 		s.retryFailures++
@@ -413,15 +414,21 @@ func (s *Supervisor) recordStartFailure(cause State, exit *ExitInfo) error {
 }
 
 func describeStartFailure(exit *ExitInfo) string {
-	detail := strings.TrimSpace(exit.StderrTail)
 	if !exit.processExit {
-		return detail
+		return exit.StderrTail // Backend errors contain no raw SSH output.
 	}
 	message := fmt.Sprintf("ssh child exited with code %d after %s", exit.Code, exit.Uptime.Round(time.Millisecond))
-	if detail == "" {
-		return message
+	// ProxyCommand and other user SSH helpers can print secrets. Use their
+	// output only for classification; never persist or log the original text.
+	switch classifyExit(exit) {
+	case StateAuthRequired:
+		return message + ": SSH authentication required"
+	case StateHostKeyError:
+		return message + ": SSH host key verification failed"
+	case StateConfigError:
+		return message + ": invalid SSH configuration; repair it before restarting"
 	}
-	return message + ": " + detail
+	return message
 }
 
 func (s *Supervisor) recordStartFailureAndWait(ctx context.Context, cause State, exit *ExitInfo) (bool, error) {
@@ -430,6 +437,9 @@ func (s *Supervisor) recordStartFailureAndWait(ctx context.Context, cause State,
 	}
 	if s.State() == StateCrashLoop {
 		return false, ErrCrashLoopOpen
+	}
+	if s.State() == StateConfigError {
+		return false, errors.New("invalid SSH configuration; repair it before restarting")
 	}
 	return sleepInterruptible(ctx, s.retryDelay(cause)), nil
 }
@@ -510,7 +520,7 @@ func (s *Supervisor) persist() error {
 		},
 	}
 	key := fmt.Sprintf("%s|%s|%s|%d", s.state, s.remote, s.lastErr, s.failures)
-	if key == s.lastKey {
+	if key == s.lastKey && time.Since(s.lastPersist) < s.ProbeInterval {
 		s.mu.Unlock()
 		return nil
 	}
@@ -520,6 +530,7 @@ func (s *Supervisor) persist() error {
 	}
 	s.mu.Lock()
 	s.lastKey = key
+	s.lastPersist = rec.Runtime.UpdatedAt
 	s.mu.Unlock()
 	return nil
 }
@@ -566,6 +577,11 @@ func classifyExit(exit *ExitInfo) State {
 	}
 	msg := strings.ToLower(exit.StderrTail)
 	if exit.Code == 255 {
+		for _, diagnostic := range []string{"bad configuration option", "bad port", "bad forwarding specification", "unsupported option", "invalid command-line option", "terminating,", "no argument after keyword", "missing argument"} {
+			if strings.Contains(msg, diagnostic) {
+				return StateConfigError
+			}
+		}
 		if strings.Contains(msg, "permission denied") {
 			return StateAuthRequired
 		}

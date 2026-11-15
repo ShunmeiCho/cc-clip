@@ -1,4 +1,4 @@
-<!-- i18n-source: README.md @ cb54b21c535ed03bd3d0a62a3b48a966637d2d9f -->
+<!-- i18n-source: README.md @ bdc354dcc2876c6090756d9813465a66d28abcef -->
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -257,6 +257,8 @@ Windows サポートは引き続き実験的です。まずは [Windows クイ�
 - **内容:** `cc-clip tunnel run myserver` はホストへの専用 SSH 接続を維持し、その接続で
   貼り付け用のトンネルを保持します。デーモン経由でトンネルを確認し、切断されるとバックオフ
   しながら再接続します。
+  macOS では、ホスト別の LaunchAgent によるバックグラウンド実行も利用できます。
+  `tunnel enable/status/restart/disable/auth/logs` で管理します。
 - **理由:** 通常は、最初に接続した `ssh myserver` がトンネルを持ちます。そのセッションを閉じた
   り、不安定な回線でクライアントが消えてもリモート側がポートを保持し続けたりすると、その
   セッションを見つけて終了するまで貼り付けが使えなくなります
@@ -269,14 +271,35 @@ Windows サポートは引き続き実験的です。まずは [Windows クイ�
   cc-clip tunnel run myserver        # フォアグラウンドで実行。Ctrl-C で停止
   ```
 
+  macOS のバックグラウンドサービスを使う場合は、そのホストのフォアグラウンド
+  トンネルを停止し、ローカルの daemon service が動いていることを確認してください。
+  続いて、次のコマンドを実行します。
+
+  ```bash
+  cc-clip service status
+  cc-clip tunnel enable myserver
+  cc-clip tunnel status myserver
+  cc-clip tunnel logs myserver -n 50
+  ```
+
+  SSH 認証は launchd の環境で成功する必要があります。ターミナルでのログイン成功だけでは
+  不十分です。詳しくは[バックグラウンド認証と復旧](docs/troubleshooting.md#managed-tunnel-service-experimental)を参照してください。
+
 - **結果:** `managed tunnel state: healthy` のようなタイムスタンプ付きの行が表示され、再接続や
   待機のたびに新しい状態が出力されます。誤ってリモートで実行すると、`identity-mismatch` で停止し
   理由を表示します。SSH の設定は変更しないため、すべての `ssh myserver` が同じポートを要求します。
   ほかのツールが保持しているバックグラウンド接続も同様です。先にポートを取った接続が保持し、
   supervisor は `port-conflict` を報告して待機します。試している間 supervisor にポートを持たせる
   には、`~/.ssh/config` の `Host myserver` にある `RemoteForward` の行をコメントアウトし、終わったら
-  元に戻してください。`--use-remote-bin` で設定したホストはまだサポートしていません。また、
-  supervisor の実行中は token が期限切れになりません。
+  元に戻してください。`--use-remote-bin` で設定したホストはまだサポートしていません。
+
+  バックグラウンドでは、`tunnel status myserver` がサービスの有効・無効、supervisor の
+  実行状態、直近のトンネル検証結果を表示します。新しい検証は行いません。
+  `tunnel logs myserver -f` でログを追跡し、`tunnel disable myserver` でサービスを停止できます。
+
+  identity チェックは token の有効期限を延長しなくなりました。実際のクリップボード
+  リクエストは引き続き有効期限を延長します。監視だけを続けるトンネルでは token が
+  期限切れになることがあります。[token の復旧手順](docs/troubleshooting.md#token-expired-or-invalid)を参照してください。
 
 ### ホストから cc-clip を削除する
 
@@ -377,6 +400,12 @@ adapter の詳細、手動設定、nonce 登録、診断については、
 | `cc-clip uninstall --host HOST` | ホストから管理対象の Claude フックと PATH marker を削除します。先にホスト上で `cc-clip uninstall` を実行してください。[cc-clip の削除](#ホストから-cc-clip-を削除する)を参照してください。 |
 | `cc-clip uninstall --codex --host HOST` | ホストから Codex サポートを削除します。ブリッジと Xvfb を停止し、Codex の `notify` エントリとディスプレイ設定を取り除きます。 |
 | `cc-clip tunnel run HOST` | **実験的。**最初にポートを取った `ssh` セッションに頼らず、専用の SSH 接続でホストの貼り付け用トンネルを保持し、再接続します。リモートではなく、このマシンで実行してください。Ctrl-C までフォアグラウンドで動きます。先に一度 `connect HOST --force` を実行してください。`--reset` で作動したクラッシュループ保護を解除します。[トンネルを単独で維持する](#トンネルを単独で維持する-実験的)を参照してください。 |
+| `cc-clip tunnel enable HOST [--port N]` | **実験的。ローカル macOS。**バックグラウンドの SSH 認証を確認し、ホストのサービスを有効化して起動します。SSH 設定は変更しません。 |
+| `cc-clip tunnel status [HOST] [--port N]` | **実験的。ローカル macOS。**保存された設定、プロセス情報、直近の検証結果を表示します。`--port` は要求値と保存値を比較するだけで設定を変更しません。 |
+| `cc-clip tunnel restart HOST` | **実験的。ローカル macOS。**設定と認証を確認してサービスを再起動します。crash-loop の原因を修正した後の復旧に使えます。 |
+| `cc-clip tunnel disable HOST` | **実験的。ローカル macOS。**サービスを停止し、自動起動を解除します。設定、実行記録、ログは診断用に保持します。 |
+| `cc-clip tunnel auth HOST` | **実験的。ローカル macOS。**ターミナルで SSH 認証を行い、続いてバックグラウンド認証を確認します。有効なサービスのみ復旧します。 |
+| `cc-clip tunnel logs HOST [-n N] [-f]` | **実験的。ローカル macOS。**最後の N 行を読みます（デフォルト 200）。`-f` で出力を追跡し、Ctrl-C で停止します。 |
 
 **ローカルマシンで: デーモンと自分のインストール**
 
@@ -433,8 +462,12 @@ cc-clip doctor --host myserver
 
 最も一般的な 3 つの修正方法は次のとおりです。
 
-- **トンネルを利用できない:** 新しい `ssh myserver` セッションを開いたままにしてください。
-  `RemoteForward` は、SSH 接続が所有している間だけ存在します。
+- **トンネルを利用できない:** legacy forwarding を使う場合は、新しい
+  `ssh myserver` セッションを開いたままにしてください。フォアグラウンドの
+  `tunnel run myserver` は、そのターミナルの状態表示とエラーメッセージを確認してください。
+  バックグラウンドサービスは `tunnel status myserver` と `tunnel logs myserver` を
+  確認してください。同じリモートポートを使う legacy forward と管理対象トンネルは
+  競合する場合があります。
 - **デーモン再起動後に token が拒否される:**
   `cc-clip connect myserver --token-only` を実行してください。
 - **Codex にクリップボードがない:** 注入された `DISPLAY` を読み込むため、新しい SSH セッションを開いてください。

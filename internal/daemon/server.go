@@ -99,7 +99,7 @@ func NewServer(addr string, clipboard ClipboardReader, tokens *token.Manager, se
 		mux:               http.NewServeMux(),
 	}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
-	s.mux.HandleFunc("GET /tunnel/identity", s.authMiddleware(s.handleTunnelIdentity))
+	s.mux.HandleFunc("GET /tunnel/identity", s.authMiddlewareWithValidator(s.handleTunnelIdentity, s.tokens.ValidateWithoutRenewal))
 	s.mux.HandleFunc("GET /clipboard/type", s.authMiddleware(s.handleClipboardType))
 	s.mux.HandleFunc("GET /clipboard/image", s.authMiddleware(s.handleClipboardImage))
 	s.mux.HandleFunc("GET /clipboard/text", s.authMiddleware(s.handleClipboardText))
@@ -490,6 +490,12 @@ func requireLoopbackListener(addr net.Addr) error {
 }
 
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return s.authMiddlewareWithValidator(next, s.tokens.Validate)
+}
+
+// Identity monitoring shares the normal authentication boundary but uses a
+// read-only token validator, so local and remote probes cannot renew a session.
+func (s *Server) authMiddlewareWithValidator(next http.HandlerFunc, validate func(string) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") {
@@ -505,7 +511,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		tok := strings.TrimPrefix(auth, "Bearer ")
 
-		if err := s.tokens.Validate(tok); err != nil {
+		if err := validate(tok); err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}

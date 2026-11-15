@@ -1,9 +1,12 @@
 package token
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -345,6 +348,102 @@ func TestValidateNoSlidingWhenFresh(t *testing.T) {
 	expiryAfter := m.Current().ExpiresAt
 	if !expiryAfter.Equal(expiryBefore) {
 		t.Fatalf("expiry should not change when remaining > ttl/2: before=%v, after=%v", expiryBefore, expiryAfter)
+	}
+}
+
+func TestValidateWithoutRenewalPreservesSessionAndFile(t *testing.T) {
+	old := TokenDirOverride
+	TokenDirOverride = t.TempDir()
+	t.Cleanup(func() { TokenDirOverride = old })
+	m := NewManager(time.Hour)
+	s, err := m.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.session.ExpiresAt = time.Now().Add(10 * time.Minute)
+	before := *m.Current()
+	path, err := WriteTokenFile(s.Token, before.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			for range 20 {
+				if err := m.ValidateWithoutRenewal(" \n" + s.Token + "\t"); err != nil {
+					t.Errorf("read-only validation rejected a valid token: %v", err)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	after := m.Current()
+	if *after != before {
+		t.Fatal("monitoring changed the in-memory session")
+	}
+	dataAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(dataBefore, dataAfter) || !os.SameFile(infoBefore, infoAfter) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+		t.Fatal("monitoring rewrote the persisted token")
+	}
+	// A user request must still renew the same session after monitoring.
+	if err := m.Validate(s.Token); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Current().ExpiresAt.After(before.ExpiresAt) {
+		t.Fatal("normal validation lost sliding expiration")
+	}
+	_, fileExpiry, err := ReadTokenFileWithExpiry()
+	if err != nil || !fileExpiry.Equal(m.Current().ExpiresAt.Truncate(time.Second)) {
+		t.Fatalf("renewed expiry was not persisted: %v", err)
+	}
+}
+
+func TestValidateWithoutRenewalFailsClosed(t *testing.T) {
+	for _, mode := range []string{"missing", "expired", "wrong", "empty"} {
+		t.Run(mode, func(t *testing.T) {
+			m := NewManager(time.Hour)
+			candidate := "any-token"
+			want := ErrTokenInvalid
+			if mode != "missing" {
+				s, err := m.Generate()
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidate = s.Token
+				switch mode {
+				case "expired":
+					m.session.ExpiresAt = time.Now().Add(-time.Minute)
+					want = ErrTokenExpired
+				case "wrong":
+					candidate = strings.Repeat("x", len(s.Token))
+				case "empty":
+					candidate = " \n\t"
+				}
+			}
+			before := m.Current()
+			if err := m.ValidateWithoutRenewal(candidate); err != want {
+				t.Fatalf("read-only validation error = %v, want %v", err, want)
+			}
+			after := m.Current()
+			if before == nil && after != nil || before != nil && *before != *after {
+				t.Fatal("rejected monitoring request changed the session")
+			}
+		})
 	}
 }
 

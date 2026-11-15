@@ -179,7 +179,7 @@ func (b *Backend) WaitReady(ctx context.Context, timeout time.Duration) error {
 	for {
 		if !b.Running() {
 			if exit := b.LastExit(); exit != nil {
-				return fmt.Errorf("ssh master exited with code %d: %s", exit.Code, exit.StderrTail)
+				return fmt.Errorf("ssh master exited with code %d", exit.Code)
 			}
 			return fmt.Errorf("ssh master exited before control socket was ready")
 		}
@@ -211,9 +211,9 @@ func (b *Backend) Forward(ctx context.Context) error {
 		if strings.Contains(msg, "remote port forwarding failed") ||
 			strings.Contains(msg, "cannot listen to port") ||
 			strings.Contains(msg, "port forwarding failed") {
-			return fmt.Errorf("%w: %s", ErrPortConflict, strings.TrimSpace(out))
+			return ErrPortConflict
 		}
-		return fmt.Errorf("add managed reverse forward: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("forward request failed: %w", err)
 	}
 	b.mu.Lock()
 	b.forwarded = true
@@ -357,6 +357,8 @@ func (b *Backend) MasterArgs(controlPath string) []string {
 	return []string{
 		"-M", "-N", "-T", "-S", controlPath,
 		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=yes",
+		"-o", "ForkAfterAuthentication=no",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ExitOnForwardFailure=yes",
 		"-o", "ControlMaster=yes",

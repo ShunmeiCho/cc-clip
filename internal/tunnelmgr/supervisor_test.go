@@ -442,6 +442,80 @@ func TestSupervisorLocalDaemonGatePreventsSSHStart(t *testing.T) {
 	<-done
 }
 
+func TestSupervisorHealthySnapshotStaysFresh(t *testing.T) {
+	t.Setenv("FAKE_SSH_MODE", "master")
+	t.Setenv("FAKE_SSH_PROBE_OUT", "cc-clip-probe:ok\n")
+	sup, store := newTestSupervisor(t, 18399)
+	cancel, done := runSupervisor(t, sup)
+	defer func() { cancel(); <-done }()
+	var first time.Time
+	waitUntil(t, 5*time.Second, func() bool {
+		rec, err := store.Load()
+		if err != nil || rec.Runtime.State != StateHealthy {
+			return false
+		}
+		first = rec.Runtime.UpdatedAt
+		return true
+	}, "first healthy snapshot")
+	waitUntil(t, 5*time.Second, func() bool {
+		rec, err := store.Load()
+		return err == nil && rec.Runtime.State == StateHealthy && rec.Runtime.UpdatedAt.After(first)
+	}, "refreshed healthy snapshot")
+}
+
+func TestSupervisorDoesNotPersistSSHHelperSecrets(t *testing.T) {
+	t.Setenv("FAKE_SSH_MODE", "secretfail")
+	const secret = "test-proxy-secret-never-persist"
+	t.Setenv("FAKE_SSH_SECRET", secret)
+	sup, store := newTestSupervisor(t, 18399)
+	sup.AttentionInterval = time.Minute
+	var logs strings.Builder
+	sup.Logf = func(format string, args ...any) { fmt.Fprintf(&logs, format, args...) }
+	cancel, done := runSupervisor(t, sup)
+	waitUntil(t, 5*time.Second, func() bool {
+		rec, err := store.Load()
+		return err == nil && rec.Runtime.State == StateAuthRequired
+	}, "persisted authentication failure")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data)+logs.String(), secret) {
+		t.Fatal("SSH helper secret leaked into runtime or log")
+	}
+	if !strings.Contains(string(data), "SSH authentication required") {
+		t.Fatal("safe authentication diagnostic missing")
+	}
+}
+
+func TestSupervisorSpecMismatchNamesDifferencesWithoutReset(t *testing.T) {
+	sup, store := newTestSupervisor(t, 18340)
+	record := validRecord()
+	record.Spec.Host = sup.Spec.Host
+	record.Spec.ExpectedInstanceID = "old-instance"
+	if err := store.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sup.Run(context.Background())
+	for _, want := range []string{"persisted tunnel spec differs", "port: persisted=18339, requested=18340", `expected_instance_id: persisted="old-instance", requested="instance-123"`, "--reset"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in mismatch: %v", want, err)
+		}
+	}
+	after, err := os.ReadFile(store.Path())
+	if err != nil || string(before) != string(after) || sup.Backend.Running() {
+		t.Fatal("spec mismatch changed runtime or started SSH")
+	}
+}
+
 // TestSupervisorCrashLoopStopsRestarting verifies the circuit breaker: an
 // rapidly dying generic SSH children open a persisted circuit breaker.
 func TestSupervisorCrashLoopStopsRestarting(t *testing.T) {

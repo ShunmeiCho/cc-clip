@@ -130,6 +130,117 @@ up. Notes:
 
 ---
 
+## Managed Tunnel Service (Experimental)
+
+Run `tunnel enable/status/restart/disable/auth/logs`
+on the **local macOS machine running the daemon**, not on the Linux remote.
+Start with `cc-clip tunnel status myserver` and
+`cc-clip tunnel logs myserver -n 50`. `-f` follows the log until Ctrl-C.
+
+`enable` requires an installed, healthy local daemon service. It checks SSH
+authentication under launchd with `BatchMode=yes` and strict host-key checking
+before starting the tunnel service. Use an explicit `IdentityFile` that works
+without a prompt, or a keychain/agent
+available to launchd. An interactive password or passphrase entered in a
+terminal does not establish background authentication. cc-clip does not store
+passwords or copy a shell's temporary `SSH_AUTH_SOCK` into the job.
+
+If a service uses an unexpected port, check the saved settings with
+`tunnel status myserver`. Existing services keep their saved port. For a new
+service, priority is `--port`, the installed daemon's port, `CC_CLIP_PORT`, then 18339. Manage the service with the same SSH alias used for `enable`, as each
+alias has its own job and saved state.
+
+Find supervisor states such as `auth-required` in `last observed` from
+`tunnel status myserver`, or in `managed tunnel state` entries from
+`tunnel logs myserver`. The `reason` field and `managed tunnel recovery` log
+entries provide details. The table also covers errors printed by service
+commands and port differences reported by `status --port N`.
+
+| State or diagnostic | Recovery |
+|---|---|
+| `auth-required` or `service-context SSH authentication failed` | Provide a key/agent usable in launchd and run `cc-clip tunnel auth myserver`. The command repeats the service-context check after foreground authentication |
+| `host-key-error` or `service-context SSH host key verification failed` | Inspect `known_hosts`, verify the host's key and run `cc-clip tunnel auth myserver`. The background check requires a trusted key |
+| `local-daemon-down` | Check `cc-clip service status` and the daemon at the saved port. The supervisor waits without repeatedly starting SSH |
+| `port-conflict` | Find and end the connection holding the port, including another tool's persistent SSH connection. Manually comment out the host's legacy `RemoteForward` while trying managed mode. The supervisor retries without killing remote sshd |
+| `remote-token-invalid` | Sync a valid local token with `cc-clip connect myserver --token-only`. The existing master/forward recovers on its next identity check |
+| `identity-helper-missing` | Run `cc-clip connect myserver --force` to deploy the supported helper at `~/.local/bin/cc-clip` |
+| `identity-endpoint-unavailable` | Check the daemon's version and identity initialization warning. Follow [identity repair](#tunnel-identity-unavailable) if needed |
+| `identity-mismatch` | Confirm commands run on the local daemon machine and check its identity and configured port. Follow [identity repair](#tunnel-identity-unavailable) to recover the expected identity or explicitly bind a new one |
+| `crash-loop` | Inspect the logs and fix the repeated failure, then run `cc-clip tunnel restart myserver` to clear valid runtime and start again |
+| `config-error` | Inspect the logs, repair the configuration and restart explicitly |
+| `configuration unknown`, `runtime: unknown`, or a configuration/schema error from a service command | Inspect the file named in the error and repair it before retrying. Restart validates schema and file permissions |
+| `configuration` reports different saved and requested ports | `cc-clip tunnel status myserver --port N` only compares values. To change the saved port, explicitly disable, then enable with `--port N` and a matching daemon |
+
+`status` reads the saved health result without probing the network. Check its
+time and whether the supervisor is running before relying on `healthy`.
+After sleep or a network change, allow time for reconnection and inspect the
+logs before restarting. Authentication failures retry at low frequency. Remote
+token/helper/endpoint failures keep the SSH connection while retrying checks.
+
+`cc-clip tunnel disable myserver` stops the service and cancels automatic
+startup. Configuration, runtime records and logs remain available for diagnosis.
+To return to legacy forwarding, restore the manually commented-out
+`RemoteForward` and open an SSH session. Automatic migration and
+`restore-legacy` are not available yet.
+
+---
+
+## Tunnel Identity Unavailable
+
+**Symptom:** The local daemon logs `WARN: tunnel identity unavailable`, and a
+managed tunnel reports `identity-endpoint-unavailable`. The daemon continues
+running. `/health` returns 200, `/tunnel/identity` returns 401 without a valid
+token and 503 with one. Clipboard and notification requests keep their existing
+authentication behavior. This warning disables only managed-tunnel identity
+checks, so a managed tunnel cannot report `healthy`.
+
+**Corrupt identity file:** The warning names the actual `instance-id` path and
+the repair steps. The default is `~/.cache/cc-clip/instance-id`. If
+`CC_CLIP_TOKEN_DIR` is set for the daemon, it is `<CC_CLIP_TOKEN_DIR>/instance-id`.
+The file must contain a 64-character hexadecimal installation ID. cc-clip leaves
+empty or invalid files untouched rather than silently changing the identity that
+existing tunnel configurations expect.
+
+Repair it on the **local machine running the daemon** with the following steps.
+
+1. Stop all foreground managed tunnels and disable each enabled service with
+   `cc-clip tunnel disable <host>`. Record each host's port before disabling it.
+2. Stop the daemon. For the macOS daemon service, run
+   `cc-clip service uninstall`. For a foreground daemon, stop `cc-clip serve`.
+   Pause any other launcher that would restart it during the repair.
+3. Restore the original valid identity from a trusted backup if available. If
+   there is no valid backup, move **only the damaged `instance-id` file** to a
+   backup path that does not already exist. Keep `session.token`, notification
+   credentials and tunnel state files. This deliberately creates a new
+   installation identity on the next daemon start.
+4. Keep the identity directory private (`0700`) and the restored file `0600`.
+   Restart the daemon with its original port and state-directory settings. On
+   macOS, use `cc-clip service install --port <original-port>`. For foreground
+   use, restart `cc-clip serve --port <original-port>`.
+5. If a new identity was created, explicitly re-enable each disabled service
+   with `cc-clip tunnel enable <host> --port <original-port>`, or restart each
+   foreground tunnel with `cc-clip tunnel run <host> --port <original-port> --reset`.
+   These operations update the expected identity. A plain tunnel restart keeps
+   the saved identity. If the original identity was restored, re-enable services
+   or resume foreground tunnels normally. Verify each tunnel's health.
+
+**Filesystem without hard links:** Creating a new `instance-id` requires
+hard-link support. exFAT and some FUSE mounts reject that operation, leaving
+identity unavailable. A valid existing identity can still be loaded. The
+warning names the destination file and suggests checking directory permissions
+and hard-link support.
+
+Use a private token/identity directory on a filesystem that supports hard links.
+When relocating it, stop the daemon and managed tunnels first, preserve
+`session.token` and any valid `instance-id`, and keep directory/file permissions
+at `0700`/`0600`. Configure `CC_CLIP_TOKEN_DIR` consistently for the daemon and
+local commands. Daemon and tunnel services need that setting in their own environments.
+Exporting it in a terminal alone does not change an existing LaunchAgent. If
+identity initialization still fails, the daemon continues in the degraded mode
+described above.
+
+---
+
 ## Token Expired or Invalid
 
 **Symptom:** "fetch type failed" or "token invalid" / "401" in shim debug logs. Image paste silently falls back to the remote (empty) clipboard.
@@ -143,9 +254,24 @@ up. Notes:
 cc-clip connect myserver --token-only
 ```
 
-The token uses **sliding expiration** — it auto-renews on every successful request. You'll only hit this after 30+ days of zero usage.
+Clipboard requests retain **sliding expiration**, renewing when less than half
+of the configured TTL remains. Identity checks, `/health`, SSH connectivity and
+notification requests do not renew this token. A continuously running managed
+tunnel can therefore reach token expiry if it only monitors health or delivers
+notifications. Notification nonces have their own lifecycle.
 
-To force a new token: `cc-clip serve --rotate-token`.
+If the local daemon session is also expired, token-only synchronization cannot
+repair it. Stop/restart the daemon using its original port, token directory and
+TTL settings. An expired token is replaced on startup. For a macOS daemon
+service, record its port/settings, then use `cc-clip service uninstall` and
+`cc-clip service install --port <original-port>`. Preserve any custom service
+environment. For foreground use, stop and restart `cc-clip serve` with the same
+settings. Keep `instance-id` unchanged, then sync the new token to each host
+with `connect <host> --token-only`. Remote-token rejection alone does not require
+restarting a healthy SSH master.
+
+`cc-clip serve --rotate-token` explicitly generates a new token. It must start
+after the old daemon stops. Sync the result to remote hosts afterwards.
 
 ---
 

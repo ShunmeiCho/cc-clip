@@ -137,7 +137,19 @@ Deployment targets (connect/setup; choose at most one selector):
                      notify entry, DISPLAY marker)
   uninstall --codex  Remove Codex support on this machine
 
-Managed tunnel (experimental, manual only):
+Managed tunnel (experimental; service commands run on the local macOS machine):
+  tunnel enable HOST [--port N]
+                     Preflight and enable the per-host LaunchAgent (opt-in)
+  tunnel status [HOST]
+                     Show desired state, job/process status and observed health
+  tunnel restart HOST
+                     Validate and restart the service; recover crash-loop state
+  tunnel disable HOST
+                     Stop the service and cancel persistent enablement
+  tunnel auth HOST    Authenticate interactively, then recheck in launchd
+  tunnel logs HOST [-n N] [-f]
+                     View or follow this host's private service log
+                     Service commands do not migrate SSH config/RemoteForward.
   tunnel run <host>  Run the managed tunnel supervisor for <host> in the
                      foreground, on your local machine (not on <host>).
                      Starts a private non-interactive ssh master holding one
@@ -150,9 +162,9 @@ Managed tunnel (experimental, manual only):
                        cc-clip connect <host> --force
                      The experimental managed tunnel requires the identity
                      helper at $HOME/.local/bin/cc-clip; --use-remote-bin hosts
-                     are not currently supported. Identity probes count as
-                     token use for the 30-day sliding expiration and can keep
-                     the token active while the supervisor runs.
+                     are not currently supported. Identity probes authenticate
+                     without renewing token expiry. Real clipboard requests
+                     retain sliding expiration.
     --port           Tunnel port (default: 18339, env: CC_CLIP_PORT)
     --reset          Reset persisted runtime and clear crash-loop state
 
